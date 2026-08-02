@@ -17,5 +17,10 @@ demo data (no audio capture).
 
 ## Status
 
-Phase 0: WASAPI loopback capture (default render device) → FFT →
-EQ bars + waveform. macOS backend (Core Audio taps) not wired up yet.
+- Phase 0/1 done: WASAPI capture (loopback + inputs, runtime source
+  switching), FFT analysis, viz modes bars / radial / scope, fullscreen.
+- Phase 2 done: Milkdrop presets via Butterchurn (107 base presets,
+  browser + blend transitions), fed directly from the Rust analysis
+  frames (no Web Audio).
+- Next: beat detection (spectral flux) + preset auto-switching.
+- macOS backend (Core Audio taps) not wired up yet.

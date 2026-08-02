@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import butterchurn, { type BCVisualizer } from "butterchurn";
+import butterchurnPresets from "butterchurn-presets";
 import "./App.css";
 
 const HEADER = 4;
@@ -8,8 +10,20 @@ const ATTACK_TAU = 0.035; // s — fast rise
 const RELEASE_TAU = 0.22; // s — slow fall
 const PEAK_GRAVITY = 0.5; // units/s
 const HUD_HIDE_MS = 2500;
+const PRESET_BLEND_S = 2.7;
 
 const inTauri = "__TAURI_INTERNALS__" in window;
+
+// UMD interop: depending on the bundler path the presets land on .default
+const PRESETS: Record<string, unknown> =
+  (butterchurnPresets as { default?: Record<string, unknown> }).default ??
+  butterchurnPresets;
+const PRESET_KEYS = Object.keys(PRESETS).sort((a, b) => a.localeCompare(b));
+
+function flog(msg: string) {
+  console.log(msg);
+  if (inTauri) invoke("frontend_log", { msg }).catch(() => {});
+}
 
 type SourceInfo = {
   id: string;
@@ -18,8 +32,8 @@ type SourceInfo = {
   is_default: boolean;
 };
 
-type VizMode = "bars" | "radial" | "scope";
-const VIZ_MODES: VizMode[] = ["bars", "radial", "scope"];
+type VizMode = "bars" | "radial" | "scope" | "milkdrop";
+const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop"];
 
 function splitOnce(v: string, sep: string): [string, string] {
   const i = v.indexOf(sep);
@@ -28,8 +42,11 @@ function splitOnce(v: string, sep: string): [string, string] {
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mdCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const modeRef = useRef<VizMode>("bars");
+  const presetKeyRef = useRef<string>(PRESET_KEYS[0] ?? "");
   const [mode, setMode] = useState<VizMode>("bars");
+  const [presetKey, setPresetKey] = useState(PRESET_KEYS[0] ?? "");
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
@@ -40,9 +57,14 @@ function App() {
   }, [mode]);
 
   useEffect(() => {
+    presetKeyRef.current = presetKey;
+  }, [presetKey]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    return startVisualizer(canvas, modeRef);
+    const mdCanvas = mdCanvasRef.current;
+    if (!canvas || !mdCanvas) return;
+    return startVisualizer(canvas, mdCanvas, modeRef, presetKeyRef);
   }, []);
 
   useEffect(() => {
@@ -66,6 +88,17 @@ function App() {
     }
   }, []);
 
+  const stepPreset = useCallback((dir: number) => {
+    setPresetKey((current) => {
+      const i = PRESET_KEYS.indexOf(current);
+      return PRESET_KEYS[(i + dir + PRESET_KEYS.length) % PRESET_KEYS.length];
+    });
+  }, []);
+
+  const randomPreset = useCallback(() => {
+    setPresetKey(PRESET_KEYS[Math.floor(Math.random() * PRESET_KEYS.length)]);
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
       const win = getCurrentWindow();
@@ -86,11 +119,15 @@ function App() {
         void getCurrentWindow().setFullscreen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
+      } else if (modeRef.current === "milkdrop") {
+        if (e.key === "ArrowRight") stepPreset(1);
+        else if (e.key === "ArrowLeft") stepPreset(-1);
+        else if (e.key === "r") randomPreset();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleFullscreen]);
+  }, [toggleFullscreen, stepPreset, randomPreset]);
 
   const pokeHud = useCallback(() => {
     setHudVisible(true);
@@ -111,9 +148,10 @@ function App() {
 
   return (
     <div
-      className={`stage ${hudVisible ? "" : "idle"}`}
+      className={`stage mode-${mode} ${hudVisible ? "" : "idle"}`}
       onMouseMove={pokeHud}
     >
+      <canvas ref={mdCanvasRef} id="mdviz" />
       <canvas ref={canvasRef} id="viz" />
       <div className={`hud ${hudVisible ? "" : "hidden"}`}>
         <div className="hud-left">
@@ -145,6 +183,43 @@ function App() {
           ) : (
             <span className="demo-tag">Demo-Modus (Browser)</span>
           )}
+          {mode === "milkdrop" && (
+            <span className="preset-controls">
+              <button
+                className="mode-btn"
+                onClick={() => stepPreset(-1)}
+                title="Vorheriges Preset (←)"
+              >
+                ‹
+              </button>
+              <select
+                className="src-select preset-select"
+                value={presetKey}
+                onChange={(e) => setPresetKey(e.target.value)}
+                title="Milkdrop-Preset"
+              >
+                {PRESET_KEYS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="mode-btn"
+                onClick={() => stepPreset(1)}
+                title="Nächstes Preset (→)"
+              >
+                ›
+              </button>
+              <button
+                className="mode-btn"
+                onClick={randomPreset}
+                title="Zufälliges Preset (R)"
+              >
+                🎲
+              </button>
+            </span>
+          )}
         </div>
         <div className="hud-right">
           {VIZ_MODES.map((m, i) => (
@@ -172,7 +247,9 @@ function App() {
 
 function startVisualizer(
   canvas: HTMLCanvasElement,
+  mdCanvas: HTMLCanvasElement,
   modeRef: { current: VizMode },
+  presetKeyRef: { current: string },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -181,12 +258,76 @@ function startVisualizer(
 
   // latest backend data
   let bands = new Float32Array(64);
-  let wave = new Float32Array(512);
+  let wave = new Float32Array(1024);
   let rms = 0;
 
   // smoothed display state
   let disp = new Float32Array(bands.length);
   let peaks = new Float32Array(bands.length);
+
+  // butterchurn state (lazy)
+  let bc: BCVisualizer | null = null;
+  let bcFailed = false;
+  let bcLoadedPreset = "";
+  const timeByte = new Uint8Array(1024).fill(128);
+
+  function ensureButterchurn(): boolean {
+    if (bc) return true;
+    if (bcFailed) return false;
+    if (mdCanvas.clientWidth === 0 || mdCanvas.clientHeight === 0) {
+      return false; // layout not ready yet — retry next frame
+    }
+    try {
+      const audioCtx = new AudioContext();
+      bc = butterchurn.createVisualizer(audioCtx, mdCanvas, {
+        width: mdCanvas.width,
+        height: mdCanvas.height,
+      });
+      flog(
+        `[md] butterchurn init ok, ${PRESET_KEYS.length} presets, ` +
+          `${mdCanvas.width}x${mdCanvas.height}`,
+      );
+      return true;
+    } catch (e) {
+      bcFailed = true;
+      flog(`[md] butterchurn init FAILED: ${e}`);
+      return false;
+    }
+  }
+
+  function renderMilkdrop() {
+    if (!ensureButterchurn() || !bc) return;
+
+    const want = presetKeyRef.current;
+    if (want !== bcLoadedPreset && PRESETS[want]) {
+      try {
+        bc.loadPreset(PRESETS[want], bcLoadedPreset ? PRESET_BLEND_S : 0);
+        bcLoadedPreset = want;
+        flog(`[md] preset: ${want}`);
+      } catch (e) {
+        flog(`[md] loadPreset FAILED (${want}): ${e}`);
+        bcLoadedPreset = want; // don't retry a broken preset every frame
+      }
+    }
+
+    const n = Math.min(wave.length, timeByte.length);
+    for (let j = 0; j < n; j++) {
+      const v = Math.max(-1, Math.min(1, wave[j]));
+      timeByte[j] = (v * 127 + 128) | 0;
+    }
+    try {
+      bc.render({
+        audioLevels: {
+          timeByteArray: timeByte,
+          timeByteArrayL: timeByte,
+          timeByteArrayR: timeByte,
+        },
+      });
+    } catch (e) {
+      bcFailed = true;
+      flog(`[md] render FAILED: ${e}`);
+    }
+  }
 
   let fetching = false;
   async function fetchFrame() {
@@ -232,6 +373,9 @@ function startVisualizer(
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(canvas.clientWidth * dpr);
     canvas.height = Math.round(canvas.clientHeight * dpr);
+    mdCanvas.width = Math.round(mdCanvas.clientWidth * dpr);
+    mdCanvas.height = Math.round(mdCanvas.clientHeight * dpr);
+    bc?.setRendererSize(mdCanvas.width, mdCanvas.height);
     gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
     gradient.addColorStop(0.0, "#38bdf8");
     gradient.addColorStop(0.45, "#818cf8");
@@ -243,6 +387,10 @@ function startVisualizer(
   window.addEventListener("resize", resize);
   resize();
 
+  // Eager init so a broken WebGL/butterchurn setup surfaces in the dev log
+  // immediately instead of on the first mode switch.
+  ensureButterchurn();
+
   let last = performance.now();
   let fps = 60;
 
@@ -252,18 +400,32 @@ function startVisualizer(
     last = now;
     if (dt > 0) fps = fps * 0.92 + (1 / dt) * 0.08;
 
+    // Layout/dpr can change without a window resize event (e.g. CSS landing
+    // after init) — cheap per-frame check keeps bitmap sizes in sync.
+    const dprNow = window.devicePixelRatio || 1;
+    if (
+      canvas.width !== Math.round(canvas.clientWidth * dprNow) ||
+      canvas.height !== Math.round(canvas.clientHeight * dprNow)
+    ) {
+      resize();
+    }
+
     if (inTauri) fetchFrame();
     else mockFrame(now / 1000);
 
-    const attack = 1 - Math.exp(-dt / ATTACK_TAU);
-    const release = 1 - Math.exp(-dt / RELEASE_TAU);
-    for (let i = 0; i < disp.length; i++) {
-      const target = bands[i];
-      disp[i] += (target - disp[i]) * (target > disp[i] ? attack : release);
-      peaks[i] = Math.max(peaks[i] - PEAK_GRAVITY * dt, disp[i]);
+    if (modeRef.current === "milkdrop") {
+      renderMilkdrop();
+    } else {
+      const attack = 1 - Math.exp(-dt / ATTACK_TAU);
+      const release = 1 - Math.exp(-dt / RELEASE_TAU);
+      for (let i = 0; i < disp.length; i++) {
+        const target = bands[i];
+        disp[i] += (target - disp[i]) * (target > disp[i] ? attack : release);
+        peaks[i] = Math.max(peaks[i] - PEAK_GRAVITY * dt, disp[i]);
+      }
+      draw();
     }
 
-    draw();
     raf = requestAnimationFrame(frame);
   }
 
@@ -285,6 +447,8 @@ function startVisualizer(
         break;
       case "scope":
         drawScope(w, h, dpr);
+        break;
+      case "milkdrop":
         break;
     }
 
@@ -337,7 +501,7 @@ function startVisualizer(
     const base = Math.min(w, h);
     const R = base * 0.2 * (1 + rms * 0.9);
     const maxLen = base * 0.26;
-    const lw = Math.max(2, (Math.PI * R) / n * 0.7);
+    const lw = Math.max(2, ((Math.PI * R) / n) * 0.7);
 
     ctx.lineCap = "round";
     for (let i = 0; i < n; i++) {
@@ -409,7 +573,8 @@ function startVisualizer(
     }
     ctx.strokeStyle = style;
     ctx.lineJoin = "round";
-    ctx.lineWidth = lineWidth ?? Math.max(1, 1.25 * (window.devicePixelRatio || 1));
+    ctx.lineWidth =
+      lineWidth ?? Math.max(1, 1.25 * (window.devicePixelRatio || 1));
     ctx.stroke();
   }
 

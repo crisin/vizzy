@@ -32,6 +32,13 @@ fn set_source(
     state.control.send(spec).map_err(|e| e.to_string())
 }
 
+/// Lets the webview surface errors/status into the dev console output,
+/// since the webview's own console is not visible in `tauri dev` logs.
+#[tauri::command]
+fn frontend_log(msg: String) {
+    eprintln!("[vizzy-web] {msg}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shared: audio::SharedAnalysis = Arc::new(Mutex::new(audio::empty_frame()));
@@ -47,7 +54,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_analysis_frame,
             list_sources,
-            set_source
+            set_source,
+            frontend_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

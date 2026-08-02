@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const NUM_BANDS: usize = 64;
-pub const WAVE_POINTS: usize = 512;
+pub const WAVE_POINTS: usize = 1024; // matches Butterchurn's expected fftSize
 const FFT_SIZE: usize = 2048;
 const HOP: usize = 512; // ~94 analysis frames/s at 48 kHz
 const SAMPLE_RATE: usize = 48000;
@@ -171,8 +171,8 @@ impl Analyzer {
         let rms = (sq / FFT_SIZE as f32).sqrt();
 
         self.published += 1;
-        if self.published % 188 == 0 {
-            // ~every 2 s at 94 frames/s
+        if self.published % 470 == 0 {
+            // ~every 5 s at 94 frames/s
             eprintln!("[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4}", self.published);
         }
 

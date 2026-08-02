@@ -26,10 +26,36 @@ body {
   cursor: none;
 }
 
-#viz {
+#viz,
+#mdviz {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100vw;
   height: 100vh;
+}
+
+/* visibility (not display) so hidden canvases keep their layout size */
+#mdviz {
+  visibility: hidden;
+}
+
+.stage.mode-milkdrop #mdviz {
+  visibility: visible;
+}
+
+.stage.mode-milkdrop #viz {
+  visibility: hidden;
+}
+
+.preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-select {
+  max-width: 28vw;
 }
 
 .hud {
