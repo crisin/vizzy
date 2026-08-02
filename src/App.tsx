@@ -753,6 +753,7 @@ function startVisualizer(
 
   function renderMilkdrop() {
     if (!ensureButterchurn() || !bc) return;
+    if (mdCanvas.width === 0 || mdCanvas.height === 0) return;
 
     // beat-driven auto preset switching (rising edge + cooldown)
     if (autoRef.current && beat >= 0.95 && prevBeat < 0.95) {
@@ -848,6 +849,11 @@ function startVisualizer(
   let gradient: CanvasGradient | null = null;
   function resize() {
     const dpr = window.devicePixelRatio || 1;
+    if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+      // mid-fullscreen-transition layout — a 0-sized setRendererSize would
+      // corrupt butterchurn's framebuffers (black picture until preset load)
+      return;
+    }
     canvas.width = Math.round(canvas.clientWidth * dpr);
     canvas.height = Math.round(canvas.clientHeight * dpr);
     mdCanvas.width = Math.round(mdCanvas.clientWidth * dpr);
