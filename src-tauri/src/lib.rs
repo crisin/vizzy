@@ -25,6 +25,11 @@ fn list_sources() -> Result<Vec<audio::SourceInfo>, String> {
 }
 
 #[tauri::command]
+fn list_apps() -> Result<Vec<audio::AppInfo>, String> {
+    audio::list_apps()
+}
+
+#[tauri::command]
 fn set_source(
     spec: audio::SourceSpec,
     state: tauri::State<'_, AudioState>,
@@ -54,6 +59,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_analysis_frame,
             list_sources,
+            list_apps,
             set_source,
             frontend_log
         ])

@@ -33,6 +33,12 @@ type SourceInfo = {
   is_default: boolean;
 };
 
+type AppInfo = {
+  pid: number;
+  name: string;
+  active: boolean;
+};
+
 type VizMode = "bars" | "radial" | "scope" | "milkdrop" | "3d";
 const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop", "3d"];
 
@@ -54,6 +60,7 @@ function App() {
   const [autoSwitch, setAutoSwitch] = useState(false);
   const [scene3d, setScene3d] = useState<SceneName>("orb");
   const [sources, setSources] = useState<SourceInfo[]>([]);
+  const [apps, setApps] = useState<AppInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
   const hideTimer = useRef<number | undefined>(undefined);
@@ -74,22 +81,36 @@ function App() {
     sceneRef.current = scene3d;
   }, [scene3d]);
 
-  useEffect(() => {
+  const loadLists = useCallback(() => {
     if (!inTauri) return;
     invoke<SourceInfo[]>("list_sources")
       .then((list) => {
         setSources(list);
         const def = list.find((s) => s.kind === "loopback" && s.is_default);
-        if (def) setSelected(`loopback|${def.id}`);
+        if (def) {
+          setSelected((prev) => (prev === "" ? `loopback|${def.id}` : prev));
+        }
       })
       .catch(console.error);
+    invoke<AppInfo[]>("list_apps").then(setApps).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    loadLists();
+  }, [loadLists]);
 
   const selectSource = useCallback(async (value: string) => {
     setSelected(value);
-    const [kind, id] = splitOnce(value, "|");
+    const [kind, rest] = splitOnce(value, "|");
+    let spec: Record<string, unknown>;
+    if (kind === "app") {
+      const [pidStr, name] = splitOnce(rest, "|");
+      spec = { kind, pid: Number(pidStr), name };
+    } else {
+      spec = { kind, device_id: rest };
+    }
     try {
-      await invoke("set_source", { spec: { kind, device_id: id } });
+      await invoke("set_source", { spec });
     } catch (e) {
       console.error("set_source failed", e);
     }
@@ -197,6 +218,7 @@ function App() {
               className="src-select"
               value={selected}
               onChange={(e) => selectSource(e.target.value)}
+              onPointerDown={loadLists}
               title="Audio-Quelle"
             >
               <optgroup label="System-Audio (Loopback)">
@@ -212,6 +234,14 @@ function App() {
                   <option key={s.id} value={`input|${s.id}`}>
                     {s.name}
                     {s.is_default ? " • Standard" : ""}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Einzelne App (Process-Loopback)">
+                {apps.map((a) => (
+                  <option key={`app-${a.pid}`} value={`app|${a.pid}|${a.name}`}>
+                    {a.active ? "♪ " : ""}
+                    {a.name} (PID {a.pid})
                   </option>
                 ))}
               </optgroup>

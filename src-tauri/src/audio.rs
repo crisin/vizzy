@@ -31,8 +31,18 @@ pub type SharedAnalysis = Arc<Mutex<Vec<f32>>>;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceSpec {
-    Loopback { device_id: Option<String> },
-    Input { device_id: Option<String> },
+    Loopback {
+        device_id: Option<String>,
+    },
+    Input {
+        device_id: Option<String>,
+    },
+    /// Per-app capture via the Windows process loopback API.
+    App {
+        pid: u32,
+        #[serde(default)]
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -41,6 +51,14 @@ pub struct SourceInfo {
     pub name: String,
     pub kind: &'static str, // "loopback" | "input"
     pub is_default: bool,
+}
+
+/// A process that currently owns an audio session on some render device.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct AppInfo {
+    pub pid: u32,
+    pub name: String,
+    pub active: bool, // at least one stream currently playing
 }
 
 /// Frame header layout: `[rms, peak, n_bands, n_wave, beat, flux]`
@@ -314,38 +332,104 @@ pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
 }
 
 #[cfg(target_os = "windows")]
+pub fn list_apps() -> Result<Vec<AppInfo>, String> {
+    std::thread::spawn(|| -> Result<Vec<AppInfo>, String> {
+        use std::collections::HashMap;
+        use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+        use wasapi::{DeviceEnumerator, Direction, SessionState};
+        (|| -> Result<Vec<AppInfo>, Box<dyn std::error::Error>> {
+            wasapi::initialize_mta().ok()?;
+            let system = System::new_with_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
+            );
+            let own_pid = std::process::id();
+            let mut apps: HashMap<u32, AppInfo> = HashMap::new();
+
+            let enumerator = DeviceEnumerator::new()?;
+            let collection = enumerator.get_device_collection(&Direction::Render)?;
+            for i in 0..collection.get_nbr_devices()? {
+                let Ok(device) = collection.get_device_at_index(i) else {
+                    continue;
+                };
+                let Ok(manager) = device.get_iaudiosessionmanager() else {
+                    continue;
+                };
+                let Ok(sessions) = manager.get_audiosessionenumerator() else {
+                    continue;
+                };
+                for s in 0..sessions.get_count().unwrap_or(0) {
+                    let Ok(control) = sessions.get_session(s) else {
+                        continue;
+                    };
+                    let Ok(pid) = control.get_process_id() else {
+                        continue;
+                    };
+                    if pid == 0 || pid == own_pid {
+                        continue; // system sounds session / vizzy itself
+                    }
+                    let state = control.get_state().unwrap_or(SessionState::Inactive);
+                    if matches!(state, SessionState::Expired) {
+                        continue;
+                    }
+                    let active = matches!(state, SessionState::Active);
+                    let name = system
+                        .process(sysinfo::Pid::from_u32(pid))
+                        .map(|p| p.name().to_string_lossy().into_owned())
+                        .unwrap_or_else(|| format!("PID {pid}"));
+                    apps.entry(pid)
+                        .and_modify(|a| a.active |= active)
+                        .or_insert(AppInfo { pid, name, active });
+                }
+            }
+
+            let mut list: Vec<AppInfo> = apps.into_values().collect();
+            list.sort_by(|a, b| {
+                b.active
+                    .cmp(&a.active)
+                    .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+            eprintln!("[vizzy-audio] list_apps -> {} apps", list.len());
+            Ok(list)
+        })()
+        .map_err(|e| e.to_string())
+    })
+    .join()
+    .map_err(|_| "app enumeration thread panicked".to_string())?
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn list_apps() -> Result<Vec<AppInfo>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "windows")]
 fn capture_loop(
     shared: &SharedAnalysis,
     spec: &SourceSpec,
     rx: &Receiver<SourceSpec>,
 ) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
-    use wasapi::{DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+    use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
     wasapi::initialize_mta().ok()?;
 
-    let enumerator = DeviceEnumerator::new()?;
-    let device = match spec {
-        SourceSpec::Loopback { device_id: Some(id) } => enumerator.get_device(id)?,
-        SourceSpec::Loopback { device_id: None } => {
-            enumerator.get_default_device(&Direction::Render)?
+    let (mut client, buffer_duration_hns) = match spec {
+        SourceSpec::App { pid, name } => {
+            eprintln!("[vizzy-audio] capturing app '{name}' (pid {pid})");
+            // include_tree: also catch audio from child processes
+            (AudioClient::new_application_loopback_client(*pid, true)?, 0)
         }
-        SourceSpec::Input { device_id: Some(id) } => enumerator.get_device(id)?,
-        SourceSpec::Input { device_id: None } => {
-            enumerator.get_default_device(&Direction::Capture)?
+        SourceSpec::Loopback { device_id } => {
+            open_device_client(&Direction::Render, device_id.as_deref())?
+        }
+        SourceSpec::Input { device_id } => {
+            open_device_client(&Direction::Capture, device_id.as_deref())?
         }
     };
-    eprintln!(
-        "[vizzy-audio] capturing {:?} from: {}",
-        spec,
-        device.get_friendlyname().unwrap_or_else(|_| "<unknown>".into())
-    );
 
-    let mut client = device.get_iaudioclient()?;
     let format = WaveFormat::new(32, 32, &SampleType::Float, SAMPLE_RATE, 2, None);
-    let (_default_period, min_period) = client.get_device_period()?;
     let mode = StreamMode::EventsShared {
         autoconvert: true,
-        buffer_duration_hns: min_period,
+        buffer_duration_hns,
     };
     client.initialize_client(&format, &Direction::Capture, &mode)?;
     let event = client.set_get_eventhandle()?;
@@ -357,7 +441,9 @@ fn capture_loop(
 
     client.start_stream()?;
     loop {
-        capture.read_from_device_to_deque(&mut bytes)?;
+        if capture.get_next_packet_size()?.unwrap_or(0) > 0 {
+            capture.read_from_device_to_deque(&mut bytes)?;
+        }
 
         while bytes.len() >= block_align {
             let mut b = [0u8; 4];
@@ -385,6 +471,31 @@ fn capture_loop(
             analyzer.decay_publish(shared);
         }
     }
+}
+
+/// Open an IAudioClient on a specific or default endpoint of the given
+/// direction. Returns the client plus the minimum device period to use as
+/// event-driven buffer duration.
+#[cfg(target_os = "windows")]
+fn open_device_client(
+    direction: &wasapi::Direction,
+    device_id: Option<&str>,
+) -> Result<(wasapi::AudioClient, i64), Box<dyn std::error::Error>> {
+    use wasapi::DeviceEnumerator;
+
+    let enumerator = DeviceEnumerator::new()?;
+    let device = match device_id {
+        Some(id) => enumerator.get_device(id)?,
+        None => enumerator.get_default_device(direction)?,
+    };
+    eprintln!(
+        "[vizzy-audio] capturing {:?} endpoint: {}",
+        direction,
+        device.get_friendlyname().unwrap_or_else(|_| "<unknown>".into())
+    );
+    let mut client = device.get_iaudioclient()?;
+    let (_default_period, min_period) = client.get_device_period()?;
+    Ok((client, min_period))
 }
 
 #[cfg(not(target_os = "windows"))]
