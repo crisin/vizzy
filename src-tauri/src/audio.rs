@@ -1,15 +1,18 @@
 //! Audio capture + analysis.
 //!
-//! Phase 0: Windows WASAPI device loopback (default render device) → mono
-//! mixdown → FFT → log-spaced bands + waveform excerpt. The analysis result
-//! is published as a flat f32 frame:
+//! Windows: WASAPI via the `wasapi` crate. One code path covers both source
+//! kinds — requesting `Direction::Capture` on a *render* device makes the
+//! crate set `AUDCLNT_STREAMFLAGS_LOOPBACK` (system audio), on a *capture*
+//! device it is a normal input (mic/line-in) stream.
 //!
+//! The analysis result is published as a flat f32 frame:
 //! `[rms, peak, n_bands, n_wave, bands[n_bands], wave[n_wave]]`
 //!
 //! On non-Windows platforms a silent stub keeps the pipeline alive until the
-//! macOS Core Audio tap backend lands (Phase 0 Mac spike).
+//! macOS Core Audio tap backend lands.
 
 use std::collections::VecDeque;
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +27,22 @@ const DB_FLOOR: f32 = 60.0;
 
 pub type SharedAnalysis = Arc<Mutex<Vec<f32>>>;
 
+/// Which audio source to capture. `device_id: None` = default device.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceSpec {
+    Loopback { device_id: Option<String> },
+    Input { device_id: Option<String> },
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SourceInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: &'static str, // "loopback" | "input"
+    pub is_default: bool,
+}
+
 pub fn empty_frame() -> Vec<f32> {
     let mut frame = vec![0.0f32; 4 + NUM_BANDS + WAVE_POINTS];
     frame[2] = NUM_BANDS as f32;
@@ -31,14 +50,25 @@ pub fn empty_frame() -> Vec<f32> {
     frame
 }
 
-pub fn spawn_capture(shared: SharedAnalysis) {
+pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>) {
     std::thread::Builder::new()
         .name("vizzy-audio".into())
-        .spawn(move || loop {
-            if let Err(e) = capture_loop(&shared) {
-                eprintln!("[vizzy-audio] capture error: {e}; retrying in 2s");
+        .spawn(move || {
+            let mut spec = SourceSpec::Loopback { device_id: None };
+            loop {
+                match capture_loop(&shared, &spec, &rx) {
+                    Ok(Some(next)) => spec = next,
+                    Ok(None) => {}
+                    Err(e) => {
+                        eprintln!("[vizzy-audio] capture error: {e}; waiting for retry/switch");
+                        // Retry the same source after a pause, unless a
+                        // switch request arrives first.
+                        if let Ok(next) = rx.recv_timeout(Duration::from_secs(2)) {
+                            spec = next;
+                        }
+                    }
+                }
             }
-            std::thread::sleep(Duration::from_secs(2));
         })
         .expect("failed to spawn audio thread");
 }
@@ -176,15 +206,76 @@ impl Analyzer {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_loop(shared: &SharedAnalysis) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
+    // Runs in its own thread: COM apartment state of Tauri's threads is
+    // none of our business, a fresh thread can always join the MTA.
+    std::thread::spawn(|| -> Result<Vec<SourceInfo>, String> {
+        use wasapi::{DeviceEnumerator, Direction};
+        (|| -> Result<Vec<SourceInfo>, Box<dyn std::error::Error>> {
+            wasapi::initialize_mta().ok()?;
+            let enumerator = DeviceEnumerator::new()?;
+            let mut sources = Vec::new();
+            for (direction, kind) in [
+                (Direction::Render, "loopback"),
+                (Direction::Capture, "input"),
+            ] {
+                let default_id = enumerator
+                    .get_default_device(&direction)
+                    .and_then(|d| d.get_id())
+                    .unwrap_or_default();
+                let collection = enumerator.get_device_collection(&direction)?;
+                for i in 0..collection.get_nbr_devices()? {
+                    let device = collection.get_device_at_index(i)?;
+                    let id = device.get_id()?;
+                    let name = device
+                        .get_friendlyname()
+                        .unwrap_or_else(|_| "<unbekannt>".into());
+                    sources.push(SourceInfo {
+                        is_default: id == default_id,
+                        id,
+                        name,
+                        kind,
+                    });
+                }
+            }
+            eprintln!("[vizzy-audio] list_sources -> {} devices", sources.len());
+            Ok(sources)
+        })()
+        .map_err(|e| e.to_string())
+    })
+    .join()
+    .map_err(|_| "source enumeration thread panicked".to_string())?
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "windows")]
+fn capture_loop(
+    shared: &SharedAnalysis,
+    spec: &SourceSpec,
+    rx: &Receiver<SourceSpec>,
+) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
     use wasapi::{DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
     wasapi::initialize_mta().ok()?;
 
     let enumerator = DeviceEnumerator::new()?;
-    let device = enumerator.get_default_device(&Direction::Render)?;
+    let device = match spec {
+        SourceSpec::Loopback { device_id: Some(id) } => enumerator.get_device(id)?,
+        SourceSpec::Loopback { device_id: None } => {
+            enumerator.get_default_device(&Direction::Render)?
+        }
+        SourceSpec::Input { device_id: Some(id) } => enumerator.get_device(id)?,
+        SourceSpec::Input { device_id: None } => {
+            enumerator.get_default_device(&Direction::Capture)?
+        }
+    };
     eprintln!(
-        "[vizzy-audio] loopback capture on render device: {}",
+        "[vizzy-audio] capturing {:?} from: {}",
+        spec,
         device.get_friendlyname().unwrap_or_else(|_| "<unknown>".into())
     );
 
@@ -195,8 +286,6 @@ fn capture_loop(shared: &SharedAnalysis) -> Result<(), Box<dyn std::error::Error
         autoconvert: true,
         buffer_duration_hns: min_period,
     };
-    // Direction::Capture on a render device → the crate sets
-    // AUDCLNT_STREAMFLAGS_LOOPBACK for us (shared mode only).
     client.initialize_client(&format, &Direction::Capture, &mode)?;
     let event = client.set_get_eventhandle()?;
     let capture = client.get_audiocaptureclient()?;
@@ -223,6 +312,12 @@ fn capture_loop(shared: &SharedAnalysis) -> Result<(), Box<dyn std::error::Error
         }
         analyzer.maybe_publish(shared);
 
+        // Source switch requested from the frontend?
+        if let Ok(next) = rx.try_recv() {
+            let _ = client.stop_stream();
+            return Ok(Some(next));
+        }
+
         // Timeout ⇒ silence (WASAPI loopback stops delivering packets when
         // nothing plays). Decay instead of freezing the picture.
         if event.wait_for_event(250).is_err() {
@@ -232,12 +327,18 @@ fn capture_loop(shared: &SharedAnalysis) -> Result<(), Box<dyn std::error::Error
 }
 
 #[cfg(not(target_os = "windows"))]
-fn capture_loop(shared: &SharedAnalysis) -> Result<(), Box<dyn std::error::Error>> {
+fn capture_loop(
+    shared: &SharedAnalysis,
+    _spec: &SourceSpec,
+    rx: &Receiver<SourceSpec>,
+) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
     // macOS backend (Core Audio taps via `cidre`) lands in the Mac spike.
     eprintln!("[vizzy-audio] no capture backend for this OS yet — publishing silence");
     let mut analyzer = Analyzer::new();
     loop {
         analyzer.decay_publish(shared);
-        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(next) = rx.recv_timeout(Duration::from_millis(100)) {
+            return Ok(Some(next));
+        }
     }
 }
