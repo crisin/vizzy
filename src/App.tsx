@@ -10,8 +10,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import butterchurn, { type BCVisualizer } from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
-import { params } from "./params";
+import { params, PARAMS_STORAGE_KEY } from "./params";
 import { EditorPanel } from "./EditorPanel";
+import {
+  clearStoredModel,
+  loadStoredModel,
+  saveStoredModel,
+} from "./modelStore";
 import "./App.css";
 
 const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
@@ -241,6 +246,41 @@ function App() {
       seq: (modelFileRef.current?.seq ?? 0) + 1,
     };
     setScene3d("model");
+    saveStoredModel(file.name, data)
+      .then(() => flog(`[cfg] model saved: ${file.name}`))
+      .catch((err) => flog(`[cfg] model save FAILED: ${err}`));
+  }, []);
+
+  // Restore the persisted model (works in browser demo mode too).
+  const modelRestoredRef = useRef(false);
+  useEffect(() => {
+    if (modelRestoredRef.current) return;
+    modelRestoredRef.current = true;
+    loadStoredModel()
+      .then((m) => {
+        if (m?.data) {
+          modelFileRef.current = {
+            data: m.data,
+            name: m.name,
+            seq: (modelFileRef.current?.seq ?? 0) + 1,
+          };
+          flog(`[cfg] restored model: ${m.name}`);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Emergency exit: wipe settings, parameters and the stored model.
+  const resetAll = useCallback(() => {
+    try {
+      localStorage.removeItem(SETTINGS_KEY);
+      localStorage.removeItem(PARAMS_STORAGE_KEY);
+    } catch {
+      // ignore — reload restores defaults either way
+    }
+    void clearStoredModel()
+      .catch(() => {})
+      .finally(() => window.location.reload());
   }, []);
 
   useEffect(() => {
@@ -490,6 +530,7 @@ function App() {
         <EditorPanel
           groups={["audio", mode === "3d" ? scene3d : mode]}
           onClose={() => setEditorOpen(false)}
+          onResetAll={resetAll}
         />
       )}
     </div>

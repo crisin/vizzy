@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { GROUP_LABELS, PARAM_SCHEMAS, params } from "./params";
 
@@ -14,11 +14,16 @@ function applySideEffects(group: string, key: string, value: number) {
 export function EditorPanel({
   groups,
   onClose,
+  onResetAll,
 }: {
   groups: string[];
   onClose: () => void;
+  onResetAll: () => void;
 }) {
   const [, bump] = useReducer((n: number) => n + 1, 0);
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(armTimer.current), []);
 
   return (
     <div className="editor-panel">
@@ -76,6 +81,26 @@ export function EditorPanel({
           </section>
         );
       })}
+      <div className="editor-footer">
+        <button
+          className={`mode-btn danger ${armed ? "armed" : ""}`}
+          onClick={() => {
+            if (armed) {
+              onResetAll();
+            } else {
+              setArmed(true);
+              window.clearTimeout(armTimer.current);
+              armTimer.current = window.setTimeout(
+                () => setArmed(false),
+                3000,
+              );
+            }
+          }}
+          title="Alle Einstellungen, Parameter und das gespeicherte Modell löschen"
+        >
+          {armed ? "Sicher? Nochmal klicken!" : "⚠ Alles zurücksetzen"}
+        </button>
+      </div>
     </div>
   );
 }

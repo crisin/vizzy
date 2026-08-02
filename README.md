@@ -37,5 +37,9 @@ demo data (no audio capture).
   audio sensitivity/attack/release, beat threshold (live into the Rust
   analyzer), plus per-viz controls. Values persist. This schema system
   is the foundation for the future custom-visualization editor.
-- Third 3D scene "tunnel": fly through spectrum-shaped rings.
+- Seven 3D scenes: orb, terrain, tunnel, bars3d, gyro, blob (procedural
+  noise displacement) and model (load your own glTF/GLB — persisted in
+  IndexedDB and restored on startup).
+- Global reset in the editor panel (two-step confirm) wipes settings,
+  parameters and the stored model.
 - macOS backend (Core Audio taps) not wired up yet.

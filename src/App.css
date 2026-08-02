@@ -225,3 +225,21 @@ body {
   width: 100%;
   accent-color: #38bdf8;
 }
+
+.editor-footer {
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  padding-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mode-btn.danger {
+  border-color: rgba(251, 113, 133, 0.4);
+  color: #fda4af;
+}
+
+.mode-btn.danger.armed {
+  background: rgba(251, 113, 133, 0.25);
+  border-color: #fb7185;
+  color: #fecdd3;
+}

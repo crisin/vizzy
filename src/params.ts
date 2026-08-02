@@ -88,7 +88,8 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
   ],
 };
 
-const STORAGE_KEY = "vizzy.params.v1";
+export const PARAMS_STORAGE_KEY = "vizzy.params.v1";
+const STORAGE_KEY = PARAMS_STORAGE_KEY;
 
 class ParamStore {
   private values: Record<string, Record<string, number>>;
