@@ -13,10 +13,17 @@ import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
 import { EditorPanel } from "./EditorPanel";
 import {
-  clearStoredModel,
-  loadStoredModel,
-  saveStoredModel,
+  addModel,
+  clearAllModels,
+  deleteModel,
+  getModel,
+  listModels,
+  type ModelMeta,
 } from "./modelStore";
+
+type ModelAction =
+  | { action: "load"; data: ArrayBuffer; name: string; seq: number }
+  | { action: "clear"; seq: number };
 import "./App.css";
 
 const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
@@ -64,6 +71,7 @@ type Persisted = {
   autoSwitch?: boolean;
   showBpm?: boolean;
   sourceValue?: string;
+  modelId?: number;
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -97,12 +105,10 @@ function App() {
   const [editorOpen, setEditorOpen] = useState(false);
   const bpmElRef = useRef<HTMLSpanElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const modelFileRef = useRef<{
-    data: ArrayBuffer;
-    name: string;
-    seq: number;
-  } | null>(null);
+  const modelFileRef = useRef<ModelAction | null>(null);
   const camResetRef = useRef(0);
+  const [models, setModels] = useState<ModelMeta[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -217,13 +223,14 @@ function App() {
       autoSwitch,
       showBpm,
       sourceValue: selected,
+      modelId: selectedModelId ?? undefined,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
     } catch {
       // storage unavailable — not worth breaking the app over
     }
-  }, [mode, scene3d, presetKey, autoSwitch, showBpm, selected]);
+  }, [mode, scene3d, presetKey, autoSwitch, showBpm, selected, selectedModelId]);
 
   const stepPreset = useCallback((dir: number) => {
     setPresetKey((current) => {
@@ -236,42 +243,107 @@ function App() {
     setPresetKey(PRESET_KEYS[Math.floor(Math.random() * PRESET_KEYS.length)]);
   }, []);
 
-  const onModelFile = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
-    const data = await file.arrayBuffer();
-    modelFileRef.current = {
-      data,
-      name: file.name,
-      seq: (modelFileRef.current?.seq ?? 0) + 1,
-    };
-    setScene3d("model");
-    saveStoredModel(file.name, data)
-      .then(() => flog(`[cfg] model saved: ${file.name}`))
-      .catch((err) => flog(`[cfg] model save FAILED: ${err}`));
+  const nextModelSeq = useCallback(
+    () => (modelFileRef.current?.seq ?? 0) + 1,
+    [],
+  );
+
+  const refreshModels = useCallback(() => {
+    listModels().then(setModels).catch(console.error);
   }, []);
 
-  // Restore the persisted model (works in browser demo mode too).
+  const onModelFile = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-picking the same file
+      if (!file) return;
+      const data = await file.arrayBuffer();
+      modelFileRef.current = {
+        action: "load",
+        data,
+        name: file.name,
+        seq: nextModelSeq(),
+      };
+      setScene3d("model");
+      try {
+        const id = await addModel(file.name, data);
+        setSelectedModelId(id);
+        refreshModels();
+        flog(`[cfg] model saved: ${file.name} (#${id})`);
+      } catch (err) {
+        flog(`[cfg] model save FAILED: ${err}`);
+      }
+    },
+    [nextModelSeq, refreshModels],
+  );
+
+  const pickModel = useCallback(
+    async (value: string) => {
+      if (value === "") {
+        setSelectedModelId(null);
+        modelFileRef.current = { action: "clear", seq: nextModelSeq() };
+        return;
+      }
+      const id = Number(value);
+      try {
+        const record = await getModel(id);
+        if (!record) return;
+        setSelectedModelId(id);
+        modelFileRef.current = {
+          action: "load",
+          data: record.data,
+          name: record.name,
+          seq: nextModelSeq(),
+        };
+      } catch (err) {
+        flog(`[cfg] model pick FAILED: ${err}`);
+      }
+    },
+    [nextModelSeq],
+  );
+
+  const removeSelectedModel = useCallback(async () => {
+    if (selectedModelId == null) return;
+    try {
+      await deleteModel(selectedModelId);
+    } catch (err) {
+      flog(`[cfg] model delete FAILED: ${err}`);
+    }
+    setSelectedModelId(null);
+    modelFileRef.current = { action: "clear", seq: nextModelSeq() };
+    refreshModels();
+  }, [selectedModelId, nextModelSeq, refreshModels]);
+
+  // Restore the model library + last selection (also in browser demo mode).
   const modelRestoredRef = useRef(false);
   useEffect(() => {
     if (modelRestoredRef.current) return;
     modelRestoredRef.current = true;
-    loadStoredModel()
-      .then((m) => {
-        if (m?.data) {
-          modelFileRef.current = {
-            data: m.data,
-            name: m.name,
-            seq: (modelFileRef.current?.seq ?? 0) + 1,
-          };
-          flog(`[cfg] restored model: ${m.name}`);
+    void (async () => {
+      try {
+        const list = await listModels();
+        setModels(list);
+        const id = saved.modelId;
+        if (id != null && list.some((m) => m.id === id)) {
+          const record = await getModel(id);
+          if (record) {
+            setSelectedModelId(id);
+            modelFileRef.current = {
+              action: "load",
+              data: record.data,
+              name: record.name,
+              seq: nextModelSeq(),
+            };
+            flog(`[cfg] restored model: ${record.name}`);
+          }
         }
-      })
-      .catch(() => {});
-  }, []);
+      } catch {
+        // library unavailable — placeholder stays
+      }
+    })();
+  }, [nextModelSeq]);
 
-  // Emergency exit: wipe settings, parameters and the stored model.
+  // Emergency exit: wipe settings, parameters and the model library.
   const resetAll = useCallback(() => {
     try {
       localStorage.removeItem(SETTINGS_KEY);
@@ -279,7 +351,7 @@ function App() {
     } catch {
       // ignore — reload restores defaults either way
     }
-    void clearStoredModel()
+    void clearAllModels()
       .catch(() => {})
       .finally(() => window.location.reload());
   }, []);
@@ -520,17 +592,42 @@ function App() {
             >
               ⟲ Kamera
             </button>
+            {scene3d === "model" && (
+              <>
+                <select
+                  className="src-select model-select"
+                  value={selectedModelId ?? ""}
+                  onChange={(e) => void pickModel(e.target.value)}
+                  title="Modell-Library"
+                >
+                  <option value="">— Platzhalter —</option>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({Math.max(1, Math.round(m.size / 1024))} KB)
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="mode-btn"
+                  disabled={selectedModelId == null}
+                  onClick={() => void removeSelectedModel()}
+                  title="Ausgewähltes Modell aus der Library löschen"
+                >
+                  🗑
+                </button>
+              </>
+            )}
             <button
               className="mode-btn"
               onClick={() => fileInputRef.current?.click()}
-              title="Eigenes glTF/GLB-Modell laden (Szene „model“)"
+              title="Modell zur Library hinzufügen (.glb, .gltf, .zip z.B. von Sketchfab)"
             >
-              Modell laden…
+              + Modell
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".glb,.gltf"
+              accept=".glb,.gltf,.zip"
               style={{ display: "none" }}
               onChange={onModelFile}
             />
@@ -558,7 +655,7 @@ function startVisualizer(
   sceneRef: { current: SceneName },
   onAutoSwitch: () => void,
   bpmEl: { current: HTMLSpanElement | null },
-  modelRef: { current: { data: ArrayBuffer; name: string; seq: number } | null },
+  modelRef: { current: ModelAction | null },
   camResetRef: { current: number },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
@@ -609,7 +706,8 @@ function startVisualizer(
       const m = modelRef.current;
       if (m && m.seq !== loadedModelSeq) {
         loadedModelSeq = m.seq;
-        viz3d.loadModel(m.data, m.name);
+        if (m.action === "load") viz3d.loadModel(m.data, m.name);
+        else viz3d.clearModel();
       }
       if (camResetRef.current !== lastCamReset) {
         lastCamReset = camResetRef.current;

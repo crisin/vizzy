@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { unzipSync } from "fflate";
 import { params } from "./params";
 
 export interface AudioFrame3D {
@@ -738,25 +740,117 @@ class ModelScene implements Scene3D {
     mat.needsUpdate = true;
   }
 
+  /**
+   * Accepts .glb, .gltf (embedded) and .zip archives (e.g. Sketchfab
+   * downloads: scene.gltf + scene.bin + textures/). Zip resources are
+   * mapped to blob URLs through a LoadingManager URL modifier.
+   */
   loadModel(data: ArrayBuffer, name: string) {
-    new GLTFLoader().parse(
-      data,
+    try {
+      const bytes = new Uint8Array(data);
+      const isZip =
+        name.toLowerCase().endsWith(".zip") ||
+        (bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4b);
+      if (isZip) {
+        this.loadFromZip(bytes, name);
+      } else {
+        this.parseGltf(data, name, undefined, null);
+      }
+    } catch (e) {
+      this.log(`[3d] model load FAILED (${name}): ${e}`);
+    }
+  }
+
+  private loadFromZip(bytes: Uint8Array, name: string) {
+    const files = unzipSync(bytes);
+    const names = Object.keys(files).filter((n) => !n.endsWith("/"));
+    const entry =
+      names.find((n) => n.toLowerCase().endsWith(".glb")) ??
+      names.find((n) => n.toLowerCase().endsWith(".gltf"));
+    if (!entry) {
+      this.log(`[3d] model load FAILED (${name}): kein .glb/.gltf im ZIP`);
+      return;
+    }
+
+    const urls = new Map<string, string>();
+    for (const n of names) {
+      urls.set(n, URL.createObjectURL(new Blob([files[n] as BlobPart])));
+    }
+    const baseDir = entry.includes("/")
+      ? entry.slice(0, entry.lastIndexOf("/") + 1)
+      : "";
+
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => {
+      if (
+        url.startsWith("blob:") ||
+        url.startsWith("data:") ||
+        url.includes("/draco/")
+      ) {
+        return url;
+      }
+      const clean = decodeURIComponent(url).replace(/^\.\//, "");
+      const direct = urls.get(clean) ?? urls.get(baseDir + clean);
+      if (direct) return direct;
+      const base = clean.split("/").pop() ?? clean;
+      for (const [n, u] of urls) {
+        if (n === base || n.endsWith("/" + base)) return u;
+      }
+      return url;
+    });
+
+    const cleanup = () => {
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+    };
+    const entryBytes = files[entry];
+    const payload: ArrayBuffer | string = entry.toLowerCase().endsWith(".glb")
+      ? (entryBytes.buffer.slice(
+          entryBytes.byteOffset,
+          entryBytes.byteOffset + entryBytes.byteLength,
+        ) as ArrayBuffer)
+      : new TextDecoder().decode(entryBytes);
+    this.parseGltf(payload, `${name} → ${entry}`, manager, cleanup);
+  }
+
+  private parseGltf(
+    data: ArrayBuffer | string,
+    name: string,
+    manager: THREE.LoadingManager | undefined,
+    cleanup: (() => void) | null,
+  ) {
+    const loader = new GLTFLoader(manager);
+    const draco = new DRACOLoader(manager);
+    draco.setDecoderPath("/draco/");
+    loader.setDRACOLoader(draco);
+    const done = () => {
+      cleanup?.();
+      draco.dispose();
+    };
+    loader.parse(
+      data as ArrayBuffer,
       "",
       (gltf) => {
-        this.clearHolder();
-        const obj = gltf.scene;
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        obj.position.sub(center);
-        const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        this.baseScale = 2.4 / maxDim;
-        this.explodeScale = maxDim * 0.25;
-        this.holder.add(obj);
-        this.prepareExplode(obj);
-        this.log(`[3d] model loaded: ${name}`);
+        try {
+          this.clearHolder();
+          const obj = gltf.scene;
+          const box = new THREE.Box3().setFromObject(obj);
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+          obj.position.sub(center);
+          const maxDim = Math.max(size.x, size.y, size.z) || 1;
+          this.baseScale = 2.4 / maxDim;
+          this.explodeScale = maxDim * 0.25;
+          this.holder.add(obj);
+          this.prepareExplode(obj);
+          this.log(`[3d] model loaded: ${name}`);
+        } catch (e) {
+          this.log(`[3d] model setup FAILED (${name}): ${e}`);
+        } finally {
+          done();
+        }
       },
       (err) => {
+        done();
         this.log(`[3d] model load FAILED (${name}): ${err}`);
       },
     );
@@ -907,11 +1001,21 @@ export class Viz3D {
     }
   }
 
-  /** Load a glTF/GLB into the model scene (kept for later scene switches). */
+  /** Load a glTF/GLB/ZIP into the model scene (kept for scene switches). */
   loadModel(data: ArrayBuffer, name: string) {
     this.pendingModel = { data, name };
     if (this.active instanceof ModelScene) {
       this.active.loadModel(data, name);
+    }
+  }
+
+  /** Back to the placeholder (recreates the model scene without a model). */
+  clearModel() {
+    this.pendingModel = null;
+    if (this.active instanceof ModelScene) {
+      this.active.dispose();
+      this.active = this.create("model");
+      this.setupControls();
     }
   }
 
