@@ -8,7 +8,7 @@ import { params } from "./params";
 import { EditorPanel } from "./EditorPanel";
 import "./App.css";
 
-const HEADER = 6; // [rms, peak, n_bands, n_wave, beat, flux]
+const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
 const PEAK_GRAVITY = 0.5; // units/s
 const HUD_HIDE_MS = 2500;
 
@@ -51,6 +51,7 @@ type Persisted = {
   scene3d?: SceneName;
   presetKey?: string;
   autoSwitch?: boolean;
+  showBpm?: boolean;
   sourceValue?: string;
 };
 
@@ -81,7 +82,9 @@ function App() {
       : (PRESET_KEYS[0] ?? ""),
   );
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
+  const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const bpmElRef = useRef<HTMLSpanElement | null>(null);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -194,6 +197,7 @@ function App() {
       scene3d,
       presetKey,
       autoSwitch,
+      showBpm,
       sourceValue: selected,
     };
     try {
@@ -201,7 +205,7 @@ function App() {
     } catch {
       // storage unavailable — not worth breaking the app over
     }
-  }, [mode, scene3d, presetKey, autoSwitch, selected]);
+  }, [mode, scene3d, presetKey, autoSwitch, showBpm, selected]);
 
   const stepPreset = useCallback((dir: number) => {
     setPresetKey((current) => {
@@ -228,6 +232,7 @@ function App() {
       autoRef,
       sceneRef,
       randomPreset,
+      bpmElRef,
     );
   }, [randomPreset]);
 
@@ -249,6 +254,8 @@ function App() {
         void toggleFullscreen();
       } else if (e.key === "e") {
         setEditorOpen((v) => !v);
+      } else if (e.key === "b") {
+        setShowBpm((v) => !v);
       } else if (e.key === "Escape" && inTauri) {
         void getCurrentWindow().setFullscreen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
@@ -300,7 +307,7 @@ function App() {
       <canvas ref={gl3dCanvasRef} id="viz3d" />
       <canvas ref={canvasRef} id="viz" />
       <div className={`hud ${hudVisible ? "" : "hidden"}`}>
-        <div className="hud-left">
+        <div className="hud-row">
           <span className="brand">VIZZY</span>
           {inTauri ? (
             <select
@@ -336,68 +343,18 @@ function App() {
               </optgroup>
             </select>
           ) : (
-            <span className="demo-tag">Demo-Modus (Browser)</span>
+            <span className="demo-tag">Demo</span>
           )}
-          {mode === "milkdrop" && (
-            <span className="preset-controls">
-              <button
-                className="mode-btn"
-                onClick={() => stepPreset(-1)}
-                title="Vorheriges Preset (←)"
-              >
-                ‹
-              </button>
-              <select
-                className="src-select preset-select"
-                value={presetKey}
-                onChange={(e) => setPresetKey(e.target.value)}
-                title="Milkdrop-Preset"
-              >
-                {PRESET_KEYS.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="mode-btn"
-                onClick={() => stepPreset(1)}
-                title="Nächstes Preset (→)"
-              >
-                ›
-              </button>
-              <button
-                className="mode-btn"
-                onClick={randomPreset}
-                title="Zufälliges Preset (R)"
-              >
-                🎲
-              </button>
-              <button
-                className={`mode-btn ${autoSwitch ? "active" : ""}`}
-                onClick={() => setAutoSwitch((v) => !v)}
-                title="Auto-Wechsel bei Beats (A)"
-              >
-                auto
-              </button>
+          <span className="hud-spacer" />
+          {showBpm && (
+            <span
+              className="bpm-badge"
+              ref={bpmElRef}
+              title="Geschätztes Tempo"
+            >
+              · · ·
             </span>
           )}
-          {mode === "3d" && (
-            <span className="preset-controls">
-              {SCENE_NAMES.map((s) => (
-                <button
-                  key={s}
-                  className={`mode-btn ${scene3d === s ? "active" : ""}`}
-                  onClick={() => setScene3d(s)}
-                  title="Szene (←/→)"
-                >
-                  {s}
-                </button>
-              ))}
-            </span>
-          )}
-        </div>
-        <div className="hud-right">
           {VIZ_MODES.map((m, i) => (
             <button
               key={m}
@@ -408,6 +365,13 @@ function App() {
               {m}
             </button>
           ))}
+          <button
+            className={`mode-btn ${showBpm ? "active" : ""}`}
+            onClick={() => setShowBpm((v) => !v)}
+            title="BPM-Anzeige (B)"
+          >
+            bpm
+          </button>
           <button
             className={`mode-btn ${editorOpen ? "active" : ""}`}
             onClick={() => setEditorOpen((v) => !v)}
@@ -423,6 +387,64 @@ function App() {
             ⛶
           </button>
         </div>
+        {mode === "milkdrop" && (
+          <div className="hud-row hud-sub">
+            <button
+              className="mode-btn"
+              onClick={() => stepPreset(-1)}
+              title="Vorheriges Preset (←)"
+            >
+              ‹
+            </button>
+            <select
+              className="src-select preset-select"
+              value={presetKey}
+              onChange={(e) => setPresetKey(e.target.value)}
+              title="Milkdrop-Preset"
+            >
+              {PRESET_KEYS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+            <button
+              className="mode-btn"
+              onClick={() => stepPreset(1)}
+              title="Nächstes Preset (→)"
+            >
+              ›
+            </button>
+            <button
+              className="mode-btn"
+              onClick={randomPreset}
+              title="Zufälliges Preset (R)"
+            >
+              🎲
+            </button>
+            <button
+              className={`mode-btn ${autoSwitch ? "active" : ""}`}
+              onClick={() => setAutoSwitch((v) => !v)}
+              title="Auto-Wechsel bei Beats (A)"
+            >
+              auto
+            </button>
+          </div>
+        )}
+        {mode === "3d" && (
+          <div className="hud-row hud-sub">
+            {SCENE_NAMES.map((s) => (
+              <button
+                key={s}
+                className={`mode-btn ${scene3d === s ? "active" : ""}`}
+                onClick={() => setScene3d(s)}
+                title="Szene (←/→)"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {editorOpen && (
         <EditorPanel
@@ -443,6 +465,7 @@ function startVisualizer(
   autoRef: { current: boolean },
   sceneRef: { current: SceneName },
   onAutoSwitch: () => void,
+  bpmEl: { current: HTMLSpanElement | null },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -454,6 +477,8 @@ function startVisualizer(
   let wave = new Float32Array(1024);
   let rms = 0;
   let beat = 0;
+  let bpm = 0;
+  let bpmConf = 0;
   let prevBeat = 0;
   let lastAutoSwitch = 0;
 
@@ -581,6 +606,8 @@ function startVisualizer(
       const nWave = f[3] | 0;
       rms = f[0];
       beat = f[4];
+      bpm = f[6];
+      bpmConf = f[7];
       bands = f.subarray(HEADER, HEADER + nBands);
       wave = f.subarray(HEADER + nBands, HEADER + nBands + nWave);
       if (disp.length !== nBands) {
@@ -609,6 +636,8 @@ function startVisualizer(
     }
     rms = 0.2 + 0.1 * Math.sin(t * 2.2);
     beat = Math.pow(0.5 + 0.5 * Math.sin(t * 4.2), 12);
+    bpm = 128;
+    bpmConf = 0.9;
   }
 
   let gradient: CanvasGradient | null = null;
@@ -682,6 +711,14 @@ function startVisualizer(
       render3D(dt, now / 1000);
     } else {
       draw();
+    }
+
+    const el = bpmEl.current;
+    if (el) {
+      const text =
+        bpmConf > 0.3 && bpm > 40 ? `${Math.round(bpm)} BPM` : "· · ·";
+      if (el.textContent !== text) el.textContent = text;
+      el.style.transform = `scale(${(1 + beat * 0.15).toFixed(3)})`;
     }
 
     raf = requestAnimationFrame(frame);

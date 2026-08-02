@@ -74,8 +74,9 @@ pub struct AppInfo {
     pub active: bool, // at least one stream currently playing
 }
 
-/// Frame header layout: `[rms, peak, n_bands, n_wave, beat, flux]`
-pub const HEADER: usize = 6;
+/// Frame header layout:
+/// `[rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]`
+pub const HEADER: usize = 8;
 const FLUX_HISTORY: usize = 188; // ~2 s of hops for the adaptive threshold
 const BEAT_REFRACTORY_HOPS: usize = 11; // ~120 ms
 
@@ -125,6 +126,9 @@ struct Analyzer {
     beat_env: f32,
     hops_since_beat: usize,
     beats: u64,
+    beat_times: VecDeque<f32>, // seconds (analysis time), most recent last
+    bpm: f32,
+    bpm_conf: f32,
     published: u64,
 }
 
@@ -168,8 +172,50 @@ impl Analyzer {
             beat_env: 0.0,
             hops_since_beat: 0,
             beats: 0,
+            beat_times: VecDeque::with_capacity(24),
+            bpm: 0.0,
+            bpm_conf: 0.0,
             published: 0,
         }
+    }
+
+    /// Estimate BPM from the median inter-onset interval of recent beats.
+    /// Intervals are folded into the 70–180 BPM octave so half/double-time
+    /// onsets (hats, snares) still vote for the same tempo.
+    fn update_bpm(&mut self) {
+        let mut iois: Vec<f32> = Vec::with_capacity(self.beat_times.len());
+        let mut prev: Option<f32> = None;
+        for &t in self.beat_times.iter() {
+            if let Some(p) = prev {
+                let mut d = t - p;
+                if d > 0.15 && d < 2.5 {
+                    while d < 60.0 / 180.0 {
+                        d *= 2.0;
+                    }
+                    while d > 60.0 / 70.0 {
+                        d /= 2.0;
+                    }
+                    iois.push(d);
+                }
+            }
+            prev = Some(t);
+        }
+        if iois.len() < 3 {
+            return;
+        }
+        iois.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = iois[iois.len() / 2];
+        let agreeing = iois
+            .iter()
+            .filter(|d| (**d - median).abs() < median * 0.1)
+            .count();
+        self.bpm_conf = agreeing as f32 / iois.len() as f32;
+        let instant = 60.0 / median;
+        self.bpm = if self.bpm > 0.0 {
+            self.bpm * 0.8 + instant * 0.2
+        } else {
+            instant
+        };
     }
 
     fn push(&mut self, sample: f32) {
@@ -248,6 +294,12 @@ impl Analyzer {
             self.beat_env = 1.0;
             self.hops_since_beat = 0;
             self.beats += 1;
+            let now_s = self.published as f32 * HOP as f32 / SAMPLE_RATE as f32;
+            if self.beat_times.len() == 24 {
+                self.beat_times.pop_front();
+            }
+            self.beat_times.push_back(now_s);
+            self.update_bpm();
         } else {
             self.beat_env *= 0.88;
         }
@@ -261,8 +313,8 @@ impl Analyzer {
         if self.published % 470 == 0 {
             // ~every 5 s at 94 frames/s
             eprintln!(
-                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={}",
-                self.published, self.beats
+                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={} bpm={:.1} conf={:.2}",
+                self.published, self.beats, self.bpm, self.bpm_conf
             );
         }
 
@@ -271,6 +323,8 @@ impl Analyzer {
         frame[1] = peak;
         frame[4] = self.beat_env;
         frame[5] = flux_norm;
+        frame[6] = self.bpm;
+        frame[7] = self.bpm_conf;
         for (i, b) in self.bands.iter().enumerate() {
             frame[HEADER + i] = *b;
         }
