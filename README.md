@@ -32,4 +32,10 @@ demo data (no audio capture).
 - Settings persist across restarts (localStorage): mode, 3D scene,
   Milkdrop preset, auto-switch, and source (apps re-matched by process
   name since PIDs change).
+- Parameter editor (key E / gear icon): every visualization declares its
+  tunable parameters as a schema, the panel renders them generically —
+  audio sensitivity/attack/release, beat threshold (live into the Rust
+  analyzer), plus per-viz controls. Values persist. This schema system
+  is the foundation for the future custom-visualization editor.
+- Third 3D scene "tunnel": fly through spectrum-shaped rings.
 - macOS backend (Core Audio taps) not wired up yet.

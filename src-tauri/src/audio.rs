@@ -27,6 +27,19 @@ const DB_FLOOR: f32 = 60.0;
 
 pub type SharedAnalysis = Arc<Mutex<Vec<f32>>>;
 
+/// Runtime-tunable analysis parameters (set from the frontend editor).
+pub struct AnalysisParams {
+    pub beat_sigma: f32,
+}
+
+impl Default for AnalysisParams {
+    fn default() -> Self {
+        Self { beat_sigma: 1.5 }
+    }
+}
+
+pub type SharedParams = Arc<Mutex<AnalysisParams>>;
+
 /// Which audio source to capture. `device_id: None` = default device.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -73,13 +86,13 @@ pub fn empty_frame() -> Vec<f32> {
     frame
 }
 
-pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>) {
+pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>, params: SharedParams) {
     std::thread::Builder::new()
         .name("vizzy-audio".into())
         .spawn(move || {
             let mut spec = SourceSpec::Loopback { device_id: None };
             loop {
-                match capture_loop(&shared, &spec, &rx) {
+                match capture_loop(&shared, &spec, &rx, &params) {
                     Ok(Some(next)) => spec = next,
                     Ok(None) => {}
                     Err(e) => {
@@ -105,6 +118,7 @@ struct Analyzer {
     in_buf: Vec<f32>,
     spectrum: Vec<realfft::num_complex::Complex<f32>>,
     band_edges: Vec<usize>,
+    params: SharedParams,
     bands: Vec<f32>,
     prev_bands: Vec<f32>,
     flux_hist: VecDeque<f32>,
@@ -115,7 +129,7 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn new() -> Self {
+    fn new(params: SharedParams) -> Self {
         let mut planner = realfft::RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let in_buf = fft.make_input_vec();
@@ -147,6 +161,7 @@ impl Analyzer {
             in_buf,
             spectrum,
             band_edges,
+            params,
             bands: vec![0.0; NUM_BANDS],
             prev_bands: vec![0.0; NUM_BANDS],
             flux_hist: VecDeque::with_capacity(FLUX_HISTORY),
@@ -223,9 +238,10 @@ impl Analyzer {
         let var = self.flux_hist.iter().map(|f| (f - mean).powi(2)).sum::<f32>() / n;
         let std = var.sqrt();
 
+        let sigma = self.params.lock().map(|p| p.beat_sigma).unwrap_or(1.5);
         self.hops_since_beat += 1;
         let is_beat = self.flux_hist.len() > 20
-            && flux > mean + 1.5 * std
+            && flux > mean + sigma * std
             && flux > 0.05
             && self.hops_since_beat > BEAT_REFRACTORY_HOPS;
         if is_beat {
@@ -407,6 +423,7 @@ fn capture_loop(
     shared: &SharedAnalysis,
     spec: &SourceSpec,
     rx: &Receiver<SourceSpec>,
+    params: &SharedParams,
 ) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
     use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
@@ -437,7 +454,7 @@ fn capture_loop(
     let block_align = format.get_blockalign() as usize;
 
     let mut bytes: VecDeque<u8> = VecDeque::with_capacity(64 * 1024);
-    let mut analyzer = Analyzer::new();
+    let mut analyzer = Analyzer::new(params.clone());
 
     client.start_stream()?;
     loop {
@@ -503,10 +520,11 @@ fn capture_loop(
     shared: &SharedAnalysis,
     _spec: &SourceSpec,
     rx: &Receiver<SourceSpec>,
+    params: &SharedParams,
 ) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
     // macOS backend (Core Audio taps via `cidre`) lands in the Mac spike.
     eprintln!("[vizzy-audio] no capture backend for this OS yet — publishing silence");
-    let mut analyzer = Analyzer::new();
+    let mut analyzer = Analyzer::new(params.clone());
     loop {
         analyzer.decay_publish(shared);
         if let Ok(next) = rx.recv_timeout(Duration::from_millis(100)) {

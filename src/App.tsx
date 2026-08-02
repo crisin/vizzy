@@ -4,14 +4,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import butterchurn, { type BCVisualizer } from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
+import { params } from "./params";
+import { EditorPanel } from "./EditorPanel";
 import "./App.css";
 
 const HEADER = 6; // [rms, peak, n_bands, n_wave, beat, flux]
-const ATTACK_TAU = 0.035; // s — fast rise
-const RELEASE_TAU = 0.22; // s — slow fall
 const PEAK_GRAVITY = 0.5; // units/s
 const HUD_HIDE_MS = 2500;
-const PRESET_BLEND_S = 2.7;
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -82,6 +81,7 @@ function App() {
       : (PRESET_KEYS[0] ?? ""),
   );
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -169,6 +169,11 @@ function App() {
             value = savedVal;
           }
         }
+        // sync persisted beat sensitivity into the Rust analyzer
+        void invoke("set_beat_sensitivity", {
+          sigma: params.get("audio", "beatSigma"),
+        }).catch(console.error);
+
         if (value) {
           flog(`[cfg] restoring source: ${value.split("|")[0]}`);
           await selectSource(value);
@@ -242,6 +247,8 @@ function App() {
       if (e.key === "f" || e.key === "F11") {
         e.preventDefault();
         void toggleFullscreen();
+      } else if (e.key === "e") {
+        setEditorOpen((v) => !v);
       } else if (e.key === "Escape" && inTauri) {
         void getCurrentWindow().setFullscreen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
@@ -402,6 +409,13 @@ function App() {
             </button>
           ))}
           <button
+            className={`mode-btn ${editorOpen ? "active" : ""}`}
+            onClick={() => setEditorOpen((v) => !v)}
+            title="Parameter-Editor (E)"
+          >
+            ⚙
+          </button>
+          <button
             className="mode-btn"
             onClick={() => void toggleFullscreen()}
             title="Fullscreen (F)"
@@ -410,6 +424,12 @@ function App() {
           </button>
         </div>
       </div>
+      {editorOpen && (
+        <EditorPanel
+          groups={["audio", mode === "3d" ? scene3d : mode]}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -509,7 +529,7 @@ function startVisualizer(
     // beat-driven auto preset switching (rising edge + cooldown)
     if (autoRef.current && beat >= 0.95 && prevBeat < 0.95) {
       const nowMs = performance.now();
-      if (nowMs - lastAutoSwitch > 30000) {
+      if (nowMs - lastAutoSwitch > params.get("milkdrop", "cooldown") * 1000) {
         lastAutoSwitch = nowMs;
         onAutoSwitch();
       }
@@ -519,7 +539,10 @@ function startVisualizer(
     const want = presetKeyRef.current;
     if (want !== bcLoadedPreset && PRESETS[want]) {
       try {
-        bc.loadPreset(PRESETS[want], bcLoadedPreset ? PRESET_BLEND_S : 0);
+        bc.loadPreset(
+          PRESETS[want],
+          bcLoadedPreset ? params.get("milkdrop", "blend") : 0,
+        );
         bcLoadedPreset = want;
         flog(`[md] preset: ${want}`);
       } catch (e) {
@@ -642,10 +665,13 @@ function startVisualizer(
     if (inTauri) fetchFrame();
     else mockFrame(now / 1000);
 
-    const attack = 1 - Math.exp(-dt / ATTACK_TAU);
-    const release = 1 - Math.exp(-dt / RELEASE_TAU);
+    const gain = params.get("audio", "gain");
+    const attackTau = params.get("audio", "attack") / 1000;
+    const releaseTau = params.get("audio", "release") / 1000;
+    const attack = 1 - Math.exp(-dt / attackTau);
+    const release = 1 - Math.exp(-dt / releaseTau);
     for (let i = 0; i < disp.length; i++) {
-      const target = bands[i];
+      const target = Math.min(1, bands[i] * gain);
       disp[i] += (target - disp[i]) * (target > disp[i] ? attack : release);
       peaks[i] = Math.max(peaks[i] - PEAK_GRAVITY * dt, disp[i]);
     }
@@ -666,8 +692,9 @@ function startVisualizer(
     const h = canvas.height;
     const dpr = window.devicePixelRatio || 1;
 
-    // translucent clear → motion trails
-    ctx.fillStyle = "rgba(7, 7, 12, 0.35)";
+    // translucent clear → motion trails (lower alpha = longer trails)
+    const trail = params.get(modeRef.current, "trail") || 0.35;
+    ctx.fillStyle = `rgba(7, 7, 12, ${trail.toFixed(2)})`;
     ctx.fillRect(0, 0, w, h);
 
     // subtle beat flash
@@ -708,7 +735,7 @@ function startVisualizer(
     const n = disp.length;
     const gap = Math.max(1, w * 0.0025);
     const bw = (w - gap * (n + 1)) / n;
-    const maxBar = h * 0.72;
+    const maxBar = h * params.get("bars", "height");
 
     ctx.fillStyle = gradient!;
     ctx.beginPath();
@@ -737,8 +764,11 @@ function startVisualizer(
     const cx = w / 2;
     const cy = h / 2;
     const base = Math.min(w, h);
-    const R = base * 0.2 * (1 + rms * 0.9 + beat * 0.12);
-    const maxLen = base * 0.26;
+    const R =
+      base *
+      params.get("radial", "radius") *
+      (1 + rms * 0.9 + beat * params.get("radial", "pulse"));
+    const maxLen = base * params.get("radial", "spokes");
     const lw = Math.max(2, ((Math.PI * R) / n) * 0.7);
 
     ctx.lineCap = "round";
@@ -778,9 +808,13 @@ function startVisualizer(
   }
 
   function drawScope(w: number, h: number, dpr: number) {
+    const amp = h * params.get("scope", "amp");
+    const glow = params.get("scope", "glow");
     // wide soft glow pass, then bright core
-    drawWaveLine(w, h * 0.5, h * 0.32, "rgba(56, 189, 248, 0.18)", 12 * dpr);
-    drawWaveLine(w, h * 0.5, h * 0.32, "#7dd3fc", 2 * dpr);
+    if (glow > 0) {
+      drawWaveLine(w, h * 0.5, amp, "rgba(56, 189, 248, 0.18)", glow * dpr);
+    }
+    drawWaveLine(w, h * 0.5, amp, "#7dd3fc", 2 * dpr);
 
     // low bar strip at the bottom
     const n = disp.length;

@@ -133,3 +133,79 @@ body {
   border-color: #38bdf8;
   color: #e0f2fe;
 }
+
+.editor-panel {
+  position: fixed;
+  top: 52px;
+  right: 14px;
+  width: 300px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  background: rgba(10, 12, 20, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #cbd5e1;
+  font-size: 13px;
+  backdrop-filter: blur(6px);
+}
+
+.editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
+
+.editor-group {
+  margin-bottom: 14px;
+}
+
+.editor-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #94a3b8;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  margin-bottom: 6px;
+}
+
+.editor-reset {
+  font-size: 11px;
+  padding: 2px 7px;
+}
+
+.editor-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.editor-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 44px;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+}
+
+.editor-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-value {
+  text-align: right;
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-row input[type="range"] {
+  width: 100%;
+  accent-color: #38bdf8;
+}

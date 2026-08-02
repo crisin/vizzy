@@ -5,6 +5,7 @@ use std::sync::{mpsc, Arc, Mutex};
 struct AudioState {
     shared: audio::SharedAnalysis,
     control: mpsc::Sender<audio::SourceSpec>,
+    params: audio::SharedParams,
 }
 
 /// Returns the latest analysis frame as raw little-endian f32 bytes:
@@ -37,6 +38,23 @@ fn set_source(
     state.control.send(spec).map_err(|e| e.to_string())
 }
 
+/// Beat detection threshold in standard deviations above the running mean
+/// of the spectral flux — lower = more sensitive.
+#[tauri::command]
+fn set_beat_sensitivity(
+    sigma: f32,
+    state: tauri::State<'_, AudioState>,
+) -> Result<(), String> {
+    let sigma = sigma.clamp(0.5, 3.0);
+    state
+        .params
+        .lock()
+        .map_err(|e| e.to_string())?
+        .beat_sigma = sigma;
+    eprintln!("[vizzy-audio] beat sigma = {sigma}");
+    Ok(())
+}
+
 /// Lets the webview surface errors/status into the dev console output,
 /// since the webview's own console is not visible in `tauri dev` logs.
 #[tauri::command]
@@ -47,20 +65,24 @@ fn frontend_log(msg: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shared: audio::SharedAnalysis = Arc::new(Mutex::new(audio::empty_frame()));
+    let params: audio::SharedParams =
+        Arc::new(Mutex::new(audio::AnalysisParams::default()));
     let (tx, rx) = mpsc::channel();
-    audio::spawn_capture(shared.clone(), rx);
+    audio::spawn_capture(shared.clone(), rx, params.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AudioState {
             shared,
             control: tx,
+            params,
         })
         .invoke_handler(tauri::generate_handler![
             get_analysis_frame,
             list_sources,
             list_apps,
             set_source,
+            set_beat_sensitivity,
             frontend_log
         ])
         .run(tauri::generate_context!())
