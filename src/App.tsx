@@ -47,6 +47,24 @@ function splitOnce(v: string, sep: string): [string, string] {
   return [v.slice(0, i), v.slice(i + 1)];
 }
 
+type Persisted = {
+  mode?: VizMode;
+  scene3d?: SceneName;
+  presetKey?: string;
+  autoSwitch?: boolean;
+  sourceValue?: string;
+};
+
+const SETTINGS_KEY = "vizzy.settings.v1";
+
+const saved: Persisted = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Persisted;
+  } catch {
+    return {};
+  }
+})();
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mdCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -55,10 +73,20 @@ function App() {
   const presetKeyRef = useRef<string>(PRESET_KEYS[0] ?? "");
   const autoRef = useRef(false);
   const sceneRef = useRef<SceneName>("orb");
-  const [mode, setMode] = useState<VizMode>("bars");
-  const [presetKey, setPresetKey] = useState(PRESET_KEYS[0] ?? "");
-  const [autoSwitch, setAutoSwitch] = useState(false);
-  const [scene3d, setScene3d] = useState<SceneName>("orb");
+  const [mode, setMode] = useState<VizMode>(
+    saved.mode && VIZ_MODES.includes(saved.mode) ? saved.mode : "bars",
+  );
+  const [presetKey, setPresetKey] = useState(
+    saved.presetKey && PRESET_KEYS.includes(saved.presetKey)
+      ? saved.presetKey
+      : (PRESET_KEYS[0] ?? ""),
+  );
+  const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
+  const [scene3d, setScene3d] = useState<SceneName>(
+    saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
+      ? saved.scene3d
+      : "orb",
+  );
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [selected, setSelected] = useState("");
@@ -95,10 +123,6 @@ function App() {
     invoke<AppInfo[]>("list_apps").then(setApps).catch(console.error);
   }, []);
 
-  useEffect(() => {
-    loadLists();
-  }, [loadLists]);
-
   const selectSource = useCallback(async (value: string) => {
     setSelected(value);
     const [kind, rest] = splitOnce(value, "|");
@@ -115,6 +139,64 @@ function App() {
       console.error("set_source failed", e);
     }
   }, []);
+
+  // On startup: load lists once and restore the persisted source. App
+  // sources are re-matched by process name (PIDs change across reboots);
+  // anything stale falls back to default loopback. Ref-guarded so React
+  // StrictMode's double effect run doesn't queue two source switches.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!inTauri || restoredRef.current) return;
+    restoredRef.current = true;
+    void (async () => {
+      try {
+        const [srcs, appList] = await Promise.all([
+          invoke<SourceInfo[]>("list_sources"),
+          invoke<AppInfo[]>("list_apps"),
+        ]);
+        setSources(srcs);
+        setApps(appList);
+
+        let value = "";
+        const savedVal = saved.sourceValue;
+        if (savedVal) {
+          const [kind, rest] = splitOnce(savedVal, "|");
+          if (kind === "app") {
+            const [, name] = splitOnce(rest, "|");
+            const match = appList.find((a) => a.name === name);
+            if (match) value = `app|${match.pid}|${match.name}`;
+          } else if (srcs.some((s) => `${s.kind}|${s.id}` === savedVal)) {
+            value = savedVal;
+          }
+        }
+        if (value) {
+          flog(`[cfg] restoring source: ${value.split("|")[0]}`);
+          await selectSource(value);
+        } else {
+          const def = srcs.find((s) => s.kind === "loopback" && s.is_default);
+          if (def) setSelected(`loopback|${def.id}`);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, [selectSource]);
+
+  // Persist settings on every change.
+  useEffect(() => {
+    const data: Persisted = {
+      mode,
+      scene3d,
+      presetKey,
+      autoSwitch,
+      sourceValue: selected,
+    };
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+    } catch {
+      // storage unavailable — not worth breaking the app over
+    }
+  }, [mode, scene3d, presetKey, autoSwitch, selected]);
 
   const stepPreset = useCallback((dir: number) => {
     setPresetKey((current) => {

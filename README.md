@@ -27,5 +27,9 @@ demo data (no audio capture).
   on beats ("auto" toggle / key A, 30s cooldown).
 - 3D mode (three.js, key 5): "orb" particle sphere and "terrain"
   spectrogram mountains, scene switch with arrow keys.
-- Next: per-app capture (process loopback), settings persistence.
+- Per-app capture (Windows process loopback): pick a single app (e.g.
+  Spotify) from the source dropdown; list refreshes on open.
+- Settings persist across restarts (localStorage): mode, 3D scene,
+  Milkdrop preset, auto-switch, and source (apps re-matched by process
+  name since PIDs change).
 - macOS backend (Core Audio taps) not wired up yet.
