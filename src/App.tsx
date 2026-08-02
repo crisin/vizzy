@@ -576,9 +576,11 @@ function startVisualizer(
       }
     }
 
+    // sensitivity applies to the waveform butterchurn analyzes, too
+    const gain = params.get("audio", "gain");
     const n = Math.min(wave.length, timeByte.length);
     for (let j = 0; j < n; j++) {
-      const v = Math.max(-1, Math.min(1, wave[j]));
+      const v = Math.max(-1, Math.min(1, wave[j] * gain));
       timeByte[j] = (v * 127 + 128) | 0;
     }
     try {
