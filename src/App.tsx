@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -23,6 +24,23 @@ import {
 } from "./modelStore";
 import { loadModelObject, renderModelThumb } from "./modelLoader";
 import { LibraryModal } from "./LibraryModal";
+import { routing } from "./listeners";
+import { RoutingModal } from "./RoutingModal";
+import { MdTweakPanel } from "./MdTweakPanel";
+import {
+  deleteUserPreset,
+  loadUserPresets,
+  saveUserPreset,
+} from "./mdTweaks";
+
+/** Shallow preset copy with baseVals overrides applied. */
+function mergeBaseVals(
+  preset: unknown,
+  overrides: Record<string, number>,
+): unknown {
+  const p = preset as { baseVals?: Record<string, unknown> };
+  return { ...p, baseVals: { ...(p.baseVals ?? {}), ...overrides } };
+}
 
 type ModelAction =
   | { action: "load"; data: ArrayBuffer; name: string; seq: number }
@@ -109,11 +127,19 @@ function App() {
   const [mode, setMode] = useState<VizMode>(
     saved.mode && VIZ_MODES.includes(saved.mode) ? saved.mode : "bars",
   );
-  const [presetKey, setPresetKey] = useState(
-    saved.presetKey && PRESET_KEYS.includes(saved.presetKey)
-      ? saved.presetKey
-      : (PRESET_KEYS[0] ?? ""),
-  );
+  const [userPresets, setUserPresets] = useState(loadUserPresets);
+  const [presetKey, setPresetKey] = useState(() => {
+    const k = saved.presetKey;
+    if (!k) return PRESET_KEYS[0] ?? "";
+    if (PRESET_KEYS.includes(k)) return k;
+    if (
+      k.startsWith("user:") &&
+      loadUserPresets().some((p) => `user:${p.name}` === k)
+    ) {
+      return k;
+    }
+    return PRESET_KEYS[0] ?? "";
+  });
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -134,6 +160,13 @@ function App() {
   const [models, setModels] = useState<ModelMeta[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
+  const [tweakOpen, setTweakOpen] = useState(false);
+  const [mdOverrides, setMdOverrides] = useState<Record<string, number>>({});
+  const overridesRef = useRef({
+    version: 0,
+    map: {} as Record<string, number>,
+  });
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -168,6 +201,78 @@ function App() {
   useEffect(() => {
     blendRef.current = blendMode;
   }, [blendMode]);
+
+  useEffect(() => {
+    overridesRef.current = {
+      version: overridesRef.current.version + 1,
+      map: mdOverrides,
+    };
+  }, [mdOverrides]);
+
+  // switching presets discards unsaved tweaks
+  useEffect(() => {
+    setMdOverrides({});
+  }, [presetKey]);
+
+  const resolvePreset = useCallback(
+    (key: string): unknown | null => {
+      if (key.startsWith("user:")) {
+        const up = userPresets.find((p) => p.name === key.slice(5));
+        if (!up) return null;
+        const base = PRESETS[up.base];
+        if (!base) return null;
+        return mergeBaseVals(base, up.overrides);
+      }
+      return PRESETS[key] ?? null;
+    },
+    [userPresets],
+  );
+  const resolvePresetRef = useRef(resolvePreset);
+  useEffect(() => {
+    resolvePresetRef.current = resolvePreset;
+  }, [resolvePreset]);
+
+  const allPresetKeys = useMemo(
+    () => [...userPresets.map((p) => `user:${p.name}`), ...PRESET_KEYS],
+    [userPresets],
+  );
+
+  const currentBaseVals = useMemo(() => {
+    const p = resolvePreset(presetKey) as {
+      baseVals?: Record<string, unknown>;
+    } | null;
+    return p?.baseVals ?? {};
+  }, [resolvePreset, presetKey]);
+
+  const saveTweaks = useCallback(
+    (name: string) => {
+      const currentUser = presetKey.startsWith("user:")
+        ? userPresets.find((p) => p.name === presetKey.slice(5))
+        : undefined;
+      const baseKey = currentUser?.base ?? presetKey;
+      const list = saveUserPreset({
+        name,
+        base: baseKey,
+        overrides: { ...(currentUser?.overrides ?? {}), ...mdOverrides },
+      });
+      setUserPresets(list);
+      setPresetKey(`user:${name}`);
+      flog(`[md] user preset saved: ${name}`);
+    },
+    [presetKey, userPresets, mdOverrides],
+  );
+
+  const removeUserPreset = useCallback(
+    (name: string) => {
+      const up = userPresets.find((p) => p.name === name);
+      const list = deleteUserPreset(name);
+      setUserPresets(list);
+      if (presetKey === `user:${name}`) {
+        setPresetKey(up && PRESETS[up.base] ? up.base : (PRESET_KEYS[0] ?? ""));
+      }
+    },
+    [userPresets, presetKey],
+  );
 
   const loadLists = useCallback(() => {
     if (!inTauri) return;
@@ -277,16 +382,23 @@ function App() {
     blendMode,
   ]);
 
-  const stepPreset = useCallback((dir: number) => {
-    setPresetKey((current) => {
-      const i = PRESET_KEYS.indexOf(current);
-      return PRESET_KEYS[(i + dir + PRESET_KEYS.length) % PRESET_KEYS.length];
-    });
-  }, []);
+  const stepPreset = useCallback(
+    (dir: number) => {
+      setPresetKey((current) => {
+        const i = allPresetKeys.indexOf(current);
+        return allPresetKeys[
+          (i + dir + allPresetKeys.length) % allPresetKeys.length
+        ];
+      });
+    },
+    [allPresetKeys],
+  );
 
   const randomPreset = useCallback(() => {
-    setPresetKey(PRESET_KEYS[Math.floor(Math.random() * PRESET_KEYS.length)]);
-  }, []);
+    setPresetKey(
+      allPresetKeys[Math.floor(Math.random() * allPresetKeys.length)],
+    );
+  }, [allPresetKeys]);
 
   const nextModelSeq = useCallback(
     () => (modelFileRef.current?.seq ?? 0) + 1,
@@ -431,6 +543,8 @@ function App() {
       camResetRef,
       bgLayerRef,
       blendRef,
+      overridesRef,
+      resolvePresetRef,
     );
   }, [randomPreset]);
 
@@ -456,6 +570,7 @@ function App() {
         setShowBpm((v) => !v);
       } else if (e.key === "Escape") {
         if (libraryOpen) setLibraryOpen(false);
+        else if (routingOpen) setRoutingOpen(false);
         else if (inTauri) void getCurrentWindow().setFullscreen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
@@ -478,7 +593,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleFullscreen, stepPreset, randomPreset, libraryOpen]);
+  }, [toggleFullscreen, stepPreset, randomPreset, libraryOpen, routingOpen]);
 
   const pokeHud = useCallback(() => {
     setHudVisible(true);
@@ -574,6 +689,13 @@ function App() {
             bpm
           </button>
           <button
+            className={`mode-btn ${routingOpen ? "active" : ""}`}
+            onClick={() => setRoutingOpen((v) => !v)}
+            title="Frequenz-Listener & Routing"
+          >
+            ◎
+          </button>
+          <button
             className={`mode-btn ${editorOpen ? "active" : ""}`}
             onClick={() => setEditorOpen((v) => !v)}
             title="Parameter-Editor (E)"
@@ -633,11 +755,22 @@ function App() {
               onChange={(e) => setPresetKey(e.target.value)}
               title="Milkdrop-Preset"
             >
-              {PRESET_KEYS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
+              {userPresets.length > 0 && (
+                <optgroup label="★ Eigene">
+                  {userPresets.map((p) => (
+                    <option key={`user:${p.name}`} value={`user:${p.name}`}>
+                      ★ {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="Butterchurn">
+                {PRESET_KEYS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <button
               className="mode-btn"
@@ -659,6 +792,13 @@ function App() {
               title="Auto-Wechsel bei Beats (A)"
             >
               auto
+            </button>
+            <button
+              className={`mode-btn ${tweakOpen ? "active" : ""}`}
+              onClick={() => setTweakOpen((v) => !v)}
+              title="Preset-Tweaks — verbiegen & als eigenes Preset speichern"
+            >
+              🎛
             </button>
           </div>
         )}
@@ -730,6 +870,21 @@ function App() {
           onClose={() => setLibraryOpen(false)}
         />
       )}
+      {routingOpen && <RoutingModal onClose={() => setRoutingOpen(false)} />}
+      {tweakOpen && mode === "milkdrop" && (
+        <MdTweakPanel
+          presetKey={presetKey}
+          baseVals={currentBaseVals}
+          overrides={mdOverrides}
+          onChange={(key, value) =>
+            setMdOverrides((prev) => ({ ...prev, [key]: value }))
+          }
+          onReset={() => setMdOverrides({})}
+          onSave={saveTweaks}
+          onDeleteUser={removeUserPreset}
+          onClose={() => setTweakOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -748,6 +903,8 @@ function startVisualizer(
   camResetRef: { current: number },
   bgLayerRef: { current: BgLayer },
   blendRef: { current: BlendMode },
+  overridesRef: { current: { version: number; map: Record<string, number> } },
+  resolveRef: { current: (key: string) => unknown | null },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -816,6 +973,9 @@ function startVisualizer(
   let bc: BCVisualizer | null = null;
   let bcFailed = false;
   let bcLoadedPreset = "";
+  let bcLoadedOvVersion = -1;
+  let bcEverLoaded = false;
+  let lastTweakApply = 0;
   const timeByte = new Uint8Array(1024).fill(128);
 
   function ensureButterchurn(): boolean {
@@ -857,17 +1017,34 @@ function startVisualizer(
     prevBeat = beat;
 
     const want = presetKeyRef.current;
-    if (want !== bcLoadedPreset && PRESETS[want]) {
-      try {
-        bc.loadPreset(
-          PRESETS[want],
-          bcLoadedPreset ? params.get("milkdrop", "blend") : 0,
-        );
+    const ov = overridesRef.current;
+    if (want !== bcLoadedPreset || ov.version !== bcLoadedOvVersion) {
+      const keyChanged = want !== bcLoadedPreset;
+      const nowMs = performance.now();
+      // live tweaks re-load the preset — rate-limited so slider drags
+      // don't rebuild the pipeline on every pixel
+      if (keyChanged || nowMs - lastTweakApply > 150) {
+        lastTweakApply = nowMs;
+        const base = resolveRef.current(want);
         bcLoadedPreset = want;
-        flog(`[md] preset: ${want}`);
-      } catch (e) {
-        flog(`[md] loadPreset FAILED (${want}): ${e}`);
-        bcLoadedPreset = want; // don't retry a broken preset every frame
+        bcLoadedOvVersion = ov.version;
+        if (base) {
+          try {
+            const preset = Object.keys(ov.map).length
+              ? mergeBaseVals(base, ov.map)
+              : base;
+            bc.loadPreset(
+              preset,
+              keyChanged && bcEverLoaded
+                ? params.get("milkdrop", "blend")
+                : 0,
+            );
+            bcEverLoaded = true;
+            if (keyChanged) flog(`[md] preset: ${want}`);
+          } catch (e) {
+            flog(`[md] loadPreset FAILED (${want}): ${e}`);
+          }
+        }
       }
     }
 
@@ -1020,6 +1197,9 @@ function startVisualizer(
 
     if (inTauri) fetchFrame();
     else mockFrame(now / 1000);
+
+    // frequency listeners → parameter modulation
+    routing.update(bands, dt);
 
     const gain = params.get("audio", "gain");
     const attackTau = params.get("audio", "attack") / 1000;

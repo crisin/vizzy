@@ -55,7 +55,7 @@ export function EditorPanel({
               </button>
             </div>
             {defs.map((d) => {
-              const value = params.get(group, d.key);
+              const value = params.getBase(group, d.key);
               return (
                 <label key={d.key} className="editor-row">
                   <span className="editor-label">{d.label}</span>

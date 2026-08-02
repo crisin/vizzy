@@ -66,6 +66,10 @@ Notes:
 
 ## Status
 
-Windows feature set is complete through the parameter-editor phase.
-Next up: custom shader visualizations with a live code editor, and the
-macOS capture backend (Core Audio taps via `cidre`).
+Windows feature set is complete through the editor phase: parameter
+editor, frequency listeners with a modulation matrix (route any Hz
+range onto any effect parameter, ◎ button), Milkdrop preset tweaking
+with saveable user presets (🎛 button), background layer compositing,
+and ten 3D scenes. Next up: custom shader visualizations with a live
+code editor, and the macOS capture backend (Core Audio taps via
+`cidre`).

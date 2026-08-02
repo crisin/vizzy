@@ -364,3 +364,123 @@ body {
 .add-card {
   border-style: dashed;
 }
+
+.routing-modal {
+  width: min(860px, 94vw);
+  font-size: 13px;
+}
+
+.routing-section {
+  margin-top: 16px;
+}
+
+.routing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.routing-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.routing-name {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 6px;
+  color: #cbd5e1;
+  font: inherit;
+  padding: 3px 8px;
+  width: 110px;
+}
+
+.routing-hz {
+  width: 64px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 6px;
+  color: #cbd5e1;
+  font: inherit;
+  padding: 3px 6px;
+}
+
+.routing-meter {
+  flex: 1 1 60px;
+  min-width: 50px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+
+.routing-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #e879f9);
+  transition: width 0.09s linear;
+}
+
+.routing-del {
+  position: static;
+}
+
+.routing-select {
+  flex: 0 1 auto;
+  min-width: 90px;
+}
+
+.routing-target {
+  flex: 1 1 200px;
+}
+
+.routing-arrow {
+  color: #64748b;
+}
+
+.routing-hint {
+  color: #64748b;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.routing-row input[type="range"] {
+  width: 110px;
+  accent-color: #38bdf8;
+}
+
+.tweak-panel {
+  right: auto;
+  left: 14px;
+  width: 330px;
+}
+
+.tweak-hint {
+  color: #64748b;
+  font-size: 11px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-label.tweaked {
+  color: #7dd3fc;
+}
+
+.tweak-footer {
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.tweak-name {
+  flex: 1 1 100px;
+}

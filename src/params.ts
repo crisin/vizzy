@@ -127,10 +127,33 @@ class ParamStore {
     }
   }
 
+  /** modulation offsets applied on top of stored values ("group.key") */
+  private mods: Record<string, number> = {};
+
+  /** Effective value: stored/default + modulation, clamped to the def range. */
   get(group: string, key: string): number {
+    const base = this.getBase(group, key);
+    const mod = this.mods[`${group}.${key}`];
+    if (!mod) return base;
+    const def = PARAM_SCHEMAS[group]?.find((d) => d.key === key);
+    if (!def) return base + mod;
+    return Math.min(def.max, Math.max(def.min, base + mod));
+  }
+
+  /** Stored value without modulation (what the editor sliders show/edit). */
+  getBase(group: string, key: string): number {
     const v = this.values[group]?.[key];
     if (v !== undefined && Number.isFinite(v)) return v;
     return PARAM_SCHEMAS[group]?.find((d) => d.key === key)?.default ?? 0;
+  }
+
+  clearMods() {
+    this.mods = {};
+  }
+
+  addMod(group: string, key: string, offset: number) {
+    const k = `${group}.${key}`;
+    this.mods[k] = (this.mods[k] ?? 0) + offset;
   }
 
   set(group: string, key: string, value: number) {
