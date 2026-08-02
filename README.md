@@ -22,5 +22,7 @@ demo data (no audio capture).
 - Phase 2 done: Milkdrop presets via Butterchurn (107 base presets,
   browser + blend transitions), fed directly from the Rust analysis
   frames (no Web Audio).
-- Next: beat detection (spectral flux) + preset auto-switching.
+- Beat detection (bass-weighted spectral flux, adaptive threshold) in the
+  Rust analyzer; visuals pulse on beats, Milkdrop can auto-switch presets
+  on beats ("auto" toggle / key A, 30s cooldown).
 - macOS backend (Core Audio taps) not wired up yet.

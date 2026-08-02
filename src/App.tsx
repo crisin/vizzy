@@ -5,7 +5,7 @@ import butterchurn, { type BCVisualizer } from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import "./App.css";
 
-const HEADER = 4;
+const HEADER = 6; // [rms, peak, n_bands, n_wave, beat, flux]
 const ATTACK_TAU = 0.035; // s — fast rise
 const RELEASE_TAU = 0.22; // s — slow fall
 const PEAK_GRAVITY = 0.5; // units/s
@@ -45,8 +45,10 @@ function App() {
   const mdCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const modeRef = useRef<VizMode>("bars");
   const presetKeyRef = useRef<string>(PRESET_KEYS[0] ?? "");
+  const autoRef = useRef(false);
   const [mode, setMode] = useState<VizMode>("bars");
   const [presetKey, setPresetKey] = useState(PRESET_KEYS[0] ?? "");
+  const [autoSwitch, setAutoSwitch] = useState(false);
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
@@ -61,11 +63,8 @@ function App() {
   }, [presetKey]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const mdCanvas = mdCanvasRef.current;
-    if (!canvas || !mdCanvas) return;
-    return startVisualizer(canvas, mdCanvas, modeRef, presetKeyRef);
-  }, []);
+    autoRef.current = autoSwitch;
+  }, [autoSwitch]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -99,6 +98,13 @@ function App() {
     setPresetKey(PRESET_KEYS[Math.floor(Math.random() * PRESET_KEYS.length)]);
   }, []);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const mdCanvas = mdCanvasRef.current;
+    if (!canvas || !mdCanvas) return;
+    return startVisualizer(canvas, mdCanvas, modeRef, presetKeyRef, autoRef, randomPreset);
+  }, [randomPreset]);
+
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
       const win = getCurrentWindow();
@@ -123,6 +129,7 @@ function App() {
         if (e.key === "ArrowRight") stepPreset(1);
         else if (e.key === "ArrowLeft") stepPreset(-1);
         else if (e.key === "r") randomPreset();
+        else if (e.key === "a") setAutoSwitch((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -218,6 +225,13 @@ function App() {
               >
                 🎲
               </button>
+              <button
+                className={`mode-btn ${autoSwitch ? "active" : ""}`}
+                onClick={() => setAutoSwitch((v) => !v)}
+                title="Auto-Wechsel bei Beats (A)"
+              >
+                auto
+              </button>
             </span>
           )}
         </div>
@@ -250,6 +264,8 @@ function startVisualizer(
   mdCanvas: HTMLCanvasElement,
   modeRef: { current: VizMode },
   presetKeyRef: { current: string },
+  autoRef: { current: boolean },
+  onAutoSwitch: () => void,
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -260,6 +276,9 @@ function startVisualizer(
   let bands = new Float32Array(64);
   let wave = new Float32Array(1024);
   let rms = 0;
+  let beat = 0;
+  let prevBeat = 0;
+  let lastAutoSwitch = 0;
 
   // smoothed display state
   let disp = new Float32Array(bands.length);
@@ -297,6 +316,16 @@ function startVisualizer(
 
   function renderMilkdrop() {
     if (!ensureButterchurn() || !bc) return;
+
+    // beat-driven auto preset switching (rising edge + cooldown)
+    if (autoRef.current && beat >= 0.95 && prevBeat < 0.95) {
+      const nowMs = performance.now();
+      if (nowMs - lastAutoSwitch > 30000) {
+        lastAutoSwitch = nowMs;
+        onAutoSwitch();
+      }
+    }
+    prevBeat = beat;
 
     const want = presetKeyRef.current;
     if (want !== bcLoadedPreset && PRESETS[want]) {
@@ -339,6 +368,7 @@ function startVisualizer(
       const nBands = f[2] | 0;
       const nWave = f[3] | 0;
       rms = f[0];
+      beat = f[4];
       bands = f.subarray(HEADER, HEADER + nBands);
       wave = f.subarray(HEADER + nBands, HEADER + nBands + nWave);
       if (disp.length !== nBands) {
@@ -366,6 +396,7 @@ function startVisualizer(
         0.18 * Math.sin(j * 0.013 + t * 2.6);
     }
     rms = 0.2 + 0.1 * Math.sin(t * 2.2);
+    beat = Math.pow(0.5 + 0.5 * Math.sin(t * 4.2), 12);
   }
 
   let gradient: CanvasGradient | null = null;
@@ -438,6 +469,12 @@ function startVisualizer(
     ctx.fillStyle = "rgba(7, 7, 12, 0.35)";
     ctx.fillRect(0, 0, w, h);
 
+    // subtle beat flash
+    if (beat > 0.05) {
+      ctx.fillStyle = `rgba(129, 140, 248, ${(beat * 0.06).toFixed(3)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+
     switch (modeRef.current) {
       case "bars":
         drawBars(w, h);
@@ -499,7 +536,7 @@ function startVisualizer(
     const cx = w / 2;
     const cy = h / 2;
     const base = Math.min(w, h);
-    const R = base * 0.2 * (1 + rms * 0.9);
+    const R = base * 0.2 * (1 + rms * 0.9 + beat * 0.12);
     const maxLen = base * 0.26;
     const lw = Math.max(2, ((Math.PI * R) / n) * 0.7);
 

@@ -43,8 +43,13 @@ pub struct SourceInfo {
     pub is_default: bool,
 }
 
+/// Frame header layout: `[rms, peak, n_bands, n_wave, beat, flux]`
+pub const HEADER: usize = 6;
+const FLUX_HISTORY: usize = 188; // ~2 s of hops for the adaptive threshold
+const BEAT_REFRACTORY_HOPS: usize = 11; // ~120 ms
+
 pub fn empty_frame() -> Vec<f32> {
-    let mut frame = vec![0.0f32; 4 + NUM_BANDS + WAVE_POINTS];
+    let mut frame = vec![0.0f32; HEADER + NUM_BANDS + WAVE_POINTS];
     frame[2] = NUM_BANDS as f32;
     frame[3] = WAVE_POINTS as f32;
     frame
@@ -83,6 +88,11 @@ struct Analyzer {
     spectrum: Vec<realfft::num_complex::Complex<f32>>,
     band_edges: Vec<usize>,
     bands: Vec<f32>,
+    prev_bands: Vec<f32>,
+    flux_hist: VecDeque<f32>,
+    beat_env: f32,
+    hops_since_beat: usize,
+    beats: u64,
     published: u64,
 }
 
@@ -120,6 +130,11 @@ impl Analyzer {
             spectrum,
             band_edges,
             bands: vec![0.0; NUM_BANDS],
+            prev_bands: vec![0.0; NUM_BANDS],
+            flux_hist: VecDeque::with_capacity(FLUX_HISTORY),
+            beat_env: 0.0,
+            hops_since_beat: 0,
+            beats: 0,
             published: 0,
         }
     }
@@ -170,20 +185,63 @@ impl Analyzer {
         }
         let rms = (sq / FFT_SIZE as f32).sqrt();
 
+        // Spectral flux: bass-weighted positive band changes, thresholded
+        // adaptively against the recent history (mean + 1.5σ).
+        let mut flux = 0.0f32;
+        for b in 0..NUM_BANDS {
+            let d = self.bands[b] - self.prev_bands[b];
+            if d > 0.0 {
+                let weight = if b < 16 { 2.0 } else { 1.0 };
+                flux += d * weight;
+            }
+            self.prev_bands[b] = self.bands[b];
+        }
+        if self.flux_hist.len() == FLUX_HISTORY {
+            self.flux_hist.pop_front();
+        }
+        self.flux_hist.push_back(flux);
+        let n = self.flux_hist.len() as f32;
+        let mean = self.flux_hist.iter().sum::<f32>() / n;
+        let var = self.flux_hist.iter().map(|f| (f - mean).powi(2)).sum::<f32>() / n;
+        let std = var.sqrt();
+
+        self.hops_since_beat += 1;
+        let is_beat = self.flux_hist.len() > 20
+            && flux > mean + 1.5 * std
+            && flux > 0.05
+            && self.hops_since_beat > BEAT_REFRACTORY_HOPS;
+        if is_beat {
+            self.beat_env = 1.0;
+            self.hops_since_beat = 0;
+            self.beats += 1;
+        } else {
+            self.beat_env *= 0.88;
+        }
+        let flux_norm = if std > 1e-6 {
+            ((flux - mean) / (3.0 * std)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         self.published += 1;
         if self.published % 470 == 0 {
             // ~every 5 s at 94 frames/s
-            eprintln!("[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4}", self.published);
+            eprintln!(
+                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={}",
+                self.published, self.beats
+            );
         }
 
         let mut frame = shared.lock().unwrap();
         frame[0] = rms;
         frame[1] = peak;
+        frame[4] = self.beat_env;
+        frame[5] = flux_norm;
         for (i, b) in self.bands.iter().enumerate() {
-            frame[4 + i] = *b;
+            frame[HEADER + i] = *b;
         }
         for (i, s) in self.ring.iter().skip(FFT_SIZE - WAVE_POINTS).enumerate() {
-            frame[4 + NUM_BANDS + i] = *s;
+            frame[HEADER + NUM_BANDS + i] = *s;
         }
     }
 
@@ -193,13 +251,16 @@ impl Analyzer {
         for b in self.bands.iter_mut() {
             *b *= 0.82;
         }
+        self.beat_env *= 0.8;
         let mut frame = shared.lock().unwrap();
         frame[0] *= 0.82;
         frame[1] *= 0.82;
+        frame[4] = self.beat_env;
+        frame[5] *= 0.8;
         for (i, b) in self.bands.iter().enumerate() {
-            frame[4 + i] = *b;
+            frame[HEADER + i] = *b;
         }
-        for w in frame[4 + NUM_BANDS..].iter_mut() {
+        for w in frame[HEADER + NUM_BANDS..].iter_mut() {
             *w *= 0.7;
         }
     }
