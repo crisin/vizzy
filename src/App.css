@@ -42,11 +42,13 @@ body {
   visibility: hidden;
 }
 
-.stage.mode-milkdrop #mdviz {
+.stage.mode-milkdrop #mdviz,
+.stage.bg-milkdrop #mdviz {
   visibility: visible;
 }
 
-.stage.mode-3d #viz3d {
+.stage.mode-3d #viz3d,
+.stage.bg-3d #viz3d {
   visibility: visible;
 }
 

@@ -23,6 +23,7 @@ export type SceneName =
   | "blob"
   | "cubes"
   | "critters"
+  | "surf"
   | "model";
 export const SCENE_NAMES: SceneName[] = [
   "orb",
@@ -33,6 +34,7 @@ export const SCENE_NAMES: SceneName[] = [
   "blob",
   "cubes",
   "critters",
+  "surf",
   "model",
 ];
 
@@ -146,53 +148,46 @@ class OrbScene implements Scene3D {
   }
 }
 
-/** Scrolling spectrogram mountains: rows of band history flow toward the camera. */
-class TerrainScene implements Scene3D {
-  scene = new THREE.Scene();
-  camera: THREE.PerspectiveCamera;
-  cameraTarget = new THREE.Vector3(0, 2, -20);
-  private mesh: THREE.Mesh;
+/** Shared scrolling spectrogram height-field (terrain + surf scenes). */
+class SpectroTerrain {
+  mesh: THREE.Mesh;
+  hScale = 16; // last applied height scale, for sampling world heights
+  readonly cols = NUM_BANDS;
+  readonly rows = 96;
+  readonly width = 64;
+  readonly depth = 100;
   private geometry: THREE.PlaneGeometry;
   private material: THREE.MeshBasicMaterial;
   private heights: Float32Array;
   private rowAcc = 0;
-  private readonly cols = NUM_BANDS;
-  private readonly rows = 96;
   private color = new THREE.Color();
 
-  constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 200);
-    this.camera.position.set(0, 15, 52);
-    this.camera.lookAt(0, 2, -20);
-    this.scene.fog = new THREE.Fog(BG, 35, 95);
-
+  constructor() {
     this.heights = new Float32Array(this.rows * this.cols);
     this.geometry = new THREE.PlaneGeometry(
-      64,
-      100,
+      this.width,
+      this.depth,
       this.cols - 1,
       this.rows - 1,
     );
     this.geometry.rotateX(-Math.PI / 2);
-    const vertCount = this.cols * this.rows;
     this.geometry.setAttribute(
       "color",
-      new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3),
+      new THREE.BufferAttribute(new Float32Array(this.cols * this.rows * 3), 3),
     );
-
     this.material = new THREE.MeshBasicMaterial({
       wireframe: true,
       vertexColors: true,
     });
     this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.scene.add(this.mesh);
   }
 
-  update(frame: AudioFrame3D) {
+  update(frame: AudioFrame3D, rowsPerSecond: number, heightScale: number) {
+    this.hScale = heightScale;
     const { cols, rows, heights } = this;
 
     // time-based flow: shift N rows toward the camera this frame
-    this.rowAcc += frame.dt * params.get("terrain", "speed");
+    this.rowAcc += frame.dt * rowsPerSecond;
     let steps = Math.floor(this.rowAcc);
     this.rowAcc -= steps;
     steps = Math.min(steps, 4);
@@ -205,26 +200,75 @@ class TerrainScene implements Scene3D {
 
     const pos = this.geometry.getAttribute("position") as THREE.BufferAttribute;
     const col = this.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const hScale = params.get("terrain", "height") * (1 + frame.beat * 0.2);
     for (let i = 0; i < heights.length; i++) {
       const h = heights[i];
-      pos.setY(i, h * hScale);
+      pos.setY(i, h * heightScale);
       this.color.setHSL(0.72 - h * 0.45, 0.85, 0.22 + h * 0.5);
       col.setXYZ(i, this.color.r, this.color.g, this.color.b);
     }
     pos.needsUpdate = true;
     col.needsUpdate = true;
+  }
 
-    if (frame.cameraAuto) {
-      const sway = params.get("terrain", "sway");
-      this.camera.position.x = Math.sin(frame.t * 0.1) * sway;
-      this.camera.lookAt(0, 2, -20);
-    }
+  /** raw height 0..1 at integer grid coords (clamped) */
+  h(colIdx: number, rowIdx: number): number {
+    const c = Math.min(this.cols - 1, Math.max(0, colIdx));
+    const r = Math.min(this.rows - 1, Math.max(0, rowIdx));
+    return this.heights[r * this.cols + c];
+  }
+
+  colX(c: number): number {
+    return -this.width / 2 + (c / (this.cols - 1)) * this.width;
+  }
+
+  rowZ(r: number): number {
+    return -this.depth / 2 + (r / (this.rows - 1)) * this.depth;
+  }
+
+  get rowSpacing(): number {
+    return this.depth / (this.rows - 1);
+  }
+
+  get colSpacing(): number {
+    return this.width / (this.cols - 1);
   }
 
   dispose() {
     this.geometry.dispose();
     this.material.dispose();
+  }
+}
+
+/** Scrolling spectrogram mountains: rows of band history flow toward the camera. */
+class TerrainScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 2, -20);
+  private terrain = new SpectroTerrain();
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 200);
+    this.camera.position.set(0, 15, 52);
+    this.camera.lookAt(this.cameraTarget);
+    this.scene.fog = new THREE.Fog(BG, 35, 95);
+    this.scene.add(this.terrain.mesh);
+  }
+
+  update(frame: AudioFrame3D) {
+    this.terrain.update(
+      frame,
+      params.get("terrain", "speed"),
+      params.get("terrain", "height") * (1 + frame.beat * 0.2),
+    );
+    if (frame.cameraAuto) {
+      const sway = params.get("terrain", "sway");
+      this.camera.position.x = Math.sin(frame.t * 0.1) * sway;
+      this.camera.lookAt(this.cameraTarget);
+    }
+  }
+
+  dispose() {
+    this.terrain.dispose();
   }
 }
 
@@ -557,6 +601,113 @@ class CubesScene implements Scene3D {
   }
 }
 
+// ————— shared blocky critter rigs (critters + surf scenes) —————
+
+interface CritterRig {
+  root: THREE.Group; // move/tilt this
+  body: THREE.Group; // squash & stretch target
+  head: THREE.Group; // nod target
+  ears: THREE.Mesh[]; // treble wiggle
+  tail: THREE.Mesh | null;
+}
+
+function critterBox(
+  parent: THREE.Object3D,
+  w: number,
+  h: number,
+  d: number,
+  color: number,
+  x: number,
+  y: number,
+  z: number,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true }),
+  );
+  mesh.position.set(x, y, z);
+  parent.add(mesh);
+  return mesh;
+}
+
+function buildBunnyRig(): CritterRig {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  critterBox(body, 0.85, 0.7, 1.05, 0xe8e4de, 0, 0.55, 0); // torso
+  critterBox(body, 0.3, 0.2, 0.3, 0xffffff, 0, 0.7, -0.62); // fluffy tail
+  critterBox(body, 0.28, 0.22, 0.42, 0xd9d4cc, -0.28, 0.15, 0.3); // paw
+  critterBox(body, 0.28, 0.22, 0.42, 0xd9d4cc, 0.28, 0.15, 0.3); // paw
+  const head = new THREE.Group();
+  head.position.set(0, 1.05, 0.45);
+  body.add(head);
+  critterBox(head, 0.55, 0.52, 0.5, 0xefebe4, 0, 0, 0);
+  critterBox(head, 0.1, 0.1, 0.08, 0xff9db3, 0, -0.08, 0.28); // nose
+  const earL = critterBox(head, 0.14, 0.65, 0.18, 0xefebe4, -0.16, 0.5, -0.05);
+  const earR = critterBox(head, 0.14, 0.65, 0.18, 0xefebe4, 0.16, 0.5, -0.05);
+  return { root, body, head, ears: [earL, earR], tail: null };
+}
+
+function buildCowRig(): CritterRig {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  critterBox(body, 1.35, 0.85, 1.8, 0xf2efe9, 0, 0.95, 0); // torso
+  critterBox(body, 0.55, 0.5, 0.6, 0x2e2a26, -0.35, 1.0, -0.4); // patch
+  critterBox(body, 0.45, 0.4, 0.5, 0x2e2a26, 0.4, 1.15, 0.35); // patch
+  for (const [lx, lz] of [
+    [-0.45, 0.6],
+    [0.45, 0.6],
+    [-0.45, -0.6],
+    [0.45, -0.6],
+  ] as const) {
+    critterBox(body, 0.26, 0.55, 0.26, 0xe8e4de, lx, 0.28, lz);
+  }
+  const head = new THREE.Group();
+  head.position.set(0, 1.45, 1.05);
+  body.add(head);
+  critterBox(head, 0.6, 0.55, 0.5, 0xf2efe9, 0, 0, 0);
+  critterBox(head, 0.42, 0.25, 0.18, 0xf5b8c4, 0, -0.18, 0.3); // snout
+  critterBox(head, 0.16, 0.16, 0.14, 0xd9d4cc, -0.4, 0.22, 0); // horn
+  critterBox(head, 0.16, 0.16, 0.14, 0xd9d4cc, 0.4, 0.22, 0);
+  return { root, body, head, ears: [], tail: null };
+}
+
+function buildPigRig(): CritterRig {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  critterBox(body, 0.95, 0.68, 1.25, 0xf7a8b8, 0, 0.55, 0); // torso
+  for (const [lx, lz] of [
+    [-0.3, 0.4],
+    [0.3, 0.4],
+    [-0.3, -0.4],
+    [0.3, -0.4],
+  ] as const) {
+    critterBox(body, 0.2, 0.32, 0.2, 0xeb96a8, lx, 0.12, lz);
+  }
+  const tail = critterBox(body, 0.1, 0.1, 0.28, 0xeb96a8, 0, 0.75, -0.7);
+  const head = new THREE.Group();
+  head.position.set(0, 0.85, 0.72);
+  body.add(head);
+  critterBox(head, 0.52, 0.48, 0.42, 0xf7a8b8, 0, 0, 0);
+  critterBox(head, 0.26, 0.2, 0.14, 0xeb96a8, 0, -0.05, 0.27); // snout
+  critterBox(head, 0.14, 0.18, 0.08, 0xeb96a8, -0.17, 0.3, 0); // ear
+  critterBox(head, 0.14, 0.18, 0.08, 0xeb96a8, 0.17, 0.3, 0);
+  return { root, body, head, ears: [], tail };
+}
+
+function disposeTree(root: THREE.Object3D) {
+  root.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if ((mesh as { isMesh?: boolean }).isMesh) {
+      mesh.geometry.dispose();
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) m?.dispose?.();
+    }
+  });
+}
+
 /** Blocky low-poly critters (bunny, cow, pig) bouncing to the music. */
 class CrittersScene implements Scene3D {
   scene = new THREE.Scene();
@@ -565,12 +716,7 @@ class CrittersScene implements Scene3D {
   private stage = new THREE.Group();
   private grid: THREE.GridHelper;
   private discoLight: THREE.PointLight;
-  private bodies: THREE.Group[] = []; // squash & stretch targets
-  private heads: THREE.Group[] = [];
-  private bunny: THREE.Group;
-  private bunnyEars: THREE.Mesh[] = [];
-  private cowHead!: THREE.Group;
-  private pigTail!: THREE.Mesh;
+  private rigs: CritterRig[];
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 100);
@@ -590,106 +736,10 @@ class CrittersScene implements Scene3D {
     this.scene.add(this.grid);
     this.scene.add(this.stage);
 
-    this.bunny = this.buildBunny();
-    this.bunny.position.x = -2.4;
-    const cow = this.buildCow();
-    const pig = this.buildPig();
-    pig.position.x = 2.4;
-    this.stage.add(this.bunny, cow, pig);
-  }
-
-  private box(
-    parent: THREE.Object3D,
-    w: number,
-    h: number,
-    d: number,
-    color: number,
-    x: number,
-    y: number,
-    z: number,
-  ): THREE.Mesh {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(w, h, d),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true }),
-    );
-    mesh.position.set(x, y, z);
-    parent.add(mesh);
-    return mesh;
-  }
-
-  private buildBunny(): THREE.Group {
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    this.box(body, 0.85, 0.7, 1.05, 0xe8e4de, 0, 0.55, 0); // torso
-    this.box(body, 0.3, 0.2, 0.3, 0xffffff, 0, 0.7, -0.62); // fluffy tail
-    this.box(body, 0.28, 0.22, 0.42, 0xd9d4cc, -0.28, 0.15, 0.3); // paw
-    this.box(body, 0.28, 0.22, 0.42, 0xd9d4cc, 0.28, 0.15, 0.3); // paw
-    const head = new THREE.Group();
-    head.position.set(0, 1.05, 0.45);
-    body.add(head);
-    this.box(head, 0.55, 0.52, 0.5, 0xefebe4, 0, 0, 0);
-    this.box(head, 0.1, 0.1, 0.08, 0xff9db3, 0, -0.08, 0.28); // nose
-    const earL = this.box(head, 0.14, 0.65, 0.18, 0xefebe4, -0.16, 0.5, -0.05);
-    const earR = this.box(head, 0.14, 0.65, 0.18, 0xefebe4, 0.16, 0.5, -0.05);
-    this.bunnyEars.push(earL, earR);
-    this.bodies.push(body);
-    this.heads.push(head);
-    return root;
-  }
-
-  private buildCow(): THREE.Group {
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    this.box(body, 1.35, 0.85, 1.8, 0xf2efe9, 0, 0.95, 0); // torso
-    this.box(body, 0.55, 0.5, 0.6, 0x2e2a26, -0.35, 1.0, -0.4); // patch
-    this.box(body, 0.45, 0.4, 0.5, 0x2e2a26, 0.4, 1.15, 0.35); // patch
-    for (const [lx, lz] of [
-      [-0.45, 0.6],
-      [0.45, 0.6],
-      [-0.45, -0.6],
-      [0.45, -0.6],
-    ] as const) {
-      this.box(body, 0.26, 0.55, 0.26, 0xe8e4de, lx, 0.28, lz);
-    }
-    const head = new THREE.Group();
-    head.position.set(0, 1.45, 1.05);
-    body.add(head);
-    this.box(head, 0.6, 0.55, 0.5, 0xf2efe9, 0, 0, 0);
-    this.box(head, 0.42, 0.25, 0.18, 0xf5b8c4, 0, -0.18, 0.3); // snout
-    this.box(head, 0.16, 0.16, 0.14, 0xd9d4cc, -0.4, 0.22, 0); // horn base
-    this.box(head, 0.16, 0.16, 0.14, 0xd9d4cc, 0.4, 0.22, 0);
-    this.cowHead = head;
-    this.bodies.push(body);
-    this.heads.push(head);
-    return root;
-  }
-
-  private buildPig(): THREE.Group {
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    this.box(body, 0.95, 0.68, 1.25, 0xf7a8b8, 0, 0.55, 0); // torso
-    for (const [lx, lz] of [
-      [-0.3, 0.4],
-      [0.3, 0.4],
-      [-0.3, -0.4],
-      [0.3, -0.4],
-    ] as const) {
-      this.box(body, 0.2, 0.32, 0.2, 0xeb96a8, lx, 0.12, lz);
-    }
-    this.pigTail = this.box(body, 0.1, 0.1, 0.28, 0xeb96a8, 0, 0.75, -0.7);
-    const head = new THREE.Group();
-    head.position.set(0, 0.85, 0.72);
-    body.add(head);
-    this.box(head, 0.52, 0.48, 0.42, 0xf7a8b8, 0, 0, 0);
-    this.box(head, 0.26, 0.2, 0.14, 0xeb96a8, 0, -0.05, 0.27); // snout
-    this.box(head, 0.14, 0.18, 0.08, 0xeb96a8, -0.17, 0.3, 0); // ear
-    this.box(head, 0.14, 0.18, 0.08, 0xeb96a8, 0.17, 0.3, 0);
-    this.bodies.push(body);
-    this.heads.push(head);
-    return root;
+    this.rigs = [buildBunnyRig(), buildCowRig(), buildPigRig()];
+    this.rigs[0].root.position.x = -2.4;
+    this.rigs[2].root.position.x = 2.4;
+    for (const rig of this.rigs) this.stage.add(rig.root);
   }
 
   update(frame: AudioFrame3D) {
@@ -707,22 +757,26 @@ class CrittersScene implements Scene3D {
     const treble = avg(40, 56);
 
     // squash & stretch on the bass, offset per critter so they groove
-    for (let i = 0; i < this.bodies.length; i++) {
+    for (let i = 0; i < this.rigs.length; i++) {
+      const rig = this.rigs[i];
       const phase = 1 + 0.15 * Math.sin(frame.t * 2 + i * 2.1);
       const squash = 1 + bass * bounce * 0.35 * phase + frame.beat * 0.08;
-      this.bodies[i].scale.set(1 / Math.sqrt(squash), squash, 1 / Math.sqrt(squash));
-      this.heads[i].rotation.x = -frame.beat * 0.45 * bounce;
+      rig.body.scale.set(1 / Math.sqrt(squash), squash, 1 / Math.sqrt(squash));
+      rig.head.rotation.x = -frame.beat * 0.45 * bounce;
     }
 
     // bunny hops on beats
-    this.bunny.position.y = Math.pow(frame.beat, 2) * 0.9 * bounce;
+    this.rigs[0].root.position.y = Math.pow(frame.beat, 2) * 0.9 * bounce;
 
     // ears, cow headbang, pig tail wag on treble/mids
     const w = Math.sin(frame.t * 11) * treble * wiggle;
-    this.bunnyEars[0].rotation.z = 0.15 + w * 0.8;
-    this.bunnyEars[1].rotation.z = -0.15 - w * 0.8;
-    this.cowHead.rotation.z = Math.sin(frame.t * 5.3) * mids * wiggle * 0.5;
-    this.pigTail.rotation.y = Math.sin(frame.t * 13) * (0.2 + treble * wiggle);
+    this.rigs[0].ears[0].rotation.z = 0.15 + w * 0.8;
+    this.rigs[0].ears[1].rotation.z = -0.15 - w * 0.8;
+    this.rigs[1].head.rotation.z = Math.sin(frame.t * 5.3) * mids * wiggle * 0.5;
+    if (this.rigs[2].tail) {
+      this.rigs[2].tail.rotation.y =
+        Math.sin(frame.t * 13) * (0.2 + treble * wiggle);
+    }
 
     this.stage.rotation.y += frame.dt * spin;
     this.discoLight.intensity = 6 + bass * 40;
@@ -735,15 +789,128 @@ class CrittersScene implements Scene3D {
   }
 
   dispose() {
-    this.stage.traverse((node) => {
-      const mesh = node as THREE.Mesh;
-      if ((mesh as { isMesh?: boolean }).isMesh) {
-        mesh.geometry.dispose();
-        (mesh.material as THREE.Material).dispose();
-      }
-    });
+    disposeTree(this.stage);
     this.grid.geometry.dispose();
     (this.grid.material as THREE.Material).dispose();
+  }
+}
+
+/** The critters surfing the spectrogram waves on glowing boards. */
+class SurfScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 6, 10);
+  private terrain = new SpectroTerrain();
+  private discoLight: THREE.PointLight;
+  private riders: {
+    rig: CritterRig;
+    group: THREE.Group;
+    col: number;
+    row: number;
+    tiltX: number;
+    tiltZ: number;
+  }[] = [];
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(62, aspect, 0.1, 200);
+    this.camera.position.set(0, 13, 55);
+    this.camera.lookAt(this.cameraTarget);
+    this.scene.fog = new THREE.Fog(BG, 40, 100);
+
+    this.scene.add(this.terrain.mesh);
+    this.scene.add(new THREE.AmbientLight(0x445066, 1.7));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+    sun.position.set(4, 10, 6);
+    this.scene.add(sun);
+    this.discoLight = new THREE.PointLight(0x38bdf8, 30, 0, 1.6);
+    this.discoLight.position.set(0, 18, 30);
+    this.scene.add(this.discoLight);
+
+    const boards = [0x38bdf8, 0xa78bfa, 0xf472b6];
+    const rigs = [buildBunnyRig(), buildCowRig(), buildPigRig()];
+    const cols = [16, 32, 48]; // bass / mids / upper-mids lanes
+    const row = 76; // near the camera
+    for (let i = 0; i < rigs.length; i++) {
+      const group = new THREE.Group();
+      critterBox(group, 1.9, 0.12, 0.85, boards[i], 0, 0, 0); // surfboard
+      rigs[i].root.position.y = 0.08;
+      group.add(rigs[i].root);
+      group.position.set(this.terrain.colX(cols[i]), 0, this.terrain.rowZ(row));
+      this.scene.add(group);
+      this.riders.push({
+        rig: rigs[i],
+        group,
+        col: cols[i],
+        row,
+        tiltX: 0,
+        tiltZ: 0,
+      });
+    }
+  }
+
+  update(frame: AudioFrame3D) {
+    const height = params.get("surf", "height");
+    const speed = params.get("surf", "speed");
+    const bounce = params.get("surf", "bounce");
+    this.terrain.update(frame, speed, height * (1 + frame.beat * 0.15));
+
+    const avg = (from: number, to: number) => {
+      let s = 0;
+      for (let i = from; i < to; i++) s += frame.disp[i] ?? 0;
+      return s / (to - from);
+    };
+    const bass = avg(0, 8);
+    const treble = avg(40, 56);
+
+    const t = this.terrain;
+    const lerp = Math.min(1, frame.dt * 8);
+    for (let i = 0; i < this.riders.length; i++) {
+      const rider = this.riders[i];
+      const { col, row } = rider;
+      const h = t.h(col, row) * t.hScale;
+      const jump = Math.pow(frame.beat, 2) * bounce * 2.2;
+      rider.group.position.y = h + jump;
+
+      // ride the local slope: pitch from the flow direction, roll sideways
+      const dhdz = ((t.h(col, row + 1) - t.h(col, row - 1)) * t.hScale) /
+        (2 * t.rowSpacing);
+      const dhdx = ((t.h(col + 1, row) - t.h(col - 1, row)) * t.hScale) /
+        (2 * t.colSpacing);
+      rider.tiltX += (Math.atan(dhdz) * 0.7 - rider.tiltX) * lerp;
+      rider.tiltZ += (-Math.atan(dhdx) * 0.5 - rider.tiltZ) * lerp;
+      rider.group.rotation.x = rider.tiltX;
+      rider.group.rotation.z = rider.tiltZ;
+
+      const squash = 1 + bass * bounce * 0.3 + frame.beat * 0.08;
+      rider.rig.body.scale.set(
+        1 / Math.sqrt(squash),
+        squash,
+        1 / Math.sqrt(squash),
+      );
+      rider.rig.head.rotation.x = -frame.beat * 0.4 * bounce;
+    }
+
+    // bunny ears + pig tail keep partying while surfing
+    const w = Math.sin(frame.t * 11) * treble;
+    this.riders[0].rig.ears[0].rotation.z = 0.15 + w * 0.8;
+    this.riders[0].rig.ears[1].rotation.z = -0.15 - w * 0.8;
+    if (this.riders[2].rig.tail) {
+      this.riders[2].rig.tail.rotation.y = Math.sin(frame.t * 13) * (0.2 + treble);
+    }
+
+    this.discoLight.intensity = 12 + bass * 60;
+    this.discoLight.color.setHSL((frame.t * 0.05) % 1, 0.8, 0.6);
+
+    if (frame.cameraAuto) {
+      this.camera.position.x = Math.sin(frame.t * 0.12) * 5;
+      this.camera.position.y = 13 + Math.sin(frame.t * 0.2) * 1.5;
+      this.camera.lookAt(this.cameraTarget);
+    }
+  }
+
+  dispose() {
+    this.terrain.dispose();
+    for (const rider of this.riders) disposeTree(rider.group);
   }
 }
 
@@ -1183,6 +1350,8 @@ export class Viz3D {
         return new CubesScene(aspect);
       case "critters":
         return new CrittersScene(aspect);
+      case "surf":
+        return new SurfScene(aspect);
       case "model": {
         const scene = new ModelScene(aspect, this.log);
         if (this.pendingModel) {

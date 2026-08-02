@@ -62,6 +62,15 @@ type AppInfo = {
 type VizMode = "bars" | "radial" | "scope" | "milkdrop" | "3d";
 const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop", "3d"];
 
+type BgLayer = "off" | "milkdrop" | "3d";
+const BG_LAYERS: BgLayer[] = ["off", "milkdrop", "3d"];
+const BLEND_MODES = ["screen", "lighten", "overlay", "normal"] as const;
+type BlendMode = (typeof BLEND_MODES)[number];
+
+function is2DMode(m: VizMode): boolean {
+  return m === "bars" || m === "radial" || m === "scope";
+}
+
 function splitOnce(v: string, sep: string): [string, string] {
   const i = v.indexOf(sep);
   return [v.slice(0, i), v.slice(i + 1)];
@@ -75,6 +84,8 @@ type Persisted = {
   showBpm?: boolean;
   sourceValue?: string;
   modelId?: number;
+  bgLayer?: BgLayer;
+  blendMode?: BlendMode;
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -106,6 +117,16 @@ function App() {
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [bgLayer, setBgLayer] = useState<BgLayer>(
+    saved.bgLayer && BG_LAYERS.includes(saved.bgLayer) ? saved.bgLayer : "off",
+  );
+  const [blendMode, setBlendMode] = useState<BlendMode>(
+    saved.blendMode && BLEND_MODES.includes(saved.blendMode)
+      ? saved.blendMode
+      : "screen",
+  );
+  const bgLayerRef = useRef<BgLayer>("off");
+  const blendRef = useRef<BlendMode>("screen");
   const bpmElRef = useRef<HTMLSpanElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const modelFileRef = useRef<ModelAction | null>(null);
@@ -139,6 +160,14 @@ function App() {
   useEffect(() => {
     sceneRef.current = scene3d;
   }, [scene3d]);
+
+  useEffect(() => {
+    bgLayerRef.current = bgLayer;
+  }, [bgLayer]);
+
+  useEffect(() => {
+    blendRef.current = blendMode;
+  }, [blendMode]);
 
   const loadLists = useCallback(() => {
     if (!inTauri) return;
@@ -228,13 +257,25 @@ function App() {
       showBpm,
       sourceValue: selected,
       modelId: selectedModelId ?? undefined,
+      bgLayer,
+      blendMode,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
     } catch {
       // storage unavailable — not worth breaking the app over
     }
-  }, [mode, scene3d, presetKey, autoSwitch, showBpm, selected, selectedModelId]);
+  }, [
+    mode,
+    scene3d,
+    presetKey,
+    autoSwitch,
+    showBpm,
+    selected,
+    selectedModelId,
+    bgLayer,
+    blendMode,
+  ]);
 
   const stepPreset = useCallback((dir: number) => {
     setPresetKey((current) => {
@@ -388,6 +429,8 @@ function App() {
       bpmElRef,
       modelFileRef,
       camResetRef,
+      bgLayerRef,
+      blendRef,
     );
   }, [randomPreset]);
 
@@ -456,7 +499,9 @@ function App() {
 
   return (
     <div
-      className={`stage mode-${mode} ${hudVisible ? "" : "idle"}`}
+      className={`stage mode-${mode} ${
+        is2DMode(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
+      } ${hudVisible ? "" : "idle"}`}
       onMouseMove={pokeHud}
     >
       <canvas ref={mdCanvasRef} id="mdviz" />
@@ -543,6 +588,36 @@ function App() {
             ⛶
           </button>
         </div>
+        {is2DMode(mode) && (
+          <div className="hud-row hud-sub">
+            <span className="demo-tag">Layer:</span>
+            {BG_LAYERS.map((l) => (
+              <button
+                key={l}
+                className={`mode-btn ${bgLayer === l ? "active" : ""}`}
+                onClick={() => setBgLayer(l)}
+                title="Hintergrund-Layer unter der 2D-Visualization"
+              >
+                {l === "off" ? "aus" : l}
+              </button>
+            ))}
+            {bgLayer !== "off" && (
+              <button
+                className="mode-btn"
+                onClick={() =>
+                  setBlendMode(
+                    BLEND_MODES[
+                      (BLEND_MODES.indexOf(blendMode) + 1) % BLEND_MODES.length
+                    ],
+                  )
+                }
+                title="Blend-Modus des Vordergrunds"
+              >
+                ⊕ {blendMode}
+              </button>
+            )}
+          </div>
+        )}
         {mode === "milkdrop" && (
           <div className="hud-row hud-sub">
             <button
@@ -636,7 +711,11 @@ function App() {
       </div>
       {editorOpen && (
         <EditorPanel
-          groups={["audio", mode === "3d" ? scene3d : mode]}
+          groups={[
+            "audio",
+            ...(is2DMode(mode) && bgLayer !== "off" ? ["layer"] : []),
+            mode === "3d" ? scene3d : mode,
+          ]}
           onClose={() => setEditorOpen(false)}
           onResetAll={resetAll}
         />
@@ -667,6 +746,8 @@ function startVisualizer(
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: ModelAction | null },
   camResetRef: { current: number },
+  bgLayerRef: { current: BgLayer },
+  blendRef: { current: BlendMode },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -896,6 +977,31 @@ function startVisualizer(
   let last = performance.now();
   let fps = 60;
 
+  // CSS compositing between the stacked canvases; only touched on change.
+  let lastLayerCss = "";
+  function applyLayerStyles(is2D: boolean) {
+    const bg = is2D ? bgLayerRef.current : "off";
+    const blur = params.get("layer", "blur");
+    const dim = params.get("layer", "dim");
+    const opacity = params.get("layer", "opacity");
+    const blend = blendRef.current;
+    const key = `${bg}|${blur}|${dim}|${opacity}|${blend}`;
+    if (key === lastLayerCss) return;
+    lastLayerCss = key;
+
+    mdCanvas.style.filter = "";
+    gl3dCanvas.style.filter = "";
+    if (bg === "off") {
+      canvas.style.mixBlendMode = "";
+      canvas.style.opacity = "";
+      return;
+    }
+    const bgEl = bg === "milkdrop" ? mdCanvas : gl3dCanvas;
+    bgEl.style.filter = `blur(${blur}px) brightness(${dim})`;
+    canvas.style.mixBlendMode = blend;
+    canvas.style.opacity = String(opacity);
+  }
+
   function frame(now: number) {
     if (!running) return;
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -931,8 +1037,12 @@ function startVisualizer(
     } else if (modeRef.current === "3d") {
       render3D(dt, now / 1000);
     } else {
+      // layered background under the 2D visualization
+      if (bgLayerRef.current === "milkdrop") renderMilkdrop();
+      else if (bgLayerRef.current === "3d") render3D(dt, now / 1000);
       draw();
     }
+    applyLayerStyles(is2DMode(modeRef.current));
 
     const el = bpmEl.current;
     if (el) {

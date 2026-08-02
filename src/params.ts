@@ -24,8 +24,10 @@ export const GROUP_LABELS: Record<string, string> = {
   blob: "Blob",
   cubes: "Würfel",
   critters: "Tierchen",
+  surf: "Surf",
   model: "Modell",
   milkdrop: "Milkdrop",
+  layer: "Layer",
 };
 
 export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
@@ -88,6 +90,16 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "bounce", label: "Hüpfen", min: 0, max: 2, step: 0.1, default: 1 },
     { key: "wiggle", label: "Wackeln", min: 0, max: 2, step: 0.1, default: 1 },
     { key: "spin", label: "Bühnen-Drehung", min: 0, max: 0.5, step: 0.02, default: 0.08 },
+  ],
+  surf: [
+    { key: "height", label: "Wellenhöhe", min: 6, max: 30, step: 1, default: 14 },
+    { key: "speed", label: "Wellentempo", min: 10, max: 120, step: 5, default: 60 },
+    { key: "bounce", label: "Sprünge", min: 0, max: 2, step: 0.1, default: 1 },
+  ],
+  layer: [
+    { key: "blur", label: "BG-Blur (px)", min: 0, max: 24, step: 1, default: 8 },
+    { key: "dim", label: "BG-Helligkeit", min: 0.2, max: 1.2, step: 0.05, default: 0.9 },
+    { key: "opacity", label: "Deckkraft vorne", min: 0.2, max: 1, step: 0.05, default: 1 },
   ],
   model: [
     { key: "spin", label: "Rotation", min: 0, max: 1.5, step: 0.05, default: 0.25 },
