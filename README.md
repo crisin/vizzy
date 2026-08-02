@@ -1,11 +1,39 @@
 # vizzy
 
-Cross-platform audio visualizer (Windows + macOS): Tauri 2, Rust core for
+Audio visualizer for Windows (macOS planned): Tauri 2, Rust core for
 audio capture + DSP, web frontend for rendering.
 
 See [PLAN.md](PLAN.md) for the roadmap.
 
+## Features
+
+- **Sources**: system loopback (any output device), single apps
+  (Windows process loopback — e.g. only Spotify), mic/line-in.
+  Auto-fallback when a device disappears.
+- **Analysis** in Rust: FFT (64 log bands), beat detection
+  (bass-weighted spectral flux, adaptive threshold), BPM estimation.
+- **Modes**: bars, radial, scope, Milkdrop (107 Butterchurn presets with
+  blend + beat-driven auto-switching) and nine 3D scenes (three.js):
+  orb, terrain, tunnel, bars3d, gyro, procedural noise blob, nested
+  cubes, blocky critters, and your own glTF/GLB/ZIP models with a
+  thumbnail library (IndexedDB) and a bass/beat-driven explode effect.
+- **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
+  **parameter editor** for every visualization, toggleable BPM badge —
+  everything persists across restarts, global reset included.
+
+### Keys
+
+`1`–`5` modes · `←`/`→` preset/scene · `R` random preset · `A` preset
+auto-switch · `B` BPM badge · `E` parameter editor · `F` fullscreen ·
+`Esc` close/leave
+
 ## Dev
+
+Prerequisites (once): [Node.js](https://nodejs.org) 20+,
+[Rust](https://rustup.rs) (stable-msvc) and an MSVC linker — any
+Visual Studio 2017+ install with C++ tools works, otherwise grab the
+[Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+with the "Desktop development with C++" workload.
 
 ```
 npm install
@@ -15,31 +43,29 @@ npm run tauri dev
 `npm run dev` alone starts the frontend in a plain browser with animated
 demo data (no audio capture).
 
+## Release build (share it!)
+
+```
+npm run tauri build
+```
+
+Produces two artifacts:
+
+| Artifact | Path | Use |
+|---|---|---|
+| Portable exe | `src-tauri\target\release\vizzy.exe` | Runs directly; needs the WebView2 runtime (preinstalled on Win 10/11) |
+| **Installer** | `src-tauri\target\release\bundle\nsis\vizzy_0.1.0_x64-setup.exe` | **The file to share** — installs WebView2 automatically if missing |
+
+Notes:
+
+- The build is unsigned, so Windows SmartScreen will warn on first run:
+  "More info" → "Run anyway". Code signing can be added later.
+- The frontend (incl. Milkdrop presets and the Draco decoder) is
+  embedded into the binary — no extra files needed next to the exe.
+- Version and product name live in `src-tauri/tauri.conf.json`.
+
 ## Status
 
-- Phase 0/1 done: WASAPI capture (loopback + inputs, runtime source
-  switching), FFT analysis, viz modes bars / radial / scope, fullscreen.
-- Phase 2 done: Milkdrop presets via Butterchurn (107 base presets,
-  browser + blend transitions), fed directly from the Rust analysis
-  frames (no Web Audio).
-- Beat detection (bass-weighted spectral flux, adaptive threshold) in the
-  Rust analyzer; visuals pulse on beats, Milkdrop can auto-switch presets
-  on beats ("auto" toggle / key A, 30s cooldown).
-- 3D mode (three.js, key 5): "orb" particle sphere and "terrain"
-  spectrogram mountains, scene switch with arrow keys.
-- Per-app capture (Windows process loopback): pick a single app (e.g.
-  Spotify) from the source dropdown; list refreshes on open.
-- Settings persist across restarts (localStorage): mode, 3D scene,
-  Milkdrop preset, auto-switch, and source (apps re-matched by process
-  name since PIDs change).
-- Parameter editor (key E / gear icon): every visualization declares its
-  tunable parameters as a schema, the panel renders them generically —
-  audio sensitivity/attack/release, beat threshold (live into the Rust
-  analyzer), plus per-viz controls. Values persist. This schema system
-  is the foundation for the future custom-visualization editor.
-- Seven 3D scenes: orb, terrain, tunnel, bars3d, gyro, blob (procedural
-  noise displacement) and model (load your own glTF/GLB — persisted in
-  IndexedDB and restored on startup).
-- Global reset in the editor panel (two-step confirm) wipes settings,
-  parameters and the stored model.
-- macOS backend (Core Audio taps) not wired up yet.
+Windows feature set is complete through the parameter-editor phase.
+Next up: custom shader visualizations with a live code editor, and the
+macOS capture backend (Core Audio taps via `cidre`).
