@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import butterchurn, { type BCVisualizer } from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
+import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
 import "./App.css";
 
 const HEADER = 6; // [rms, peak, n_bands, n_wave, beat, flux]
@@ -32,8 +33,8 @@ type SourceInfo = {
   is_default: boolean;
 };
 
-type VizMode = "bars" | "radial" | "scope" | "milkdrop";
-const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop"];
+type VizMode = "bars" | "radial" | "scope" | "milkdrop" | "3d";
+const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop", "3d"];
 
 function splitOnce(v: string, sep: string): [string, string] {
   const i = v.indexOf(sep);
@@ -43,12 +44,15 @@ function splitOnce(v: string, sep: string): [string, string] {
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mdCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const gl3dCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const modeRef = useRef<VizMode>("bars");
   const presetKeyRef = useRef<string>(PRESET_KEYS[0] ?? "");
   const autoRef = useRef(false);
+  const sceneRef = useRef<SceneName>("orb");
   const [mode, setMode] = useState<VizMode>("bars");
   const [presetKey, setPresetKey] = useState(PRESET_KEYS[0] ?? "");
   const [autoSwitch, setAutoSwitch] = useState(false);
+  const [scene3d, setScene3d] = useState<SceneName>("orb");
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
@@ -65,6 +69,10 @@ function App() {
   useEffect(() => {
     autoRef.current = autoSwitch;
   }, [autoSwitch]);
+
+  useEffect(() => {
+    sceneRef.current = scene3d;
+  }, [scene3d]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -101,8 +109,18 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     const mdCanvas = mdCanvasRef.current;
-    if (!canvas || !mdCanvas) return;
-    return startVisualizer(canvas, mdCanvas, modeRef, presetKeyRef, autoRef, randomPreset);
+    const gl3dCanvas = gl3dCanvasRef.current;
+    if (!canvas || !mdCanvas || !gl3dCanvas) return;
+    return startVisualizer(
+      canvas,
+      mdCanvas,
+      gl3dCanvas,
+      modeRef,
+      presetKeyRef,
+      autoRef,
+      sceneRef,
+      randomPreset,
+    );
   }, [randomPreset]);
 
   const toggleFullscreen = useCallback(async () => {
@@ -130,6 +148,16 @@ function App() {
         else if (e.key === "ArrowLeft") stepPreset(-1);
         else if (e.key === "r") randomPreset();
         else if (e.key === "a") setAutoSwitch((v) => !v);
+      } else if (modeRef.current === "3d") {
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          setScene3d((s) => {
+            const i = SCENE_NAMES.indexOf(s);
+            const dir = e.key === "ArrowRight" ? 1 : -1;
+            return SCENE_NAMES[
+              (i + dir + SCENE_NAMES.length) % SCENE_NAMES.length
+            ];
+          });
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -159,6 +187,7 @@ function App() {
       onMouseMove={pokeHud}
     >
       <canvas ref={mdCanvasRef} id="mdviz" />
+      <canvas ref={gl3dCanvasRef} id="viz3d" />
       <canvas ref={canvasRef} id="viz" />
       <div className={`hud ${hudVisible ? "" : "hidden"}`}>
         <div className="hud-left">
@@ -234,6 +263,20 @@ function App() {
               </button>
             </span>
           )}
+          {mode === "3d" && (
+            <span className="preset-controls">
+              {SCENE_NAMES.map((s) => (
+                <button
+                  key={s}
+                  className={`mode-btn ${scene3d === s ? "active" : ""}`}
+                  onClick={() => setScene3d(s)}
+                  title="Szene (←/→)"
+                >
+                  {s}
+                </button>
+              ))}
+            </span>
+          )}
         </div>
         <div className="hud-right">
           {VIZ_MODES.map((m, i) => (
@@ -262,9 +305,11 @@ function App() {
 function startVisualizer(
   canvas: HTMLCanvasElement,
   mdCanvas: HTMLCanvasElement,
+  gl3dCanvas: HTMLCanvasElement,
   modeRef: { current: VizMode },
   presetKeyRef: { current: string },
   autoRef: { current: boolean },
+  sceneRef: { current: SceneName },
   onAutoSwitch: () => void,
 ): () => void {
   const ctx = canvas.getContext("2d")!;
@@ -283,6 +328,38 @@ function startVisualizer(
   // smoothed display state
   let disp = new Float32Array(bands.length);
   let peaks = new Float32Array(bands.length);
+
+  // 3D state (lazy)
+  let viz3d: Viz3D | null = null;
+  let viz3dFailed = false;
+
+  function ensure3D(): boolean {
+    if (viz3d) return true;
+    if (viz3dFailed) return false;
+    if (gl3dCanvas.clientWidth === 0 || gl3dCanvas.clientHeight === 0) {
+      return false;
+    }
+    try {
+      viz3d = new Viz3D(gl3dCanvas, sceneRef.current);
+      flog(`[3d] renderer init ok, ${gl3dCanvas.width}x${gl3dCanvas.height}`);
+      return true;
+    } catch (e) {
+      viz3dFailed = true;
+      flog(`[3d] renderer init FAILED: ${e}`);
+      return false;
+    }
+  }
+
+  function render3D(dt: number, t: number) {
+    if (!ensure3D() || !viz3d) return;
+    try {
+      viz3d.setScene(sceneRef.current);
+      viz3d.render({ disp, wave, rms, beat, dt, t });
+    } catch (e) {
+      viz3dFailed = true;
+      flog(`[3d] render FAILED: ${e}`);
+    }
+  }
 
   // butterchurn state (lazy)
   let bc: BCVisualizer | null = null;
@@ -407,6 +484,14 @@ function startVisualizer(
     mdCanvas.width = Math.round(mdCanvas.clientWidth * dpr);
     mdCanvas.height = Math.round(mdCanvas.clientHeight * dpr);
     bc?.setRendererSize(mdCanvas.width, mdCanvas.height);
+    const w3 = Math.round(gl3dCanvas.clientWidth * dpr);
+    const h3 = Math.round(gl3dCanvas.clientHeight * dpr);
+    if (viz3d) {
+      viz3d.resize(w3, h3); // sets the canvas bitmap size via three
+    } else {
+      gl3dCanvas.width = w3;
+      gl3dCanvas.height = h3;
+    }
     gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
     gradient.addColorStop(0.0, "#38bdf8");
     gradient.addColorStop(0.45, "#818cf8");
@@ -418,9 +503,10 @@ function startVisualizer(
   window.addEventListener("resize", resize);
   resize();
 
-  // Eager init so a broken WebGL/butterchurn setup surfaces in the dev log
-  // immediately instead of on the first mode switch.
+  // Eager init so a broken WebGL/butterchurn/three setup surfaces in the
+  // dev log immediately instead of on the first mode switch.
   ensureButterchurn();
+  ensure3D();
 
   let last = performance.now();
   let fps = 60;
@@ -444,16 +530,19 @@ function startVisualizer(
     if (inTauri) fetchFrame();
     else mockFrame(now / 1000);
 
+    const attack = 1 - Math.exp(-dt / ATTACK_TAU);
+    const release = 1 - Math.exp(-dt / RELEASE_TAU);
+    for (let i = 0; i < disp.length; i++) {
+      const target = bands[i];
+      disp[i] += (target - disp[i]) * (target > disp[i] ? attack : release);
+      peaks[i] = Math.max(peaks[i] - PEAK_GRAVITY * dt, disp[i]);
+    }
+
     if (modeRef.current === "milkdrop") {
       renderMilkdrop();
+    } else if (modeRef.current === "3d") {
+      render3D(dt, now / 1000);
     } else {
-      const attack = 1 - Math.exp(-dt / ATTACK_TAU);
-      const release = 1 - Math.exp(-dt / RELEASE_TAU);
-      for (let i = 0; i < disp.length; i++) {
-        const target = bands[i];
-        disp[i] += (target - disp[i]) * (target > disp[i] ? attack : release);
-        peaks[i] = Math.max(peaks[i] - PEAK_GRAVITY * dt, disp[i]);
-      }
       draw();
     }
 
@@ -621,6 +710,7 @@ function startVisualizer(
     running = false;
     cancelAnimationFrame(raf);
     window.removeEventListener("resize", resize);
+    viz3d?.dispose();
   };
 }
 

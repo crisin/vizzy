@@ -27,7 +27,8 @@ body {
 }
 
 #viz,
-#mdviz {
+#mdviz,
+#viz3d {
   position: absolute;
   inset: 0;
   display: block;
@@ -36,7 +37,8 @@ body {
 }
 
 /* visibility (not display) so hidden canvases keep their layout size */
-#mdviz {
+#mdviz,
+#viz3d {
   visibility: hidden;
 }
 
@@ -44,7 +46,12 @@ body {
   visibility: visible;
 }
 
-.stage.mode-milkdrop #viz {
+.stage.mode-3d #viz3d {
+  visibility: visible;
+}
+
+.stage.mode-milkdrop #viz,
+.stage.mode-3d #viz {
   visibility: hidden;
 }
 

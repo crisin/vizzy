@@ -25,4 +25,7 @@ demo data (no audio capture).
 - Beat detection (bass-weighted spectral flux, adaptive threshold) in the
   Rust analyzer; visuals pulse on beats, Milkdrop can auto-switch presets
   on beats ("auto" toggle / key A, 30s cooldown).
+- 3D mode (three.js, key 5): "orb" particle sphere and "terrain"
+  spectrogram mountains, scene switch with arrow keys.
+- Next: per-app capture (process loopback), settings persistence.
 - macOS backend (Core Audio taps) not wired up yet.
