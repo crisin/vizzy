@@ -1,9 +1,7 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { unzipSync } from "fflate";
 import { params } from "./params";
+import { centerAndScale, loadModelObject } from "./modelLoader";
 
 export interface AudioFrame3D {
   disp: Float32Array; // smoothed bands 0..1
@@ -23,6 +21,8 @@ export type SceneName =
   | "bars3d"
   | "gyro"
   | "blob"
+  | "cubes"
+  | "critters"
   | "model";
 export const SCENE_NAMES: SceneName[] = [
   "orb",
@@ -31,6 +31,8 @@ export const SCENE_NAMES: SceneName[] = [
   "bars3d",
   "gyro",
   "blob",
+  "cubes",
+  "critters",
   "model",
 ];
 
@@ -460,6 +462,291 @@ class GyroScene implements Scene3D {
   }
 }
 
+/** Nested wireframe cubes tumbling through each other, one band group each. */
+class CubesScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  private cubes: THREE.LineSegments[] = [];
+  private materials: THREE.LineBasicMaterial[] = [];
+  private core: THREE.Mesh;
+  private coreMaterial: THREE.MeshBasicMaterial;
+  private color = new THREE.Color();
+  private readonly count = 6;
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    this.camera.position.set(0, 0, 8.5);
+
+    for (let i = 0; i < this.count; i++) {
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const edges = new THREE.EdgesGeometry(geometry);
+      geometry.dispose();
+      const material = new THREE.LineBasicMaterial({
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const cube = new THREE.LineSegments(edges, material);
+      cube.rotation.set(i * 0.6, i * 1.1, i * 0.35);
+      this.cubes.push(cube);
+      this.materials.push(material);
+      this.scene.add(cube);
+    }
+
+    // pulsing translucent core
+    this.coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.12,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.core = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.coreMaterial);
+    this.scene.add(this.core);
+  }
+
+  update(frame: AudioFrame3D) {
+    const speed = params.get("cubes", "speed");
+    const spread = params.get("cubes", "spread");
+    const kick = params.get("cubes", "kick");
+    const per = Math.floor(NUM_BANDS / this.count);
+
+    let bass = 0;
+    for (let b = 0; b < 8; b++) bass += frame.disp[b] ?? 0;
+    bass /= 8;
+
+    for (let i = 0; i < this.count; i++) {
+      let g = 0;
+      for (let b = i * per; b < (i + 1) * per; b++) {
+        g += frame.disp[b] ?? 0;
+      }
+      g /= per;
+
+      const cube = this.cubes[i];
+      const dir = i % 2 === 0 ? 1 : -1;
+      const w = frame.dt * (speed * (0.35 + i * 0.16) + frame.beat * kick);
+      cube.rotation.x += w * dir;
+      cube.rotation.y += w * 0.75;
+      cube.rotation.z += w * 0.35 * dir;
+      const size = 1.1 * Math.pow(spread, i);
+      cube.scale.setScalar(size * (1 + g * 0.3 + frame.beat * 0.06));
+
+      this.color.setHSL((0.55 + i * 0.06 + g * 0.1) % 1, 0.9, 0.4 + g * 0.35);
+      this.materials[i].color.copy(this.color);
+      this.materials[i].opacity = 0.35 + g * 0.65;
+    }
+
+    this.core.rotation.x -= frame.dt * speed * 0.4;
+    this.core.rotation.y += frame.dt * speed * 0.55;
+    this.core.scale.setScalar(0.9 * (1 + bass * 0.5 + frame.beat * 0.15));
+    this.coreMaterial.opacity = 0.06 + bass * 0.3;
+
+    if (frame.cameraAuto) {
+      this.camera.position.x = Math.sin(frame.t * 0.2) * 2;
+      this.camera.position.y = Math.cos(frame.t * 0.16) * 1.4;
+      this.camera.lookAt(0, 0, 0);
+    }
+  }
+
+  dispose() {
+    for (const cube of this.cubes) cube.geometry.dispose();
+    for (const material of this.materials) material.dispose();
+    this.core.geometry.dispose();
+    this.coreMaterial.dispose();
+  }
+}
+
+/** Blocky low-poly critters (bunny, cow, pig) bouncing to the music. */
+class CrittersScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 1, 0);
+  private stage = new THREE.Group();
+  private grid: THREE.GridHelper;
+  private discoLight: THREE.PointLight;
+  private bodies: THREE.Group[] = []; // squash & stretch targets
+  private heads: THREE.Group[] = [];
+  private bunny: THREE.Group;
+  private bunnyEars: THREE.Mesh[] = [];
+  private cowHead!: THREE.Group;
+  private pigTail!: THREE.Mesh;
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 100);
+    this.camera.position.set(0, 2.4, 7.5);
+    this.camera.lookAt(this.cameraTarget);
+    this.scene.fog = new THREE.Fog(BG, 14, 40);
+
+    this.scene.add(new THREE.AmbientLight(0x445066, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+    sun.position.set(3, 6, 4);
+    this.scene.add(sun);
+    this.discoLight = new THREE.PointLight(0x38bdf8, 20, 0, 1.8);
+    this.discoLight.position.set(0, 4, 2);
+    this.scene.add(this.discoLight);
+
+    this.grid = new THREE.GridHelper(30, 30, 0x1e293b, 0x131c30);
+    this.scene.add(this.grid);
+    this.scene.add(this.stage);
+
+    this.bunny = this.buildBunny();
+    this.bunny.position.x = -2.4;
+    const cow = this.buildCow();
+    const pig = this.buildPig();
+    pig.position.x = 2.4;
+    this.stage.add(this.bunny, cow, pig);
+  }
+
+  private box(
+    parent: THREE.Object3D,
+    w: number,
+    h: number,
+    d: number,
+    color: number,
+    x: number,
+    y: number,
+    z: number,
+  ): THREE.Mesh {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true }),
+    );
+    mesh.position.set(x, y, z);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  private buildBunny(): THREE.Group {
+    const root = new THREE.Group();
+    const body = new THREE.Group();
+    root.add(body);
+    this.box(body, 0.85, 0.7, 1.05, 0xe8e4de, 0, 0.55, 0); // torso
+    this.box(body, 0.3, 0.2, 0.3, 0xffffff, 0, 0.7, -0.62); // fluffy tail
+    this.box(body, 0.28, 0.22, 0.42, 0xd9d4cc, -0.28, 0.15, 0.3); // paw
+    this.box(body, 0.28, 0.22, 0.42, 0xd9d4cc, 0.28, 0.15, 0.3); // paw
+    const head = new THREE.Group();
+    head.position.set(0, 1.05, 0.45);
+    body.add(head);
+    this.box(head, 0.55, 0.52, 0.5, 0xefebe4, 0, 0, 0);
+    this.box(head, 0.1, 0.1, 0.08, 0xff9db3, 0, -0.08, 0.28); // nose
+    const earL = this.box(head, 0.14, 0.65, 0.18, 0xefebe4, -0.16, 0.5, -0.05);
+    const earR = this.box(head, 0.14, 0.65, 0.18, 0xefebe4, 0.16, 0.5, -0.05);
+    this.bunnyEars.push(earL, earR);
+    this.bodies.push(body);
+    this.heads.push(head);
+    return root;
+  }
+
+  private buildCow(): THREE.Group {
+    const root = new THREE.Group();
+    const body = new THREE.Group();
+    root.add(body);
+    this.box(body, 1.35, 0.85, 1.8, 0xf2efe9, 0, 0.95, 0); // torso
+    this.box(body, 0.55, 0.5, 0.6, 0x2e2a26, -0.35, 1.0, -0.4); // patch
+    this.box(body, 0.45, 0.4, 0.5, 0x2e2a26, 0.4, 1.15, 0.35); // patch
+    for (const [lx, lz] of [
+      [-0.45, 0.6],
+      [0.45, 0.6],
+      [-0.45, -0.6],
+      [0.45, -0.6],
+    ] as const) {
+      this.box(body, 0.26, 0.55, 0.26, 0xe8e4de, lx, 0.28, lz);
+    }
+    const head = new THREE.Group();
+    head.position.set(0, 1.45, 1.05);
+    body.add(head);
+    this.box(head, 0.6, 0.55, 0.5, 0xf2efe9, 0, 0, 0);
+    this.box(head, 0.42, 0.25, 0.18, 0xf5b8c4, 0, -0.18, 0.3); // snout
+    this.box(head, 0.16, 0.16, 0.14, 0xd9d4cc, -0.4, 0.22, 0); // horn base
+    this.box(head, 0.16, 0.16, 0.14, 0xd9d4cc, 0.4, 0.22, 0);
+    this.cowHead = head;
+    this.bodies.push(body);
+    this.heads.push(head);
+    return root;
+  }
+
+  private buildPig(): THREE.Group {
+    const root = new THREE.Group();
+    const body = new THREE.Group();
+    root.add(body);
+    this.box(body, 0.95, 0.68, 1.25, 0xf7a8b8, 0, 0.55, 0); // torso
+    for (const [lx, lz] of [
+      [-0.3, 0.4],
+      [0.3, 0.4],
+      [-0.3, -0.4],
+      [0.3, -0.4],
+    ] as const) {
+      this.box(body, 0.2, 0.32, 0.2, 0xeb96a8, lx, 0.12, lz);
+    }
+    this.pigTail = this.box(body, 0.1, 0.1, 0.28, 0xeb96a8, 0, 0.75, -0.7);
+    const head = new THREE.Group();
+    head.position.set(0, 0.85, 0.72);
+    body.add(head);
+    this.box(head, 0.52, 0.48, 0.42, 0xf7a8b8, 0, 0, 0);
+    this.box(head, 0.26, 0.2, 0.14, 0xeb96a8, 0, -0.05, 0.27); // snout
+    this.box(head, 0.14, 0.18, 0.08, 0xeb96a8, -0.17, 0.3, 0); // ear
+    this.box(head, 0.14, 0.18, 0.08, 0xeb96a8, 0.17, 0.3, 0);
+    this.bodies.push(body);
+    this.heads.push(head);
+    return root;
+  }
+
+  update(frame: AudioFrame3D) {
+    const bounce = params.get("critters", "bounce");
+    const wiggle = params.get("critters", "wiggle");
+    const spin = params.get("critters", "spin");
+
+    const avg = (from: number, to: number) => {
+      let s = 0;
+      for (let i = from; i < to; i++) s += frame.disp[i] ?? 0;
+      return s / (to - from);
+    };
+    const bass = avg(0, 8);
+    const mids = avg(16, 32);
+    const treble = avg(40, 56);
+
+    // squash & stretch on the bass, offset per critter so they groove
+    for (let i = 0; i < this.bodies.length; i++) {
+      const phase = 1 + 0.15 * Math.sin(frame.t * 2 + i * 2.1);
+      const squash = 1 + bass * bounce * 0.35 * phase + frame.beat * 0.08;
+      this.bodies[i].scale.set(1 / Math.sqrt(squash), squash, 1 / Math.sqrt(squash));
+      this.heads[i].rotation.x = -frame.beat * 0.45 * bounce;
+    }
+
+    // bunny hops on beats
+    this.bunny.position.y = Math.pow(frame.beat, 2) * 0.9 * bounce;
+
+    // ears, cow headbang, pig tail wag on treble/mids
+    const w = Math.sin(frame.t * 11) * treble * wiggle;
+    this.bunnyEars[0].rotation.z = 0.15 + w * 0.8;
+    this.bunnyEars[1].rotation.z = -0.15 - w * 0.8;
+    this.cowHead.rotation.z = Math.sin(frame.t * 5.3) * mids * wiggle * 0.5;
+    this.pigTail.rotation.y = Math.sin(frame.t * 13) * (0.2 + treble * wiggle);
+
+    this.stage.rotation.y += frame.dt * spin;
+    this.discoLight.intensity = 6 + bass * 40;
+    this.discoLight.color.setHSL((frame.t * 0.06) % 1, 0.8, 0.6);
+
+    if (frame.cameraAuto) {
+      this.camera.position.x = Math.sin(frame.t * 0.12) * 2.2;
+      this.camera.lookAt(this.cameraTarget);
+    }
+  }
+
+  dispose() {
+    this.stage.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if ((mesh as { isMesh?: boolean }).isMesh) {
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      }
+    });
+    this.grid.geometry.dispose();
+    (this.grid.material as THREE.Material).dispose();
+  }
+}
+
 // Ashima/webgl-noise simplex 3D (MIT), the standard GLSL implementation.
 const SNOISE_GLSL = /* glsl */ `
 vec3 mod289(vec3 x){return x - floor(x * (1.0/289.0)) * 289.0;}
@@ -740,120 +1027,21 @@ class ModelScene implements Scene3D {
     mat.needsUpdate = true;
   }
 
-  /**
-   * Accepts .glb, .gltf (embedded) and .zip archives (e.g. Sketchfab
-   * downloads: scene.gltf + scene.bin + textures/). Zip resources are
-   * mapped to blob URLs through a LoadingManager URL modifier.
-   */
+  /** Accepts .glb, .gltf (embedded) and .zip archives (Sketchfab-style). */
   loadModel(data: ArrayBuffer, name: string) {
-    try {
-      const bytes = new Uint8Array(data);
-      const isZip =
-        name.toLowerCase().endsWith(".zip") ||
-        (bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4b);
-      if (isZip) {
-        this.loadFromZip(bytes, name);
-      } else {
-        this.parseGltf(data, name, undefined, null);
-      }
-    } catch (e) {
-      this.log(`[3d] model load FAILED (${name}): ${e}`);
-    }
-  }
-
-  private loadFromZip(bytes: Uint8Array, name: string) {
-    const files = unzipSync(bytes);
-    const names = Object.keys(files).filter((n) => !n.endsWith("/"));
-    const entry =
-      names.find((n) => n.toLowerCase().endsWith(".glb")) ??
-      names.find((n) => n.toLowerCase().endsWith(".gltf"));
-    if (!entry) {
-      this.log(`[3d] model load FAILED (${name}): kein .glb/.gltf im ZIP`);
-      return;
-    }
-
-    const urls = new Map<string, string>();
-    for (const n of names) {
-      urls.set(n, URL.createObjectURL(new Blob([files[n] as BlobPart])));
-    }
-    const baseDir = entry.includes("/")
-      ? entry.slice(0, entry.lastIndexOf("/") + 1)
-      : "";
-
-    const manager = new THREE.LoadingManager();
-    manager.setURLModifier((url) => {
-      if (
-        url.startsWith("blob:") ||
-        url.startsWith("data:") ||
-        url.includes("/draco/")
-      ) {
-        return url;
-      }
-      const clean = decodeURIComponent(url).replace(/^\.\//, "");
-      const direct = urls.get(clean) ?? urls.get(baseDir + clean);
-      if (direct) return direct;
-      const base = clean.split("/").pop() ?? clean;
-      for (const [n, u] of urls) {
-        if (n === base || n.endsWith("/" + base)) return u;
-      }
-      return url;
-    });
-
-    const cleanup = () => {
-      for (const u of urls.values()) URL.revokeObjectURL(u);
-    };
-    const entryBytes = files[entry];
-    const payload: ArrayBuffer | string = entry.toLowerCase().endsWith(".glb")
-      ? (entryBytes.buffer.slice(
-          entryBytes.byteOffset,
-          entryBytes.byteOffset + entryBytes.byteLength,
-        ) as ArrayBuffer)
-      : new TextDecoder().decode(entryBytes);
-    this.parseGltf(payload, `${name} → ${entry}`, manager, cleanup);
-  }
-
-  private parseGltf(
-    data: ArrayBuffer | string,
-    name: string,
-    manager: THREE.LoadingManager | undefined,
-    cleanup: (() => void) | null,
-  ) {
-    const loader = new GLTFLoader(manager);
-    const draco = new DRACOLoader(manager);
-    draco.setDecoderPath("/draco/");
-    loader.setDRACOLoader(draco);
-    const done = () => {
-      cleanup?.();
-      draco.dispose();
-    };
-    loader.parse(
-      data as ArrayBuffer,
-      "",
-      (gltf) => {
-        try {
-          this.clearHolder();
-          const obj = gltf.scene;
-          const box = new THREE.Box3().setFromObject(obj);
-          const size = box.getSize(new THREE.Vector3());
-          const center = box.getCenter(new THREE.Vector3());
-          obj.position.sub(center);
-          const maxDim = Math.max(size.x, size.y, size.z) || 1;
-          this.baseScale = 2.4 / maxDim;
-          this.explodeScale = maxDim * 0.25;
-          this.holder.add(obj);
-          this.prepareExplode(obj);
-          this.log(`[3d] model loaded: ${name}`);
-        } catch (e) {
-          this.log(`[3d] model setup FAILED (${name}): ${e}`);
-        } finally {
-          done();
-        }
-      },
-      (err) => {
-        done();
+    loadModelObject(data, name)
+      .then((obj) => {
+        this.clearHolder();
+        const { scale, maxDim } = centerAndScale(obj, 2.4);
+        this.baseScale = scale;
+        this.explodeScale = maxDim * 0.25;
+        this.holder.add(obj);
+        this.prepareExplode(obj);
+        this.log(`[3d] model loaded: ${name}`);
+      })
+      .catch((err) => {
         this.log(`[3d] model load FAILED (${name}): ${err}`);
-      },
-    );
+      });
   }
 
   private clearHolder() {
@@ -991,6 +1179,10 @@ export class Viz3D {
         return new GyroScene(aspect);
       case "blob":
         return new BlobScene(aspect);
+      case "cubes":
+        return new CubesScene(aspect);
+      case "critters":
+        return new CrittersScene(aspect);
       case "model": {
         const scene = new ModelScene(aspect, this.log);
         if (this.pendingModel) {

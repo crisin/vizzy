@@ -22,6 +22,8 @@ export const GROUP_LABELS: Record<string, string> = {
   bars3d: "3D-Bars",
   gyro: "Gyro",
   blob: "Blob",
+  cubes: "Würfel",
+  critters: "Tierchen",
   model: "Modell",
   milkdrop: "Milkdrop",
 };
@@ -76,6 +78,16 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "amp", label: "Verformung", min: 0.1, max: 1.2, step: 0.05, default: 0.5 },
     { key: "freq", label: "Detail", min: 0.8, max: 6, step: 0.1, default: 2.2 },
     { key: "speed", label: "Tempo", min: 0.1, max: 3, step: 0.1, default: 1 },
+  ],
+  cubes: [
+    { key: "speed", label: "Rotation", min: 0.1, max: 3, step: 0.1, default: 1 },
+    { key: "spread", label: "Größenstufe", min: 1.1, max: 2, step: 0.05, default: 1.45 },
+    { key: "kick", label: "Beat-Kick", min: 0, max: 3, step: 0.1, default: 1 },
+  ],
+  critters: [
+    { key: "bounce", label: "Hüpfen", min: 0, max: 2, step: 0.1, default: 1 },
+    { key: "wiggle", label: "Wackeln", min: 0, max: 2, step: 0.1, default: 1 },
+    { key: "spin", label: "Bühnen-Drehung", min: 0, max: 0.5, step: 0.02, default: 0.08 },
   ],
   model: [
     { key: "spin", label: "Rotation", min: 0, max: 1.5, step: 0.05, default: 0.25 },

@@ -11,9 +11,15 @@ export type ModelRecord = {
   data: ArrayBuffer;
   size: number;
   addedAt: number;
+  thumb?: string; // data-URL preview rendered at add time
 };
 
-export type ModelMeta = { id: number; name: string; size: number };
+export type ModelMeta = {
+  id: number;
+  name: string;
+  size: number;
+  thumb?: string;
+};
 
 function withStore<T>(
   mode: IDBTransactionMode,
@@ -59,8 +65,21 @@ export function addModel(name: string, data: ArrayBuffer): Promise<number> {
 export function listModels(): Promise<ModelMeta[]> {
   return withStore<ModelRecord[]>("readonly", (s) => s.getAll()).then(
     (records) =>
-      records.map((r) => ({ id: r.id!, name: r.name, size: r.size })),
+      records.map((r) => ({
+        id: r.id!,
+        name: r.name,
+        size: r.size,
+        thumb: r.thumb,
+      })),
   );
+}
+
+/** Attach a rendered preview to an existing record. */
+export async function updateThumb(id: number, thumb: string): Promise<void> {
+  const record = await getModel(id);
+  if (!record) return;
+  record.thumb = thumb;
+  await withStore<IDBValidKey>("readwrite", (s) => s.put(record));
 }
 
 export function getModel(id: number): Promise<ModelRecord | undefined> {

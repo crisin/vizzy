@@ -18,8 +18,11 @@ import {
   deleteModel,
   getModel,
   listModels,
+  updateThumb,
   type ModelMeta,
 } from "./modelStore";
+import { loadModelObject, renderModelThumb } from "./modelLoader";
+import { LibraryModal } from "./LibraryModal";
 
 type ModelAction =
   | { action: "load"; data: ArrayBuffer; name: string; seq: number }
@@ -109,6 +112,7 @@ function App() {
   const camResetRef = useRef(0);
   const [models, setModels] = useState<ModelMeta[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -270,6 +274,14 @@ function App() {
         setSelectedModelId(id);
         refreshModels();
         flog(`[cfg] model saved: ${file.name} (#${id})`);
+        // render a library preview in the background
+        try {
+          const obj = await loadModelObject(data, file.name);
+          await updateThumb(id, renderModelThumb(obj));
+          refreshModels();
+        } catch {
+          // preview is optional — the card shows a fallback icon
+        }
       } catch (err) {
         flog(`[cfg] model save FAILED: ${err}`);
       }
@@ -278,13 +290,12 @@ function App() {
   );
 
   const pickModel = useCallback(
-    async (value: string) => {
-      if (value === "") {
+    async (id: number | null) => {
+      if (id == null) {
         setSelectedModelId(null);
         modelFileRef.current = { action: "clear", seq: nextModelSeq() };
         return;
       }
-      const id = Number(value);
       try {
         const record = await getModel(id);
         if (!record) return;
@@ -302,17 +313,21 @@ function App() {
     [nextModelSeq],
   );
 
-  const removeSelectedModel = useCallback(async () => {
-    if (selectedModelId == null) return;
-    try {
-      await deleteModel(selectedModelId);
-    } catch (err) {
-      flog(`[cfg] model delete FAILED: ${err}`);
-    }
-    setSelectedModelId(null);
-    modelFileRef.current = { action: "clear", seq: nextModelSeq() };
-    refreshModels();
-  }, [selectedModelId, nextModelSeq, refreshModels]);
+  const removeModel = useCallback(
+    async (id: number) => {
+      try {
+        await deleteModel(id);
+      } catch (err) {
+        flog(`[cfg] model delete FAILED: ${err}`);
+      }
+      if (selectedModelId === id) {
+        setSelectedModelId(null);
+        modelFileRef.current = { action: "clear", seq: nextModelSeq() };
+      }
+      refreshModels();
+    },
+    [selectedModelId, nextModelSeq, refreshModels],
+  );
 
   // Restore the model library + last selection (also in browser demo mode).
   const modelRestoredRef = useRef(false);
@@ -396,8 +411,9 @@ function App() {
         setEditorOpen((v) => !v);
       } else if (e.key === "b") {
         setShowBpm((v) => !v);
-      } else if (e.key === "Escape" && inTauri) {
-        void getCurrentWindow().setFullscreen(false);
+      } else if (e.key === "Escape") {
+        if (libraryOpen) setLibraryOpen(false);
+        else if (inTauri) void getCurrentWindow().setFullscreen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
       } else if (modeRef.current === "milkdrop") {
@@ -419,7 +435,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleFullscreen, stepPreset, randomPreset]);
+  }, [toggleFullscreen, stepPreset, randomPreset, libraryOpen]);
 
   const pokeHud = useCallback(() => {
     setHudVisible(true);
@@ -593,37 +609,21 @@ function App() {
               ⟲ Kamera
             </button>
             {scene3d === "model" && (
-              <>
-                <select
-                  className="src-select model-select"
-                  value={selectedModelId ?? ""}
-                  onChange={(e) => void pickModel(e.target.value)}
-                  title="Modell-Library"
-                >
-                  <option value="">— Platzhalter —</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({Math.max(1, Math.round(m.size / 1024))} KB)
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="mode-btn"
-                  disabled={selectedModelId == null}
-                  onClick={() => void removeSelectedModel()}
-                  title="Ausgewähltes Modell aus der Library löschen"
-                >
-                  🗑
-                </button>
-              </>
+              <button
+                className="mode-btn lib-btn"
+                onClick={() => {
+                  refreshModels();
+                  setLibraryOpen(true);
+                }}
+                title="Modell-Library öffnen"
+              >
+                📦{" "}
+                {selectedModelId != null
+                  ? (models.find((m) => m.id === selectedModelId)?.name ??
+                    "Library")
+                  : "Library"}
+              </button>
             )}
-            <button
-              className="mode-btn"
-              onClick={() => fileInputRef.current?.click()}
-              title="Modell zur Library hinzufügen (.glb, .gltf, .zip z.B. von Sketchfab)"
-            >
-              + Modell
-            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -639,6 +639,16 @@ function App() {
           groups={["audio", mode === "3d" ? scene3d : mode]}
           onClose={() => setEditorOpen(false)}
           onResetAll={resetAll}
+        />
+      )}
+      {libraryOpen && (
+        <LibraryModal
+          models={models}
+          selectedId={selectedModelId}
+          onPick={(id) => void pickModel(id)}
+          onDelete={(id) => void removeModel(id)}
+          onAdd={() => fileInputRef.current?.click()}
+          onClose={() => setLibraryOpen(false)}
         />
       )}
     </div>
