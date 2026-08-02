@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import butterchurn, { type BCVisualizer } from "butterchurn";
@@ -85,6 +91,12 @@ function App() {
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [editorOpen, setEditorOpen] = useState(false);
   const bpmElRef = useRef<HTMLSpanElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const modelFileRef = useRef<{
+    data: ArrayBuffer;
+    name: string;
+    seq: number;
+  } | null>(null);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -218,6 +230,19 @@ function App() {
     setPresetKey(PRESET_KEYS[Math.floor(Math.random() * PRESET_KEYS.length)]);
   }, []);
 
+  const onModelFile = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    const data = await file.arrayBuffer();
+    modelFileRef.current = {
+      data,
+      name: file.name,
+      seq: (modelFileRef.current?.seq ?? 0) + 1,
+    };
+    setScene3d("model");
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const mdCanvas = mdCanvasRef.current;
@@ -233,6 +258,7 @@ function App() {
       sceneRef,
       randomPreset,
       bpmElRef,
+      modelFileRef,
     );
   }, [randomPreset]);
 
@@ -443,6 +469,20 @@ function App() {
                 {s}
               </button>
             ))}
+            <button
+              className="mode-btn"
+              onClick={() => fileInputRef.current?.click()}
+              title="Eigenes glTF/GLB-Modell laden (Szene „model“)"
+            >
+              Modell laden…
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".glb,.gltf"
+              style={{ display: "none" }}
+              onChange={onModelFile}
+            />
           </div>
         )}
       </div>
@@ -466,6 +506,7 @@ function startVisualizer(
   sceneRef: { current: SceneName },
   onAutoSwitch: () => void,
   bpmEl: { current: HTMLSpanElement | null },
+  modelRef: { current: { data: ArrayBuffer; name: string; seq: number } | null },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -489,6 +530,7 @@ function startVisualizer(
   // 3D state (lazy)
   let viz3d: Viz3D | null = null;
   let viz3dFailed = false;
+  let loadedModelSeq = 0;
 
   function ensure3D(): boolean {
     if (viz3d) return true;
@@ -497,7 +539,7 @@ function startVisualizer(
       return false;
     }
     try {
-      viz3d = new Viz3D(gl3dCanvas, sceneRef.current);
+      viz3d = new Viz3D(gl3dCanvas, sceneRef.current, flog);
       flog(`[3d] renderer init ok, ${gl3dCanvas.width}x${gl3dCanvas.height}`);
       return true;
     } catch (e) {
@@ -510,6 +552,11 @@ function startVisualizer(
   function render3D(dt: number, t: number) {
     if (!ensure3D() || !viz3d) return;
     try {
+      const m = modelRef.current;
+      if (m && m.seq !== loadedModelSeq) {
+        loadedModelSeq = m.seq;
+        viz3d.loadModel(m.data, m.name);
+      }
       viz3d.setScene(sceneRef.current);
       viz3d.render({ disp, wave, rms, beat, dt, t });
     } catch (e) {

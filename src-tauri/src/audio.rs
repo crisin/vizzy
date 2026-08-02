@@ -92,16 +92,40 @@ pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>, params: S
         .name("vizzy-audio".into())
         .spawn(move || {
             let mut spec = SourceSpec::Loopback { device_id: None };
+            let mut failures = 0u32;
             loop {
+                let started = std::time::Instant::now();
                 match capture_loop(&shared, &spec, &rx, &params) {
-                    Ok(Some(next)) => spec = next,
+                    Ok(Some(next)) => {
+                        spec = next;
+                        failures = 0;
+                    }
                     Ok(None) => {}
                     Err(e) => {
+                        // A run that captured fine for a while before dying
+                        // (device unplugged mid-play) is not a broken spec.
+                        if started.elapsed() > Duration::from_secs(5) {
+                            failures = 0;
+                        }
+                        failures += 1;
                         eprintln!("[vizzy-audio] capture error: {e}; waiting for retry/switch");
-                        // Retry the same source after a pause, unless a
-                        // switch request arrives first.
+
+                        let is_default_loopback =
+                            matches!(spec, SourceSpec::Loopback { device_id: None });
+                        if failures >= 3 && !is_default_loopback {
+                            eprintln!(
+                                "[vizzy-audio] source keeps failing — falling back to default loopback"
+                            );
+                            spec = SourceSpec::Loopback { device_id: None };
+                            failures = 0;
+                            continue;
+                        }
+
+                        // Retry after a pause, unless a switch request
+                        // arrives first.
                         if let Ok(next) = rx.recv_timeout(Duration::from_secs(2)) {
                             spec = next;
+                            failures = 0;
                         }
                     }
                 }

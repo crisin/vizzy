@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { params } from "./params";
 
 export interface AudioFrame3D {
@@ -10,8 +11,23 @@ export interface AudioFrame3D {
   t: number;
 }
 
-export type SceneName = "orb" | "terrain" | "tunnel";
-export const SCENE_NAMES: SceneName[] = ["orb", "terrain", "tunnel"];
+export type SceneName =
+  | "orb"
+  | "terrain"
+  | "tunnel"
+  | "bars3d"
+  | "gyro"
+  | "blob"
+  | "model";
+export const SCENE_NAMES: SceneName[] = [
+  "orb",
+  "terrain",
+  "tunnel",
+  "bars3d",
+  "gyro",
+  "blob",
+  "model",
+];
 
 const BG = 0x07070c;
 const NUM_BANDS = 64;
@@ -299,15 +315,399 @@ class TunnelScene implements Scene3D {
   }
 }
 
+/** The classic EQ, but as a ring of 3D bars with an orbiting camera. */
+class Bars3DScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  private bars: THREE.InstancedMesh;
+  private grid: THREE.GridHelper;
+  private dummy = new THREE.Object3D();
+  private color = new THREE.Color();
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    this.scene.fog = new THREE.Fog(BG, 18, 48);
+
+    const geometry = new THREE.BoxGeometry(0.6, 1, 0.6);
+    geometry.translate(0, 0.5, 0); // bars grow up from the floor
+    this.bars = new THREE.InstancedMesh(
+      geometry,
+      new THREE.MeshBasicMaterial(),
+      NUM_BANDS,
+    );
+    this.scene.add(this.bars);
+
+    this.grid = new THREE.GridHelper(44, 44, 0x1e293b, 0x131c30);
+    this.scene.add(this.grid);
+  }
+
+  update(frame: AudioFrame3D) {
+    const height = params.get("bars3d", "height");
+    const orbit = params.get("bars3d", "orbit");
+    for (let i = 0; i < NUM_BANDS; i++) {
+      const v = frame.disp[i] ?? 0;
+      const angle = (i / NUM_BANDS) * Math.PI * 2;
+      this.dummy.position.set(Math.cos(angle) * 8, 0, Math.sin(angle) * 8);
+      this.dummy.rotation.set(0, -angle, 0);
+      this.dummy.scale.set(1, Math.max(0.05, v * height), 1);
+      this.dummy.updateMatrix();
+      this.bars.setMatrixAt(i, this.dummy.matrix);
+      this.color.setHSL(0.55 + (i / NUM_BANDS) * 0.35, 0.9, 0.22 + v * 0.5);
+      this.bars.setColorAt(i, this.color);
+    }
+    this.bars.instanceMatrix.needsUpdate = true;
+    if (this.bars.instanceColor) this.bars.instanceColor.needsUpdate = true;
+
+    const a = frame.t * orbit;
+    this.camera.position.set(
+      Math.sin(a) * 16,
+      6 + Math.sin(frame.t * 0.3) * 2 + frame.beat * 0.8,
+      Math.cos(a) * 16,
+    );
+    this.camera.lookAt(0, 2.5, 0);
+  }
+
+  dispose() {
+    this.bars.geometry.dispose();
+    (this.bars.material as THREE.Material).dispose();
+    this.grid.geometry.dispose();
+    (this.grid.material as THREE.Material).dispose();
+  }
+}
+
+/** Nested glowing rings spinning on different axes, one band group each. */
+class GyroScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  private rings: THREE.Mesh[] = [];
+  private materials: THREE.MeshBasicMaterial[] = [];
+  private color = new THREE.Color();
+  private readonly count = 6;
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    this.camera.position.set(0, 0, 7.5);
+
+    for (let i = 0; i < this.count; i++) {
+      const geometry = new THREE.TorusGeometry(1 + i * 0.55, 0.025, 12, 128);
+      const material = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const ring = new THREE.Mesh(geometry, material);
+      ring.rotation.set(i * 0.7, i * 1.3, 0);
+      this.rings.push(ring);
+      this.materials.push(material);
+      this.scene.add(ring);
+    }
+  }
+
+  update(frame: AudioFrame3D) {
+    const speed = params.get("gyro", "speed");
+    const kick = params.get("gyro", "kick");
+    const per = Math.floor(NUM_BANDS / this.count);
+    for (let i = 0; i < this.count; i++) {
+      // average of this ring's band group
+      let g = 0;
+      for (let b = i * per; b < (i + 1) * per; b++) {
+        g += frame.disp[b] ?? 0;
+      }
+      g /= per;
+
+      const ring = this.rings[i];
+      const dir = i % 2 === 0 ? 1 : -1;
+      const w = frame.dt * (speed * (0.5 + i * 0.22) + frame.beat * kick);
+      ring.rotation.x += w * dir;
+      ring.rotation.y += w * 0.8;
+      ring.scale.setScalar(1 + g * 0.3 + frame.beat * 0.05);
+
+      this.color.setHSL((0.52 + i * 0.07 + g * 0.08) % 1, 0.9, 0.4 + g * 0.35);
+      this.materials[i].color.copy(this.color);
+      this.materials[i].opacity = 0.3 + g * 0.7;
+    }
+    this.camera.position.x = Math.sin(frame.t * 0.25) * 1.2;
+    this.camera.position.y = Math.cos(frame.t * 0.2) * 0.8;
+    this.camera.lookAt(0, 0, 0);
+  }
+
+  dispose() {
+    for (const ring of this.rings) {
+      ring.geometry.dispose();
+    }
+    for (const material of this.materials) {
+      material.dispose();
+    }
+  }
+}
+
+// Ashima/webgl-noise simplex 3D (MIT), the standard GLSL implementation.
+const SNOISE_GLSL = /* glsl */ `
+vec3 mod289(vec3 x){return x - floor(x * (1.0/289.0)) * 289.0;}
+vec4 mod289(vec4 x){return x - floor(x * (1.0/289.0)) * 289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
+float snoise(vec3 v){
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod289(i);
+  vec4 p = permute(permute(permute(
+      i.z + vec4(0.0, i1.z, i2.z, 1.0))
+    + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+    + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0) * 2.0 + 1.0;
+  vec4 s1 = floor(b1) * 2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+}
+`;
+
+/** Procedural noise blob: GPU-displaced icosphere, bass drives the shape. */
+class BlobScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  private mesh: THREE.Mesh;
+  private material: THREE.ShaderMaterial;
+  private time = 0;
+
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 100);
+    this.camera.position.set(0, 0, 4);
+
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uAmp: { value: 0.5 },
+        uFreq: { value: 2.2 },
+        uBass: { value: 0 },
+        uMid: { value: 0 },
+        uBeat: { value: 0 },
+      },
+      vertexShader: /* glsl */ `
+        ${SNOISE_GLSL}
+        uniform float uTime;
+        uniform float uAmp;
+        uniform float uFreq;
+        uniform float uBass;
+        uniform float uMid;
+        uniform float uBeat;
+        varying float vDisp;
+        varying vec3 vNormal;
+        void main() {
+          vec3 dir = normalize(position);
+          float n = snoise(dir * uFreq + vec3(0.0, uTime * 0.4, 0.0));
+          float n2 = snoise(dir * uFreq * 2.3 - vec3(uTime * 0.7));
+          float d = n * (0.35 + uBass * 1.2) + n2 * 0.2 * (0.3 + uMid * 1.6);
+          vec3 p = position * (1.0 + d * uAmp + uBeat * 0.07);
+          vDisp = d;
+          vNormal = normalMatrix * normal;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        precision mediump float;
+        varying float vDisp;
+        varying vec3 vNormal;
+        void main() {
+          float rim = pow(1.0 - abs(normalize(vNormal).z), 2.0);
+          vec3 cLow = vec3(0.13, 0.52, 0.96);
+          vec3 cHigh = vec3(0.96, 0.30, 0.60);
+          vec3 c = mix(cLow, cHigh, clamp(vDisp * 1.4 + 0.5, 0.0, 1.0));
+          gl_FragColor = vec4(c * (0.35 + rim * 1.3), 1.0);
+        }
+      `,
+    });
+
+    this.mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.15, 64),
+      this.material,
+    );
+    this.scene.add(this.mesh);
+  }
+
+  update(frame: AudioFrame3D) {
+    const avg = (from: number, to: number) => {
+      let s = 0;
+      for (let i = from; i < to; i++) s += frame.disp[i] ?? 0;
+      return s / (to - from);
+    };
+    this.time += frame.dt * params.get("blob", "speed");
+    const u = this.material.uniforms;
+    u.uTime.value = this.time;
+    u.uAmp.value = params.get("blob", "amp");
+    u.uFreq.value = params.get("blob", "freq");
+    u.uBass.value = avg(0, 8);
+    u.uMid.value = avg(16, 40);
+    u.uBeat.value = frame.beat;
+    this.mesh.rotation.y += frame.dt * 0.15;
+    this.mesh.rotation.z = Math.sin(frame.t * 0.2) * 0.15;
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+  }
+}
+
+/** A user-supplied glTF/GLB model on a stage with band-driven lights. */
+class ModelScene implements Scene3D {
+  scene = new THREE.Scene();
+  camera: THREE.PerspectiveCamera;
+  private holder = new THREE.Group();
+  private lights: THREE.PointLight[];
+  private grid: THREE.GridHelper;
+  private baseScale = 1;
+  private log: (msg: string) => void;
+
+  constructor(aspect: number, log: (msg: string) => void) {
+    this.log = log;
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 100);
+    this.camera.position.set(0, 1.6, 4.6);
+    this.camera.lookAt(0, 1, 0);
+    this.scene.fog = new THREE.Fog(BG, 12, 40);
+
+    this.scene.add(new THREE.AmbientLight(0x334155, 1.2));
+    this.lights = [
+      new THREE.PointLight(0x38bdf8, 1, 0, 1.6), // bass
+      new THREE.PointLight(0xa78bfa, 1, 0, 1.6), // mids
+      new THREE.PointLight(0xf472b6, 1, 0, 1.6), // treble
+    ];
+    this.lights[0].position.set(3.5, 2.5, 3);
+    this.lights[1].position.set(-3.5, 2.5, -1);
+    this.lights[2].position.set(0, 3.5, -3.5);
+    for (const l of this.lights) this.scene.add(l);
+
+    this.grid = new THREE.GridHelper(24, 32, 0x1e293b, 0x131c30);
+    this.scene.add(this.grid);
+
+    // placeholder until the user loads a model
+    const knot = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.7, 0.22, 160, 24),
+      new THREE.MeshStandardMaterial({
+        color: 0xcbd5e1,
+        metalness: 0.85,
+        roughness: 0.25,
+      }),
+    );
+    this.holder.add(knot);
+    this.holder.position.y = 1.1;
+    this.scene.add(this.holder);
+  }
+
+  loadModel(data: ArrayBuffer, name: string) {
+    new GLTFLoader().parse(
+      data,
+      "",
+      (gltf) => {
+        this.clearHolder();
+        const obj = gltf.scene;
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        obj.position.sub(center);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        this.baseScale = 2.4 / maxDim;
+        this.holder.add(obj);
+        this.log(`[3d] model loaded: ${name}`);
+      },
+      (err) => {
+        this.log(`[3d] model load FAILED (${name}): ${err}`);
+      },
+    );
+  }
+
+  private clearHolder() {
+    for (const child of [...this.holder.children]) {
+      this.holder.remove(child);
+      child.traverse((node) => {
+        const mesh = node as THREE.Mesh;
+        mesh.geometry?.dispose?.();
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
+        for (const m of mats) m?.dispose?.();
+      });
+    }
+  }
+
+  update(frame: AudioFrame3D) {
+    const spin = params.get("model", "spin");
+    const pulse = params.get("model", "pulse");
+    const light = params.get("model", "light");
+
+    const avg = (from: number, to: number) => {
+      let s = 0;
+      for (let i = from; i < to; i++) s += frame.disp[i] ?? 0;
+      return s / (to - from);
+    };
+    const bass = avg(0, 8);
+    const mids = avg(16, 32);
+    const treble = avg(40, 56);
+
+    this.holder.rotation.y += frame.dt * (spin + frame.beat * spin * 2);
+    this.holder.scale.setScalar(
+      this.baseScale * (1 + bass * pulse * 0.4 + frame.beat * 0.05),
+    );
+    this.holder.position.y = 1.1 + Math.sin(frame.t * 0.8) * 0.08;
+
+    this.lights[0].intensity = light * (0.4 + bass * 5);
+    this.lights[1].intensity = light * (0.4 + mids * 5);
+    this.lights[2].intensity = light * (0.4 + treble * 5);
+  }
+
+  dispose() {
+    this.clearHolder();
+    this.grid.geometry.dispose();
+    (this.grid.material as THREE.Material).dispose();
+  }
+}
+
 /** Owns the WebGL renderer on its canvas and the active 3D scene. */
 export class Viz3D {
   private renderer: THREE.WebGLRenderer;
   private active: Scene3D;
   private name: SceneName;
   private dpr: number;
+  private log: (msg: string) => void;
+  private pendingModel: { data: ArrayBuffer; name: string } | null = null;
 
-  constructor(canvas: HTMLCanvasElement, initial: SceneName = "orb") {
+  constructor(
+    canvas: HTMLCanvasElement,
+    initial: SceneName = "orb",
+    log: (msg: string) => void = console.log,
+  ) {
     this.dpr = window.devicePixelRatio || 1;
+    this.log = log;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -333,6 +733,27 @@ export class Viz3D {
         return new TerrainScene(aspect);
       case "tunnel":
         return new TunnelScene(aspect);
+      case "bars3d":
+        return new Bars3DScene(aspect);
+      case "gyro":
+        return new GyroScene(aspect);
+      case "blob":
+        return new BlobScene(aspect);
+      case "model": {
+        const scene = new ModelScene(aspect, this.log);
+        if (this.pendingModel) {
+          scene.loadModel(this.pendingModel.data, this.pendingModel.name);
+        }
+        return scene;
+      }
+    }
+  }
+
+  /** Load a glTF/GLB into the model scene (kept for later scene switches). */
+  loadModel(data: ArrayBuffer, name: string) {
+    this.pendingModel = { data, name };
+    if (this.active instanceof ModelScene) {
+      this.active.loadModel(data, name);
     }
   }
 

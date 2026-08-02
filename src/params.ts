@@ -19,6 +19,10 @@ export const GROUP_LABELS: Record<string, string> = {
   orb: "Orb",
   terrain: "Terrain",
   tunnel: "Tunnel",
+  bars3d: "3D-Bars",
+  gyro: "Gyro",
+  blob: "Blob",
+  model: "Modell",
   milkdrop: "Milkdrop",
 };
 
@@ -59,6 +63,24 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "speed", label: "Tempo", min: 10, max: 80, step: 2, default: 35 },
     { key: "twist", label: "Verdrehung", min: 0, max: 0.2, step: 0.01, default: 0.06 },
     { key: "pulse", label: "Beat-Boost", min: 0, max: 3, step: 0.1, default: 1.2 },
+  ],
+  bars3d: [
+    { key: "height", label: "Balkenhöhe", min: 2, max: 16, step: 0.5, default: 8 },
+    { key: "orbit", label: "Kamera-Orbit", min: 0, max: 0.6, step: 0.02, default: 0.15 },
+  ],
+  gyro: [
+    { key: "speed", label: "Rotation", min: 0.1, max: 3, step: 0.1, default: 1 },
+    { key: "kick", label: "Beat-Kick", min: 0, max: 3, step: 0.1, default: 1 },
+  ],
+  blob: [
+    { key: "amp", label: "Verformung", min: 0.1, max: 1.2, step: 0.05, default: 0.5 },
+    { key: "freq", label: "Detail", min: 0.8, max: 6, step: 0.1, default: 2.2 },
+    { key: "speed", label: "Tempo", min: 0.1, max: 3, step: 0.1, default: 1 },
+  ],
+  model: [
+    { key: "spin", label: "Rotation", min: 0, max: 1.5, step: 0.05, default: 0.25 },
+    { key: "pulse", label: "Bass-Puls", min: 0, max: 2, step: 0.05, default: 0.8 },
+    { key: "light", label: "Licht-Reaktion", min: 0, max: 3, step: 0.1, default: 1.5 },
   ],
   milkdrop: [
     { key: "blend", label: "Überblendzeit (s)", min: 0, max: 8, step: 0.1, default: 2.7 },
