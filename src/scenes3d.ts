@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { params } from "./params";
 
 export interface AudioFrame3D {
@@ -9,6 +10,8 @@ export interface AudioFrame3D {
   beat: number; // beat envelope 0..1
   dt: number;
   t: number;
+  /** false while the user has grabbed the camera — scenes must not move it */
+  cameraAuto: boolean;
 }
 
 export type SceneName =
@@ -35,6 +38,8 @@ const NUM_BANDS = 64;
 interface Scene3D {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
+  /** orbit-controls pivot; origin if unset */
+  cameraTarget?: THREE.Vector3;
   update(frame: AudioFrame3D): void;
   dispose(): void;
 }
@@ -141,6 +146,7 @@ class OrbScene implements Scene3D {
 class TerrainScene implements Scene3D {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 2, -20);
   private mesh: THREE.Mesh;
   private geometry: THREE.PlaneGeometry;
   private material: THREE.MeshBasicMaterial;
@@ -205,9 +211,11 @@ class TerrainScene implements Scene3D {
     pos.needsUpdate = true;
     col.needsUpdate = true;
 
-    const sway = params.get("terrain", "sway");
-    this.camera.position.x = Math.sin(frame.t * 0.1) * sway;
-    this.camera.lookAt(0, 2, -20);
+    if (frame.cameraAuto) {
+      const sway = params.get("terrain", "sway");
+      this.camera.position.x = Math.sin(frame.t * 0.1) * sway;
+      this.camera.lookAt(0, 2, -20);
+    }
   }
 
   dispose() {
@@ -220,6 +228,7 @@ class TerrainScene implements Scene3D {
 class TunnelScene implements Scene3D {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 0, -26);
   private rings: THREE.LineLoop[] = [];
   private materials: THREE.LineBasicMaterial[] = [];
   private ringCounter = 0;
@@ -300,9 +309,11 @@ class TunnelScene implements Scene3D {
         this.shapeRing(ring, this.materials[i], frame.disp);
       }
     }
-    this.camera.position.x = Math.sin(frame.t * 0.6) * 0.6;
-    this.camera.position.y = Math.cos(frame.t * 0.45) * 0.5;
-    this.camera.lookAt(0, 0, this.camera.position.z - 30);
+    if (frame.cameraAuto) {
+      this.camera.position.x = Math.sin(frame.t * 0.6) * 0.6;
+      this.camera.position.y = Math.cos(frame.t * 0.45) * 0.5;
+      this.camera.lookAt(0, 0, this.camera.position.z - 30);
+    }
   }
 
   dispose() {
@@ -319,6 +330,7 @@ class TunnelScene implements Scene3D {
 class Bars3DScene implements Scene3D {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 2.5, 0);
   private bars: THREE.InstancedMesh;
   private grid: THREE.GridHelper;
   private dummy = new THREE.Object3D();
@@ -358,13 +370,15 @@ class Bars3DScene implements Scene3D {
     this.bars.instanceMatrix.needsUpdate = true;
     if (this.bars.instanceColor) this.bars.instanceColor.needsUpdate = true;
 
-    const a = frame.t * orbit;
-    this.camera.position.set(
-      Math.sin(a) * 16,
-      6 + Math.sin(frame.t * 0.3) * 2 + frame.beat * 0.8,
-      Math.cos(a) * 16,
-    );
-    this.camera.lookAt(0, 2.5, 0);
+    if (frame.cameraAuto) {
+      const a = frame.t * orbit;
+      this.camera.position.set(
+        Math.sin(a) * 16,
+        6 + Math.sin(frame.t * 0.3) * 2 + frame.beat * 0.8,
+        Math.cos(a) * 16,
+      );
+      this.camera.lookAt(0, 2.5, 0);
+    }
   }
 
   dispose() {
@@ -427,9 +441,11 @@ class GyroScene implements Scene3D {
       this.materials[i].color.copy(this.color);
       this.materials[i].opacity = 0.3 + g * 0.7;
     }
-    this.camera.position.x = Math.sin(frame.t * 0.25) * 1.2;
-    this.camera.position.y = Math.cos(frame.t * 0.2) * 0.8;
-    this.camera.lookAt(0, 0, 0);
+    if (frame.cameraAuto) {
+      this.camera.position.x = Math.sin(frame.t * 0.25) * 1.2;
+      this.camera.position.y = Math.cos(frame.t * 0.2) * 0.8;
+      this.camera.lookAt(0, 0, 0);
+    }
   }
 
   dispose() {
@@ -579,14 +595,33 @@ class BlobScene implements Scene3D {
   }
 }
 
+// Injected into <begin_vertex>: each triangle flies along its face normal
+// and tumbles around it, scaled by uExplode (0 = intact model).
+const EXPLODE_CHUNK = /* glsl */ `
+vec3 transformed = vec3(position);
+{
+  float amt = uExplode * (0.5 + aRand);
+  vec3 axis = normalize(aDir + vec3(0.0001));
+  vec3 rel = position - aCentroid;
+  float ang = uExplode * (aRand - 0.5) * 8.0;
+  float ca = cos(ang);
+  float sa = sin(ang);
+  rel = rel * ca + cross(axis, rel) * sa + axis * dot(axis, rel) * (1.0 - ca);
+  transformed = aCentroid + rel + aDir * amt;
+}
+`;
+
 /** A user-supplied glTF/GLB model on a stage with band-driven lights. */
 class ModelScene implements Scene3D {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
+  cameraTarget = new THREE.Vector3(0, 1, 0);
   private holder = new THREE.Group();
   private lights: THREE.PointLight[];
   private grid: THREE.GridHelper;
   private baseScale = 1;
+  private explodeScale = 0.5; // world-ish units per full explode, per model
+  private explodeUniforms: { value: number }[] = [];
   private log: (msg: string) => void;
 
   constructor(aspect: number, log: (msg: string) => void) {
@@ -622,6 +657,85 @@ class ModelScene implements Scene3D {
     this.holder.add(knot);
     this.holder.position.y = 1.1;
     this.scene.add(this.holder);
+    this.prepareExplode(this.holder);
+  }
+
+  /**
+   * Split every mesh into independent triangles and attach per-triangle
+   * attributes (face normal, centroid, random) so the injected vertex
+   * shader can blow the model apart.
+   */
+  private prepareExplode(root: THREE.Object3D) {
+    this.explodeUniforms = [];
+    let triangles = 0;
+    root.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!(mesh as { isMesh?: boolean }).isMesh) return;
+
+      let geometry = mesh.geometry as THREE.BufferGeometry;
+      if (geometry.index) {
+        geometry = geometry.toNonIndexed();
+        mesh.geometry = geometry;
+      }
+      const pos = geometry.getAttribute("position");
+      const count = pos.count;
+      triangles += count / 3;
+      const centroids = new Float32Array(count * 3);
+      const dirs = new Float32Array(count * 3);
+      const rands = new Float32Array(count);
+
+      const a = new THREE.Vector3();
+      const b = new THREE.Vector3();
+      const c = new THREE.Vector3();
+      const n = new THREE.Vector3();
+      for (let i = 0; i < count; i += 3) {
+        a.fromBufferAttribute(pos, i);
+        b.fromBufferAttribute(pos, i + 1);
+        c.fromBufferAttribute(pos, i + 2);
+        const cx = (a.x + b.x + c.x) / 3;
+        const cy = (a.y + b.y + c.y) / 3;
+        const cz = (a.z + b.z + c.z) / 3;
+        n.subVectors(b, a).cross(c.clone().sub(a));
+        if (n.lengthSq() < 1e-12) n.set(0, 1, 0);
+        n.normalize();
+        const r = Math.random();
+        for (let k = 0; k < 3; k++) {
+          centroids[(i + k) * 3] = cx;
+          centroids[(i + k) * 3 + 1] = cy;
+          centroids[(i + k) * 3 + 2] = cz;
+          dirs[(i + k) * 3] = n.x;
+          dirs[(i + k) * 3 + 1] = n.y;
+          dirs[(i + k) * 3 + 2] = n.z;
+          rands[i + k] = r;
+        }
+      }
+      geometry.setAttribute("aCentroid", new THREE.BufferAttribute(centroids, 3));
+      geometry.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
+      geometry.setAttribute("aRand", new THREE.BufferAttribute(rands, 1));
+
+      const mats = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const mat of mats) {
+        if (mat) this.patchMaterial(mat);
+      }
+    });
+    this.log(`[3d] explode prepared: ${Math.round(triangles)} triangles`);
+  }
+
+  private patchMaterial(mat: THREE.Material) {
+    const uExplode = { value: 0 };
+    this.explodeUniforms.push(uExplode);
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uExplode = uExplode;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nattribute vec3 aCentroid;\nattribute vec3 aDir;\nattribute float aRand;\nuniform float uExplode;",
+        )
+        .replace("#include <begin_vertex>", EXPLODE_CHUNK);
+    };
+    mat.needsUpdate = true;
   }
 
   loadModel(data: ArrayBuffer, name: string) {
@@ -637,7 +751,9 @@ class ModelScene implements Scene3D {
         obj.position.sub(center);
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
         this.baseScale = 2.4 / maxDim;
+        this.explodeScale = maxDim * 0.25;
         this.holder.add(obj);
+        this.prepareExplode(obj);
         this.log(`[3d] model loaded: ${name}`);
       },
       (err) => {
@@ -680,6 +796,13 @@ class ModelScene implements Scene3D {
     );
     this.holder.position.y = 1.1 + Math.sin(frame.t * 0.8) * 0.08;
 
+    const explode = params.get("model", "explode");
+    const amount =
+      explode * (bass * 0.5 + frame.beat * 1.2) * this.explodeScale;
+    for (const u of this.explodeUniforms) {
+      u.value = amount;
+    }
+
     this.lights[0].intensity = light * (0.4 + bass * 5);
     this.lights[1].intensity = light * (0.4 + mids * 5);
     this.lights[2].intensity = light * (0.4 + treble * 5);
@@ -700,6 +823,11 @@ export class Viz3D {
   private dpr: number;
   private log: (msg: string) => void;
   private pendingModel: { data: ArrayBuffer; name: string } | null = null;
+  private controls: OrbitControls | null = null;
+  private homePos = new THREE.Vector3();
+  private homeTarget = new THREE.Vector3();
+  private userCam = false;
+  private onDblClick = () => this.resetCamera();
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -716,7 +844,37 @@ export class Viz3D {
     this.renderer.setClearColor(BG, 1);
     this.name = initial;
     this.active = this.create(initial);
+    this.setupControls();
+    canvas.addEventListener("dblclick", this.onDblClick);
     this.resize(canvas.width, canvas.height);
+  }
+
+  /** Mouse camera: drag = orbit, wheel = zoom, right-drag = pan. Grabbing
+   * the camera pauses the scene's own camera animation until reset. */
+  private setupControls() {
+    this.controls?.dispose();
+    this.userCam = false;
+    const camera = this.active.camera;
+    this.homePos.copy(camera.position);
+    this.homeTarget.copy(this.active.cameraTarget ?? new THREE.Vector3());
+    const controls = new OrbitControls(camera, this.renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 0.5;
+    controls.maxDistance = 90;
+    controls.target.copy(this.homeTarget);
+    controls.addEventListener("start", () => {
+      this.userCam = true;
+    });
+    this.controls = controls;
+  }
+
+  /** Back to the scene's automatic camera (double click / HUD button). */
+  resetCamera() {
+    this.userCam = false;
+    this.active.camera.position.copy(this.homePos);
+    this.controls?.target.copy(this.homeTarget);
+    this.active.camera.lookAt(this.homeTarget);
   }
 
   get sceneName(): SceneName {
@@ -762,6 +920,7 @@ export class Viz3D {
     this.active.dispose();
     this.name = name;
     this.active = this.create(name);
+    this.setupControls();
   }
 
   resize(width: number, height: number) {
@@ -770,12 +929,15 @@ export class Viz3D {
     this.active.camera.updateProjectionMatrix();
   }
 
-  render(frame: AudioFrame3D) {
-    this.active.update(frame);
+  render(frame: Omit<AudioFrame3D, "cameraAuto">) {
+    if (this.userCam) this.controls?.update();
+    this.active.update({ ...frame, cameraAuto: !this.userCam });
     this.renderer.render(this.active.scene, this.active.camera);
   }
 
   dispose() {
+    this.renderer.domElement.removeEventListener("dblclick", this.onDblClick);
+    this.controls?.dispose();
     this.active.dispose();
     this.renderer.dispose();
   }

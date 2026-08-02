@@ -102,6 +102,7 @@ function App() {
     name: string;
     seq: number;
   } | null>(null);
+  const camResetRef = useRef(0);
   const [scene3d, setScene3d] = useState<SceneName>(
     saved.scene3d && SCENE_NAMES.includes(saved.scene3d)
       ? saved.scene3d
@@ -299,6 +300,7 @@ function App() {
       randomPreset,
       bpmElRef,
       modelFileRef,
+      camResetRef,
     );
   }, [randomPreset]);
 
@@ -511,6 +513,15 @@ function App() {
             ))}
             <button
               className="mode-btn"
+              onClick={() => {
+                camResetRef.current += 1;
+              }}
+              title="Kamera zurücksetzen (auch: Doppelklick) — Maus: ziehen = kreisen, Rad = zoomen, rechts = verschieben"
+            >
+              ⟲ Kamera
+            </button>
+            <button
+              className="mode-btn"
               onClick={() => fileInputRef.current?.click()}
               title="Eigenes glTF/GLB-Modell laden (Szene „model“)"
             >
@@ -548,6 +559,7 @@ function startVisualizer(
   onAutoSwitch: () => void,
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: { data: ArrayBuffer; name: string; seq: number } | null },
+  camResetRef: { current: number },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -572,6 +584,7 @@ function startVisualizer(
   let viz3d: Viz3D | null = null;
   let viz3dFailed = false;
   let loadedModelSeq = 0;
+  let lastCamReset = 0;
 
   function ensure3D(): boolean {
     if (viz3d) return true;
@@ -597,6 +610,10 @@ function startVisualizer(
       if (m && m.seq !== loadedModelSeq) {
         loadedModelSeq = m.seq;
         viz3d.loadModel(m.data, m.name);
+      }
+      if (camResetRef.current !== lastCamReset) {
+        lastCamReset = camResetRef.current;
+        viz3d.resetCamera();
       }
       viz3d.setScene(sceneRef.current);
       viz3d.render({ disp, wave, rms, beat, dt, t });

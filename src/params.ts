@@ -81,6 +81,7 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "spin", label: "Rotation", min: 0, max: 1.5, step: 0.05, default: 0.25 },
     { key: "pulse", label: "Bass-Puls", min: 0, max: 2, step: 0.05, default: 0.8 },
     { key: "light", label: "Licht-Reaktion", min: 0, max: 3, step: 0.1, default: 1.5 },
+    { key: "explode", label: "Explosion 💥", min: 0, max: 3, step: 0.1, default: 1 },
   ],
   milkdrop: [
     { key: "blend", label: "Überblendzeit (s)", min: 0, max: 8, step: 0.1, default: 2.7 },
