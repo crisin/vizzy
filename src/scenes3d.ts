@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { params } from "./params";
-import { centerAndScale, loadModelObject } from "./modelLoader";
 import { FloraScene } from "./flora";
+import type { SceneName } from "./sceneCatalog";
 
 export interface AudioFrame3D {
   disp: Float32Array; // smoothed bands 0..1
@@ -14,32 +14,6 @@ export interface AudioFrame3D {
   /** false while the user has grabbed the camera — scenes must not move it */
   cameraAuto: boolean;
 }
-
-export type SceneName =
-  | "orb"
-  | "terrain"
-  | "tunnel"
-  | "bars3d"
-  | "gyro"
-  | "blob"
-  | "cubes"
-  | "critters"
-  | "surf"
-  | "flora"
-  | "model";
-export const SCENE_NAMES: SceneName[] = [
-  "orb",
-  "terrain",
-  "tunnel",
-  "bars3d",
-  "gyro",
-  "blob",
-  "cubes",
-  "critters",
-  "surf",
-  "flora",
-  "model",
-];
 
 const BG = 0x07070c;
 const NUM_BANDS = 64;
@@ -1082,6 +1056,8 @@ class ModelScene implements Scene3D {
   private explodeScale = 0.5; // world-ish units per full explode, per model
   private explodeUniforms: { value: number }[] = [];
   private log: (msg: string) => void;
+  private loadGeneration = 0;
+  private disposed = false;
 
   constructor(aspect: number, log: (msg: string) => void) {
     this.log = log;
@@ -1198,34 +1174,57 @@ class ModelScene implements Scene3D {
   }
 
   /** Accepts .glb, .gltf (embedded) and .zip archives (Sketchfab-style). */
-  loadModel(data: ArrayBuffer, name: string) {
-    loadModelObject(data, name)
-      .then((obj) => {
-        this.clearHolder();
-        const { scale, maxDim } = centerAndScale(obj, 2.4);
-        this.baseScale = scale;
-        this.explodeScale = maxDim * 0.25;
-        this.holder.add(obj);
-        this.prepareExplode(obj);
-        this.log(`[3d] model loaded: ${name}`);
-      })
-      .catch((err) => {
+  async loadModel(data: ArrayBuffer, name: string) {
+    const generation = ++this.loadGeneration;
+    try {
+      const { centerAndScale, loadModelObject } = await import("./modelLoader");
+      if (this.disposed || generation !== this.loadGeneration) return;
+      const obj = await loadModelObject(data, name);
+      if (this.disposed || generation !== this.loadGeneration) {
+        this.disposeObject(obj);
+        return;
+      }
+      this.clearHolder();
+      const { scale, maxDim } = centerAndScale(obj, 2.4);
+      this.baseScale = scale;
+      this.explodeScale = maxDim * 0.25;
+      this.holder.add(obj);
+      this.prepareExplode(obj);
+      this.log(`[3d] model loaded: ${name}`);
+    } catch (err) {
+      if (!this.disposed && generation === this.loadGeneration) {
         this.log(`[3d] model load FAILED (${name}): ${err}`);
-      });
+      }
+    }
+  }
+
+  private disposeObject(root: THREE.Object3D) {
+    root.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      mesh.geometry?.dispose?.();
+      const mats = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const material of mats) {
+        if (!material) continue;
+        for (const value of Object.values(
+          material as unknown as Record<string, unknown>,
+        )) {
+          if ((value as THREE.Texture | undefined)?.isTexture) {
+            (value as THREE.Texture).dispose();
+          }
+        }
+        material.dispose();
+      }
+    });
   }
 
   private clearHolder() {
     for (const child of [...this.holder.children]) {
       this.holder.remove(child);
-      child.traverse((node) => {
-        const mesh = node as THREE.Mesh;
-        mesh.geometry?.dispose?.();
-        const mats = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material];
-        for (const m of mats) m?.dispose?.();
-      });
+      this.disposeObject(child);
     }
+    this.explodeUniforms = [];
   }
 
   update(frame: AudioFrame3D) {
@@ -1261,6 +1260,8 @@ class ModelScene implements Scene3D {
   }
 
   dispose() {
+    this.disposed = true;
+    this.loadGeneration += 1;
     this.clearHolder();
     this.grid.geometry.dispose();
     (this.grid.material as THREE.Material).dispose();
