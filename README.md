@@ -27,8 +27,9 @@ See [PLAN.md](PLAN.md) for the roadmap.
 ### Keys
 
 `1`–`5` modes · `←`/`→` preset/scene · `R` random preset · `A` preset
-auto-switch · `B` BPM badge · `E` parameter editor · `F` fullscreen ·
-`Esc` close/leave
+auto-switch · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
+latency, audio stats, recent errors) · `E` parameter editor ·
+`F` fullscreen · `Esc` close/leave
 
 ## Dev
 
@@ -43,16 +44,24 @@ Prerequisites (once): [Node.js](https://nodejs.org) 20+ and
 
 ```
 npm install
-npm run tauri dev
+npm run app
 ```
 
-`npm run dev` alone starts the frontend in a plain browser with animated
-demo data (no audio capture).
+Handy scripts:
+
+| Script | What it does |
+|---|---|
+| `npm run app` | desktop app in dev mode (hot reload + audio capture) |
+| `npm run dev` | frontend only, plain browser with animated demo data |
+| `npm run typecheck` | TypeScript check without building |
+| `npm run release` | release build for the host platform |
+| `npm run release:mac` | universal macOS build (Intel + Apple Silicon) |
+| `npm run setup:mac` | one-time: install both Rust targets for universal builds |
 
 ## Release build (share it!)
 
 ```
-npm run tauri build
+npm run release
 ```
 
 ### Windows
@@ -70,9 +79,11 @@ The plain build targets the host architecture; for **one DMG that runs
 on Intel and Apple Silicon** build universal:
 
 ```
-rustup target add x86_64-apple-darwin aarch64-apple-darwin
-npm run tauri build -- --target universal-apple-darwin
+npm run setup:mac
+npm run release:mac
 ```
+
+(`setup:mac` is a one-time `rustup target add` for both architectures.)
 
 | Artifact | Path |
 |---|---|

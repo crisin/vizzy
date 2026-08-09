@@ -13,6 +13,7 @@ import butterchurnPresets from "butterchurn-presets";
 import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
 import { EditorPanel } from "./EditorPanel";
+import { debugErrors, installErrorCapture, noteError } from "./debug";
 import {
   addModel,
   clearAllModels,
@@ -61,8 +62,12 @@ const PRESET_KEYS = Object.keys(PRESETS).sort((a, b) => a.localeCompare(b));
 
 function flog(msg: string) {
   console.log(msg);
+  // subsystem failures reported via flog belong in the debug HUD too
+  if (/FAILED|error/i.test(msg)) noteError(msg);
   if (inTauri) invoke("frontend_log", { msg }).catch(() => {});
 }
+
+installErrorCapture();
 
 type SourceInfo = {
   id: string;
@@ -104,6 +109,7 @@ type Persisted = {
   modelId?: number;
   bgLayer?: BgLayer;
   blendMode?: BlendMode;
+  debug?: boolean;
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -142,6 +148,8 @@ function App() {
   });
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
+  const [debugOpen, setDebugOpen] = useState(saved.debug ?? false);
+  const debugElRef = useRef<HTMLPreElement | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [bgLayer, setBgLayer] = useState<BgLayer>(
     saved.bgLayer && BG_LAYERS.includes(saved.bgLayer) ? saved.bgLayer : "off",
@@ -364,6 +372,7 @@ function App() {
       modelId: selectedModelId ?? undefined,
       bgLayer,
       blendMode,
+      debug: debugOpen,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
@@ -380,6 +389,7 @@ function App() {
     selectedModelId,
     bgLayer,
     blendMode,
+    debugOpen,
   ]);
 
   const stepPreset = useCallback(
@@ -545,6 +555,7 @@ function App() {
       blendRef,
       overridesRef,
       resolvePresetRef,
+      debugElRef,
     );
   }, [randomPreset]);
 
@@ -568,6 +579,8 @@ function App() {
         setEditorOpen((v) => !v);
       } else if (e.key === "b") {
         setShowBpm((v) => !v);
+      } else if (e.key === "d") {
+        setDebugOpen((v) => !v);
       } else if (e.key === "Escape") {
         if (libraryOpen) setLibraryOpen(false);
         else if (routingOpen) setRoutingOpen(false);
@@ -622,6 +635,7 @@ function App() {
       <canvas ref={mdCanvasRef} id="mdviz" />
       <canvas ref={gl3dCanvasRef} id="viz3d" />
       <canvas ref={canvasRef} id="viz" />
+      {debugOpen && <pre className="debug-hud" ref={debugElRef} />}
       <div className={`hud ${hudVisible ? "" : "hidden"}`}>
         <div className="hud-row">
           <span className="brand">VIZZY</span>
@@ -906,6 +920,7 @@ function startVisualizer(
   blendRef: { current: BlendMode },
   overridesRef: { current: { version: number; map: Record<string, number> } },
   resolveRef: { current: (key: string) => unknown | null },
+  debugEl: { current: HTMLPreElement | null },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -916,6 +931,8 @@ function startVisualizer(
   let bands = new Float32Array(64);
   let wave = new Float32Array(1024);
   let rms = 0;
+  let peak = 0;
+  let flux = 0;
   let beat = 0;
   let bpm = 0;
   let bpmConf = 0;
@@ -1071,16 +1088,22 @@ function startVisualizer(
   }
 
   let fetching = false;
+  let ipcMs = 0; // smoothed get_analysis_frame round-trip
+  let ipcErrs = 0;
   async function fetchFrame() {
     if (fetching) return;
     fetching = true;
+    const t0 = performance.now();
     try {
       const buf = await invoke<ArrayBuffer>("get_analysis_frame");
+      ipcMs = ipcMs * 0.95 + (performance.now() - t0) * 0.05;
       const f = new Float32Array(buf);
       const nBands = f[2] | 0;
       const nWave = f[3] | 0;
       rms = f[0];
+      peak = f[1];
       beat = f[4];
+      flux = f[5];
       bpm = f[6];
       bpmConf = f[7];
       bands = f.subarray(HEADER, HEADER + nBands);
@@ -1089,8 +1112,9 @@ function startVisualizer(
         disp = new Float32Array(nBands);
         peaks = new Float32Array(nBands);
       }
-    } catch {
-      // single missed frame is fine
+    } catch (e) {
+      // single missed frame is fine — but count it for the debug HUD
+      if (++ipcErrs === 1) noteError(`get_analysis_frame: ${e}`);
     } finally {
       fetching = false;
     }
@@ -1110,7 +1134,9 @@ function startVisualizer(
         0.18 * Math.sin(j * 0.013 + t * 2.6);
     }
     rms = 0.2 + 0.1 * Math.sin(t * 2.2);
+    peak = rms * 2.2;
     beat = Math.pow(0.5 + 0.5 * Math.sin(t * 4.2), 12);
+    flux = beat * 0.7;
     bpm = 128;
     bpmConf = 0.9;
   }
@@ -1159,7 +1185,12 @@ function startVisualizer(
   ensure3D();
 
   let last = performance.now();
+  // fps = rendered frames per 1s window. Counting is the honest metric here:
+  // an EMA over 1/dt systematically overestimates under the FPS limiter,
+  // because vsync quantizes the intervals (16/33/50 ms mix).
   let fps = 60;
+  let fpsFrames = 0;
+  let fpsWindowStart = last;
 
   // CSS compositing between the stacked canvases; only touched on change.
   let lastLayerCss = "";
@@ -1204,7 +1235,15 @@ function startVisualizer(
 
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    if (dt > 0) fps = fps * 0.92 + (1 / dt) * 0.08;
+    fpsFrames++;
+    const fpsElapsed = now - fpsWindowStart;
+    if (fpsElapsed >= 1000) {
+      // >2s without ticks = tab was hidden (rAF suspended) — discard that
+      // window instead of reporting a bogus near-zero rate.
+      if (fpsElapsed < 2000) fps = (fpsFrames * 1000) / fpsElapsed;
+      fpsFrames = 0;
+      fpsWindowStart = now;
+    }
 
     // Layout/dpr/render-scale can change without a window resize event (e.g.
     // CSS landing after init, editor slider) — cheap per-frame check keeps
@@ -1254,7 +1293,38 @@ function startVisualizer(
       el.style.transform = `scale(${(1 + beat * 0.15).toFixed(3)})`;
     }
 
+    updateDebugHud(now, cap);
+
     raf = requestAnimationFrame(frame);
+  }
+
+  // Debug HUD (key: D) — written straight to the DOM at 4 Hz, same pattern
+  // as the BPM badge: no React involvement in the render loop.
+  let nextDebugAt = 0;
+  function updateDebugHud(now: number, cap: number) {
+    const el = debugEl.current;
+    if (!el || now < nextDebugAt) return;
+    nextDebugAt = now + 250;
+
+    const scale = params.get("render", "scale");
+    const mode = modeRef.current;
+    const lines = [
+      `${fps.toFixed(1)} fps · ${(1000 / Math.max(fps, 0.1)).toFixed(1)} ms` +
+        (cap < 118 ? ` · cap ${cap}` : ""),
+      `2d ${canvas.width}×${canvas.height} · md ${mdCanvas.width}×${mdCanvas.height} · 3d ${gl3dCanvas.width}×${gl3dCanvas.height}`,
+      `scale ${scale}% · dpr ${(window.devicePixelRatio || 1).toFixed(2)} · ` +
+        `mode ${mode}${mode === "3d" ? `:${sceneRef.current}` : ""}`,
+      inTauri
+        ? `ipc ${ipcMs.toFixed(2)} ms · ipc-errors ${ipcErrs}`
+        : "ipc — (browser-demo, mock data)",
+      `rms ${rms.toFixed(3)} · peak ${peak.toFixed(3)} · flux ${flux.toFixed(2)} · beat ${beat.toFixed(2)}`,
+      `bpm ${bpm.toFixed(1)} · conf ${bpmConf.toFixed(2)}`,
+    ];
+    if (debugErrors.length) {
+      lines.push("", "— letzte Fehler —", ...debugErrors);
+    }
+    const text = lines.join("\n");
+    if (el.textContent !== text) el.textContent = text;
   }
 
   function draw() {

@@ -114,6 +114,28 @@ body {
   will-change: transform;
 }
 
+/* Debug HUD (D) — independent of .hud so it survives the auto-hide. */
+.debug-hud {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 40;
+  margin: 0;
+  padding: 8px 11px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: #9fe8ff;
+  background: rgba(5, 8, 14, 0.74);
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  border-radius: 8px;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: min(76ch, 70vw);
+}
+
 .src-select,
 .mode-btn {
   background: rgba(15, 23, 42, 0.75);

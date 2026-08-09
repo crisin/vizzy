@@ -7,7 +7,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "app": "tauri dev",
+    "typecheck": "tsc --noEmit",
+    "release": "tauri build",
+    "release:mac": "tauri build --target universal-apple-darwin",
+    "setup:mac": "rustup target add x86_64-apple-darwin aarch64-apple-darwin"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
