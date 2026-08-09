@@ -5,21 +5,29 @@
 //! crate set `AUDCLNT_STREAMFLAGS_LOOPBACK` (system audio), on a *capture*
 //! device it is a normal input (mic/line-in) stream.
 //!
+//! macOS: Core Audio process taps, see [`mac`]. Same three source kinds, but
+//! system audio needs a tap plus an aggregate device rather than a flag on
+//! the client.
+//!
 //! The analysis result is published as a flat f32 frame:
 //! `[rms, peak, n_bands, n_wave, bands[n_bands], wave[n_wave]]`
 //!
-//! On non-Windows platforms a silent stub keeps the pipeline alive until the
-//! macOS Core Audio tap backend lands.
+//! On any other platform a silent stub keeps the pipeline alive.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+mod mac;
+
 pub const NUM_BANDS: usize = 64;
 pub const WAVE_POINTS: usize = 1024; // matches Butterchurn's expected fftSize
 const FFT_SIZE: usize = 2048;
 const HOP: usize = 512; // ~94 analysis frames/s at 48 kHz
+/// Rate the Windows client is configured for. macOS takes whatever rate the
+/// tap or input device reports and hands it to [`Analyzer::new`] instead.
 const SAMPLE_RATE: usize = 48000;
 const F_MIN: f32 = 40.0;
 const F_MAX: f32 = 16000.0;
@@ -143,6 +151,7 @@ struct Analyzer {
     in_buf: Vec<f32>,
     spectrum: Vec<realfft::num_complex::Complex<f32>>,
     band_edges: Vec<usize>,
+    sample_rate: usize,
     params: SharedParams,
     bands: Vec<f32>,
     prev_bands: Vec<f32>,
@@ -157,7 +166,8 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn new(params: SharedParams) -> Self {
+    fn new(params: SharedParams, sample_rate: usize) -> Self {
+        let sample_rate = if sample_rate == 0 { SAMPLE_RATE } else { sample_rate };
         let mut planner = realfft::RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let in_buf = fft.make_input_vec();
@@ -175,7 +185,7 @@ impl Analyzer {
         let band_edges: Vec<usize> = (0..=NUM_BANDS)
             .map(|k| {
                 let f = F_MIN * (F_MAX / F_MIN).powf(k as f32 / NUM_BANDS as f32);
-                let bin = (f * FFT_SIZE as f32 / SAMPLE_RATE as f32).round() as usize;
+                let bin = (f * FFT_SIZE as f32 / sample_rate as f32).round() as usize;
                 bin.clamp(1, FFT_SIZE / 2)
             })
             .collect();
@@ -189,6 +199,7 @@ impl Analyzer {
             in_buf,
             spectrum,
             band_edges,
+            sample_rate,
             params,
             bands: vec![0.0; NUM_BANDS],
             prev_bands: vec![0.0; NUM_BANDS],
@@ -318,7 +329,7 @@ impl Analyzer {
             self.beat_env = 1.0;
             self.hops_since_beat = 0;
             self.beats += 1;
-            let now_s = self.published as f32 * HOP as f32 / SAMPLE_RATE as f32;
+            let now_s = self.published as f32 * HOP as f32 / self.sample_rate as f32;
             if self.beat_times.len() == 24 {
                 self.beat_times.pop_front();
             }
@@ -420,7 +431,12 @@ pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
     .map_err(|_| "source enumeration thread panicked".to_string())?
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
+    mac::list_sources()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn list_sources() -> Result<Vec<SourceInfo>, String> {
     Ok(Vec::new())
 }
@@ -491,7 +507,12 @@ pub fn list_apps() -> Result<Vec<AppInfo>, String> {
     .map_err(|_| "app enumeration thread panicked".to_string())?
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn list_apps() -> Result<Vec<AppInfo>, String> {
+    mac::list_apps()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn list_apps() -> Result<Vec<AppInfo>, String> {
     Ok(Vec::new())
 }
@@ -532,7 +553,7 @@ fn capture_loop(
     let block_align = format.get_blockalign() as usize;
 
     let mut bytes: VecDeque<u8> = VecDeque::with_capacity(64 * 1024);
-    let mut analyzer = Analyzer::new(params.clone());
+    let mut analyzer = Analyzer::new(params.clone(), SAMPLE_RATE);
 
     client.start_stream()?;
     loop {
@@ -593,16 +614,25 @@ fn open_device_client(
     Ok((client, min_period))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn capture_loop(
+    shared: &SharedAnalysis,
+    spec: &SourceSpec,
+    rx: &Receiver<SourceSpec>,
+    params: &SharedParams,
+) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
+    mac::capture_loop(shared, spec, rx, params)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn capture_loop(
     shared: &SharedAnalysis,
     _spec: &SourceSpec,
     rx: &Receiver<SourceSpec>,
     params: &SharedParams,
 ) -> Result<Option<SourceSpec>, Box<dyn std::error::Error>> {
-    // macOS backend (Core Audio taps via `cidre`) lands in the Mac spike.
     eprintln!("[vizzy-audio] no capture backend for this OS yet — publishing silence");
-    let mut analyzer = Analyzer::new(params.clone());
+    let mut analyzer = Analyzer::new(params.clone(), SAMPLE_RATE);
     loop {
         analyzer.decay_publish(shared);
         if let Ok(next) = rx.recv_timeout(Duration::from_millis(100)) {

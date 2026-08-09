@@ -13,6 +13,7 @@ export type ParamDef = {
 
 export const GROUP_LABELS: Record<string, string> = {
   audio: "Audio",
+  render: "Rendering",
   bars: "Bars",
   radial: "Radial",
   scope: "Scope",
@@ -31,6 +32,13 @@ export const GROUP_LABELS: Record<string, string> = {
 };
 
 export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
+  // Render resolution as % of native (CSS size × devicePixelRatio). Retina
+  // fullscreen brings integrated GPUs to their knees — 50% quarters the
+  // pixel count and Milkdrop/3D still look fine upscaled.
+  render: [
+    { key: "scale", label: "Auflösung (%)", min: 25, max: 100, step: 5, default: 100 },
+    { key: "fpsCap", label: "FPS-Limit (120 = aus)", min: 15, max: 120, step: 5, default: 120 },
+  ],
   audio: [
     { key: "gain", label: "Empfindlichkeit", min: 0.25, max: 4, step: 0.05, default: 1 },
     { key: "attack", label: "Ansprechzeit (ms)", min: 5, max: 200, step: 5, default: 35 },

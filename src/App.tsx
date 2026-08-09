@@ -853,6 +853,7 @@ function App() {
         <EditorPanel
           groups={[
             "audio",
+            "render",
             ...(is2DMode(mode) && bgLayer !== "off" ? ["layer"] : []),
             mode === "3d" ? scene3d : mode,
           ]}
@@ -1115,8 +1116,14 @@ function startVisualizer(
   }
 
   let gradient: CanvasGradient | null = null;
+  /** devicePixelRatio scaled by the render-resolution setting: every canvas
+   *  bitmap is sized with this, CSS stretches it to full window size. */
+  function effectiveDpr() {
+    const scale = params.get("render", "scale") / 100;
+    return (window.devicePixelRatio || 1) * scale;
+  }
   function resize() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = effectiveDpr();
     if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
       // mid-fullscreen-transition layout — a 0-sized setRendererSize would
       // corrupt butterchurn's framebuffers (black picture until preset load)
@@ -1179,15 +1186,30 @@ function startVisualizer(
     canvas.style.opacity = String(opacity);
   }
 
+  let nextFrameAt = 0;
   function frame(now: number) {
     if (!running) return;
+
+    // FPS limiter: skip rAF ticks until the next slot. Schedule-based
+    // (+step, not now+step) so the average rate stays exact despite rAF
+    // jitter; the max() stops catch-up bursts after tab-hidden stretches.
+    const cap = params.get("render", "fpsCap");
+    if (cap < 118) {
+      if (now < nextFrameAt) {
+        raf = requestAnimationFrame(frame);
+        return;
+      }
+      nextFrameAt = Math.max(nextFrameAt + 1000 / cap, now);
+    }
+
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     if (dt > 0) fps = fps * 0.92 + (1 / dt) * 0.08;
 
-    // Layout/dpr can change without a window resize event (e.g. CSS landing
-    // after init) — cheap per-frame check keeps bitmap sizes in sync.
-    const dprNow = window.devicePixelRatio || 1;
+    // Layout/dpr/render-scale can change without a window resize event (e.g.
+    // CSS landing after init, editor slider) — cheap per-frame check keeps
+    // bitmap sizes in sync.
+    const dprNow = effectiveDpr();
     if (
       canvas.width !== Math.round(canvas.clientWidth * dprNow) ||
       canvas.height !== Math.round(canvas.clientHeight * dprNow)
@@ -1238,7 +1260,9 @@ function startVisualizer(
   function draw() {
     const w = canvas.width;
     const h = canvas.height;
-    const dpr = window.devicePixelRatio || 1;
+    // effective dpr: keeps text/line thickness visually constant when the
+    // bitmap is downscaled and CSS stretches it back up
+    const dpr = effectiveDpr();
 
     // translucent clear → motion trails (lower alpha = longer trails)
     const trail = params.get(modeRef.current, "trail") || 0.35;
@@ -1393,8 +1417,7 @@ function startVisualizer(
     }
     ctx.strokeStyle = style;
     ctx.lineJoin = "round";
-    ctx.lineWidth =
-      lineWidth ?? Math.max(1, 1.25 * (window.devicePixelRatio || 1));
+    ctx.lineWidth = lineWidth ?? Math.max(1, 1.25 * effectiveDpr());
     ctx.stroke();
   }
 
