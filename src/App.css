@@ -15,6 +15,19 @@ body {
   background: #07070c;
   overflow: hidden;
   font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
+  color-scheme: dark;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .stage {
@@ -65,24 +78,40 @@ body {
   right: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 14px;
-  background: linear-gradient(rgba(7, 7, 12, 0.88), rgba(7, 7, 12, 0.35) 80%, transparent);
+  z-index: 10;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  background: linear-gradient(
+    rgba(7, 7, 12, 0.96),
+    rgba(7, 7, 12, 0.74) 72%,
+    transparent
+  );
+  backdrop-filter: blur(4px);
   color: #cbd5e1;
-  font-size: 12px;
+  font-size: 13px;
   opacity: 1;
-  transition: opacity 0.35s ease;
+  transform: translateY(0);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
 }
 
 .hud.hidden {
   opacity: 0;
+  transform: translateY(-6px);
   pointer-events: none;
+}
+
+.hud:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .hud-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -114,6 +143,11 @@ body {
   will-change: transform;
 }
 
+.feature-status {
+  color: #bae6fd;
+  font-size: 12px;
+}
+
 /* Debug HUD (D) — independent of .hud so it survives the auto-hide. */
 .debug-hud {
   position: fixed;
@@ -138,14 +172,22 @@ body {
 
 .src-select,
 .mode-btn {
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 6px;
-  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 8px;
+  color: #e2e8f0;
   font: inherit;
-  padding: 4px 8px;
+  min-height: 34px;
+  padding: 6px 10px;
   cursor: pointer;
   min-width: 0;
+}
+
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .src-select {
@@ -159,13 +201,14 @@ body {
   max-width: 560px;
 }
 
-.src-select:focus,
-.mode-btn:focus-visible {
-  outline: 1px solid #38bdf8;
+:where(button, select, input, [role="button"]):focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
 }
 
 .mode-btn:hover {
-  border-color: rgba(148, 163, 184, 0.6);
+  border-color: rgba(186, 230, 253, 0.72);
+  background: rgba(30, 41, 59, 0.94);
 }
 
 .mode-btn.active {
@@ -176,18 +219,20 @@ body {
 
 .editor-panel {
   position: fixed;
-  top: 52px;
+  z-index: 15;
+  top: 64px;
   right: 14px;
-  width: 300px;
-  max-height: calc(100vh - 80px);
+  width: min(380px, calc(100vw - 28px));
+  max-height: calc(100vh - 92px);
   overflow-y: auto;
-  background: rgba(10, 12, 20, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 10px;
-  padding: 12px 14px;
+  background: rgba(10, 12, 20, 0.97);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 12px;
+  padding: 14px 16px;
   color: #cbd5e1;
   font-size: 13px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
 }
 
 .editor-head {
@@ -198,6 +243,12 @@ body {
   letter-spacing: 0.12em;
   color: #e2e8f0;
   margin-bottom: 8px;
+}
+
+.editor-head h2,
+.modal-head h2 {
+  margin: 0;
+  font: inherit;
 }
 
 .editor-group {
@@ -227,16 +278,14 @@ body {
 
 .editor-row {
   display: grid;
-  grid-template-columns: 1fr 110px 44px;
+  grid-template-columns: minmax(130px, 1fr) 112px 48px;
   align-items: center;
   gap: 8px;
-  margin: 5px 0;
+  margin: 8px 0;
 }
 
 .editor-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
 }
 
 .editor-value {
@@ -295,6 +344,7 @@ body {
   border-radius: 12px;
   padding: 14px 16px;
   color: #cbd5e1;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.45);
 }
 
 .modal-head {
@@ -326,6 +376,15 @@ body {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.model-card-shell {
+  position: relative;
+}
+
+.model-card-shell .model-card {
+  width: 100%;
+  height: 100%;
 }
 
 .model-card:hover {
@@ -362,7 +421,7 @@ body {
 
 .model-size {
   font-size: 11px;
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .model-del {
@@ -463,11 +522,11 @@ body {
 }
 
 .routing-arrow {
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .routing-hint {
-  color: #64748b;
+  color: #94a3b8;
   font-size: 12px;
   padding: 8px 0;
 }
@@ -484,7 +543,7 @@ body {
 }
 
 .tweak-hint {
-  color: #64748b;
+  color: #94a3b8;
   font-size: 11px;
   margin-bottom: 8px;
   white-space: nowrap;
@@ -505,4 +564,106 @@ body {
 
 .tweak-name {
   flex: 1 1 100px;
+}
+
+.help-panel {
+  width: min(420px, calc(100vw - 28px));
+}
+
+.help-panel h3 {
+  margin: 18px 0 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.help-intro,
+.help-tip {
+  color: #cbd5e1;
+  line-height: 1.55;
+}
+
+.help-tip {
+  margin-top: 14px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.shortcut-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.shortcut-grid > div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.shortcut-grid dt,
+.shortcut-grid dd {
+  margin: 0;
+}
+
+kbd {
+  display: inline-flex;
+  min-width: 34px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.46);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.82);
+  color: #e0f2fe;
+  font: inherit;
+  font-weight: 700;
+}
+
+@media (max-width: 800px), (max-height: 560px) {
+  .hud {
+    max-height: 42vh;
+    overflow-y: auto;
+  }
+
+  .hud-spacer {
+    display: none;
+  }
+
+  .editor-panel,
+  .tweak-panel,
+  .help-panel {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 52vh;
+  }
+
+  .modal {
+    width: min(94vw, 760px);
+    max-height: 88vh;
+  }
+}
+
+@media (max-width: 520px) {
+  .editor-row {
+    grid-template-columns: minmax(110px, 1fr) 96px 44px;
+  }
+
+  .brand {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud,
+  .routing-meter-fill {
+    transition: none;
+  }
 }

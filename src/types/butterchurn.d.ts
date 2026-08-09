@@ -11,6 +11,7 @@ declare module "butterchurn" {
     render(opts?: { audioLevels?: BCAudioLevels; elapsedTime?: number }): unknown;
     connectAudio(node: AudioNode): void;
     disconnectAudio(node: AudioNode): void;
+    loseGLContext(): void;
   }
 
   const butterchurn: {
@@ -33,4 +34,11 @@ declare module "butterchurn" {
 declare module "butterchurn-presets" {
   const presets: Record<string, unknown>;
   export default presets;
+}
+
+declare module "butterchurn-presets/presetPackMeta.js" {
+  export function getBasePresetKeys(): {
+    presets: string[];
+    chunk: string;
+  };
 }

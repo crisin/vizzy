@@ -8,9 +8,10 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import butterchurn, { type BCVisualizer } from "butterchurn";
-import butterchurnPresets from "butterchurn-presets";
-import { SCENE_NAMES, Viz3D, type SceneName } from "./scenes3d";
+import type { BCVisualizer } from "butterchurn";
+import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
+import { SCENE_NAMES, type SceneName } from "./sceneCatalog";
+import type { Viz3D } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
 import { EditorPanel } from "./EditorPanel";
 import { debugErrors, installErrorCapture, noteError } from "./debug";
@@ -23,11 +24,11 @@ import {
   updateThumb,
   type ModelMeta,
 } from "./modelStore";
-import { loadModelObject, renderModelThumb } from "./modelLoader";
 import { LibraryModal } from "./LibraryModal";
 import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
 import { MdTweakPanel } from "./MdTweakPanel";
+import { HelpPanel } from "./HelpPanel";
 import {
   deleteUserPreset,
   loadUserPresets,
@@ -50,15 +51,52 @@ import "./App.css";
 
 const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
 const PEAK_GRAVITY = 0.5; // units/s
-const HUD_HIDE_MS = 2500;
+const HUD_HIDE_MS = 5000;
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
-// UMD interop: depending on the bundler path the presets land on .default
-const PRESETS: Record<string, unknown> =
-  (butterchurnPresets as { default?: Record<string, unknown> }).default ??
-  butterchurnPresets;
-const PRESET_KEYS = Object.keys(PRESETS).sort((a, b) => a.localeCompare(b));
+type MilkdropRuntime = {
+  butterchurn: typeof import("butterchurn")["default"];
+  presets: Record<string, unknown>;
+};
+
+let PRESETS: Record<string, unknown> = {};
+let milkdropRuntime: MilkdropRuntime | null = null;
+let milkdropRuntimePromise: Promise<MilkdropRuntime> | null = null;
+
+function loadMilkdropRuntime(): Promise<MilkdropRuntime> {
+  if (milkdropRuntime) return Promise.resolve(milkdropRuntime);
+  if (milkdropRuntimePromise) return milkdropRuntimePromise;
+
+  milkdropRuntimePromise = Promise.all([
+    import("butterchurn"),
+    import("butterchurn-presets"),
+  ])
+    .then(([butterchurnModule, presetModule]) => {
+      // UMD interop: depending on the bundler path presets may be nested once
+      // more under `default`.
+      const rawPresets = presetModule.default as Record<string, unknown> & {
+        default?: Record<string, unknown>;
+      };
+      const runtime = {
+        butterchurn: butterchurnModule.default,
+        presets: rawPresets.default ?? rawPresets,
+      };
+      PRESETS = runtime.presets;
+      milkdropRuntime = runtime;
+      return runtime;
+    })
+    .catch((error) => {
+      milkdropRuntimePromise = null;
+      throw error;
+    });
+
+  return milkdropRuntimePromise;
+}
+
+const PRESET_KEYS = [...getBasePresetKeys().presets].sort((a, b) =>
+  a.localeCompare(b),
+);
 
 function flog(msg: string) {
   console.log(msg);
@@ -84,6 +122,13 @@ type AppInfo = {
 
 type VizMode = "bars" | "radial" | "scope" | "milkdrop" | "3d";
 const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop", "3d"];
+const VIZ_MODE_LABELS: Record<VizMode, string> = {
+  bars: "Balken",
+  radial: "Radial",
+  scope: "Welle",
+  milkdrop: "Milkdrop",
+  "3d": "3D",
+};
 
 type BgLayer = "off" | "milkdrop" | "3d";
 const BG_LAYERS: BgLayer[] = ["off", "milkdrop", "3d"];
@@ -92,6 +137,16 @@ type BlendMode = (typeof BLEND_MODES)[number];
 
 function is2DMode(m: VizMode): boolean {
   return m === "bars" || m === "radial" || m === "scope";
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
 }
 
 function splitOnce(v: string, sep: string): [string, string] {
@@ -151,6 +206,9 @@ function App() {
   const [debugOpen, setDebugOpen] = useState(saved.debug ?? false);
   const debugElRef = useRef<HTMLPreElement | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const editorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const helpButtonRef = useRef<HTMLButtonElement | null>(null);
   const [bgLayer, setBgLayer] = useState<BgLayer>(
     saved.bgLayer && BG_LAYERS.includes(saved.bgLayer) ? saved.bgLayer : "off",
   );
@@ -184,6 +242,9 @@ function App() {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
+  const [milkdropStatus, setMilkdropStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >(milkdropRuntime ? "ready" : "idle");
   const hideTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -222,6 +283,39 @@ function App() {
     setMdOverrides({});
   }, [presetKey]);
 
+  useEffect(() => {
+    if (mode !== "milkdrop" && tweakOpen) setTweakOpen(false);
+  }, [mode, tweakOpen]);
+
+  const requestMilkdropRuntime = useCallback(async () => {
+    if (milkdropRuntime) {
+      setMilkdropStatus("ready");
+      return;
+    }
+    setMilkdropStatus("loading");
+    try {
+      await loadMilkdropRuntime();
+      setMilkdropStatus("ready");
+    } catch (error) {
+      setMilkdropStatus("error");
+      flog(`[md] runtime load FAILED: ${error}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    const needed =
+      mode === "milkdrop" || bgLayer === "milkdrop" || tweakOpen;
+    if (needed && milkdropStatus === "idle") {
+      void requestMilkdropRuntime();
+    }
+  }, [
+    mode,
+    bgLayer,
+    tweakOpen,
+    milkdropStatus,
+    requestMilkdropRuntime,
+  ]);
+
   const resolvePreset = useCallback(
     (key: string): unknown | null => {
       if (key.startsWith("user:")) {
@@ -233,7 +327,7 @@ function App() {
       }
       return PRESETS[key] ?? null;
     },
-    [userPresets],
+    [userPresets, milkdropStatus],
   );
   const resolvePresetRef = useRef(resolvePreset);
   useEffect(() => {
@@ -439,6 +533,9 @@ function App() {
         flog(`[cfg] model saved: ${file.name} (#${id})`);
         // render a library preview in the background
         try {
+          const { loadModelObject, renderModelThumb } = await import(
+            "./modelLoader"
+          );
           const obj = await loadModelObject(data, file.name);
           await updateThumb(id, renderModelThumb(obj));
           refreshModels();
@@ -570,28 +667,77 @@ function App() {
     }
   }, []);
 
+  const hudPinned =
+    editorOpen ||
+    helpOpen ||
+    libraryOpen ||
+    routingOpen ||
+    (tweakOpen && mode === "milkdrop");
+
+  const pokeHud = useCallback(() => {
+    setHudVisible(true);
+    window.clearTimeout(hideTimer.current);
+    if (hudPinned) return;
+    hideTimer.current = window.setTimeout(
+      () => {
+        if (!document.querySelector(".hud:focus-within")) {
+          setHudVisible(false);
+        }
+      },
+      HUD_HIDE_MS,
+    );
+  }, [hudPinned]);
+
+  useEffect(() => {
+    pokeHud();
+    return () => window.clearTimeout(hideTimer.current);
+  }, [pokeHud]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "f" || e.key === "F11") {
-        e.preventDefault();
-        void toggleFullscreen();
-      } else if (e.key === "e") {
-        setEditorOpen((v) => !v);
-      } else if (e.key === "b") {
-        setShowBpm((v) => !v);
-      } else if (e.key === "d") {
-        setDebugOpen((v) => !v);
-      } else if (e.key === "Escape") {
+      pokeHud();
+      const key = e.key.toLowerCase();
+
+      if (e.key === "Escape") {
         if (libraryOpen) setLibraryOpen(false);
         else if (routingOpen) setRoutingOpen(false);
+        else if (tweakOpen) setTweakOpen(false);
+        else if (editorOpen) setEditorOpen(false);
+        else if (helpOpen) setHelpOpen(false);
         else if (inTauri) void getCurrentWindow().setFullscreen(false);
+        return;
+      }
+
+      // Modal dialogs own the keyboard until they are dismissed. Prevent
+      // shortcuts from changing the app behind their backdrop.
+      if (libraryOpen || routingOpen) return;
+
+      // Global shortcuts must never fire while somebody is typing or using a
+      // native select/range control.
+      if (isEditableTarget(e.target)) return;
+
+      if (key === "f" || e.key === "F11") {
+        e.preventDefault();
+        void toggleFullscreen();
+      } else if (key === "e") {
+        setEditorOpen((v) => !v);
+        setRoutingOpen(false);
+        setHelpOpen(false);
+      } else if (key === "b") {
+        setShowBpm((v) => !v);
+      } else if (key === "d") {
+        setDebugOpen((v) => !v);
+      } else if (key === "?") {
+        setHelpOpen((v) => !v);
+        setEditorOpen(false);
+        setRoutingOpen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
       } else if (modeRef.current === "milkdrop") {
         if (e.key === "ArrowRight") stepPreset(1);
         else if (e.key === "ArrowLeft") stepPreset(-1);
-        else if (e.key === "r") randomPreset();
-        else if (e.key === "a") setAutoSwitch((v) => !v);
+        else if (key === "r") randomPreset();
+        else if (key === "a") setAutoSwitch((v) => !v);
       } else if (modeRef.current === "3d") {
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           setScene3d((s) => {
@@ -606,37 +752,45 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleFullscreen, stepPreset, randomPreset, libraryOpen, routingOpen]);
-
-  const pokeHud = useCallback(() => {
-    setHudVisible(true);
-    window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(
-      () => setHudVisible(false),
-      HUD_HIDE_MS,
-    );
-  }, []);
-
-  useEffect(() => {
-    pokeHud();
-    return () => window.clearTimeout(hideTimer.current);
-  }, [pokeHud]);
+  }, [
+    toggleFullscreen,
+    stepPreset,
+    randomPreset,
+    libraryOpen,
+    routingOpen,
+    tweakOpen,
+    editorOpen,
+    helpOpen,
+    pokeHud,
+  ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
   const inputs = sources.filter((s) => s.kind === "input");
+  const controlsVisible = hudVisible || hudPinned;
 
   return (
     <div
       className={`stage mode-${mode} ${
         is2DMode(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
-      } ${hudVisible ? "" : "idle"}`}
-      onMouseMove={pokeHud}
+      } ${controlsVisible ? "" : "idle"}`}
+      onPointerMove={pokeHud}
+      onPointerDown={pokeHud}
+      onKeyDownCapture={pokeHud}
+      onFocusCapture={pokeHud}
+      onBlurCapture={pokeHud}
     >
-      <canvas ref={mdCanvasRef} id="mdviz" />
-      <canvas ref={gl3dCanvasRef} id="viz3d" />
-      <canvas ref={canvasRef} id="viz" />
+      <canvas ref={mdCanvasRef} id="mdviz" aria-hidden="true" />
+      <canvas ref={gl3dCanvasRef} id="viz3d" aria-hidden="true" />
+      <canvas ref={canvasRef} id="viz" aria-hidden="true" />
+      <div className="sr-only" aria-live="polite">
+        Aktive Visualisierung: {VIZ_MODE_LABELS[mode]}
+      </div>
       {debugOpen && <pre className="debug-hud" ref={debugElRef} />}
-      <div className={`hud ${hudVisible ? "" : "hidden"}`}>
+      <div
+        className={`hud ${controlsVisible ? "" : "hidden"}`}
+        role="toolbar"
+        aria-label="Vizzy-Steuerung"
+      >
         <div className="hud-row">
           <span className="brand">VIZZY</span>
           {inTauri ? (
@@ -646,6 +800,7 @@ function App() {
               onChange={(e) => selectSource(e.target.value)}
               onPointerDown={loadLists}
               title="Audio-Quelle"
+              aria-label="Audio-Quelle"
             >
               <optgroup label="System-Audio (Loopback)">
                 {loopbacks.map((s) => (
@@ -688,40 +843,86 @@ function App() {
           {VIZ_MODES.map((m, i) => (
             <button
               key={m}
+              type="button"
               className={`mode-btn ${mode === m ? "active" : ""}`}
               onClick={() => setMode(m)}
-              title={`Taste ${i + 1}`}
+              title={`${VIZ_MODE_LABELS[m]} · Taste ${i + 1}`}
+              aria-label={`Visualisierung: ${VIZ_MODE_LABELS[m]}`}
+              aria-pressed={mode === m}
+              aria-keyshortcuts={String(i + 1)}
             >
-              {m}
+              {VIZ_MODE_LABELS[m]}
             </button>
           ))}
           <button
+            type="button"
             className={`mode-btn ${showBpm ? "active" : ""}`}
             onClick={() => setShowBpm((v) => !v)}
             title="BPM-Anzeige (B)"
+            aria-label="Tempoanzeige ein- oder ausblenden"
+            aria-pressed={showBpm}
+            aria-keyshortcuts="B"
           >
-            bpm
+            Tempo
           </button>
           <button
+            type="button"
             className={`mode-btn ${routingOpen ? "active" : ""}`}
-            onClick={() => setRoutingOpen((v) => !v)}
+            onClick={() => {
+              setRoutingOpen((v) => !v);
+              setEditorOpen(false);
+              setHelpOpen(false);
+            }}
             title="Frequenz-Listener & Routing"
+            aria-label="Frequenz-Routing öffnen"
+            aria-pressed={routingOpen}
+            aria-controls="routing-dialog"
           >
-            ◎
+            Routing
           </button>
           <button
+            ref={editorButtonRef}
+            type="button"
             className={`mode-btn ${editorOpen ? "active" : ""}`}
-            onClick={() => setEditorOpen((v) => !v)}
+            onClick={() => {
+              setEditorOpen((v) => !v);
+              setRoutingOpen(false);
+              setHelpOpen(false);
+            }}
             title="Parameter-Editor (E)"
+            aria-label="Parameter öffnen"
+            aria-pressed={editorOpen}
+            aria-controls="parameter-panel"
+            aria-keyshortcuts="E"
           >
-            ⚙
+            Parameter
           </button>
           <button
+            type="button"
             className="mode-btn"
             onClick={() => void toggleFullscreen()}
             title="Fullscreen (F)"
+            aria-label="Vollbild umschalten"
+            aria-keyshortcuts="F"
           >
-            ⛶
+            Vollbild
+          </button>
+          <button
+            ref={helpButtonRef}
+            type="button"
+            className={`mode-btn ${helpOpen ? "active" : ""}`}
+            onClick={() => {
+              setHelpOpen((v) => !v);
+              setEditorOpen(false);
+              setRoutingOpen(false);
+            }}
+            title="Hilfe & Tastenkürzel (?)"
+            aria-label="Hilfe und Tastenkürzel öffnen"
+            aria-pressed={helpOpen}
+            aria-controls="help-panel"
+            aria-keyshortcuts="?"
+          >
+            Hilfe
           </button>
         </div>
         {is2DMode(mode) && (
@@ -730,15 +931,18 @@ function App() {
             {BG_LAYERS.map((l) => (
               <button
                 key={l}
+                type="button"
                 className={`mode-btn ${bgLayer === l ? "active" : ""}`}
                 onClick={() => setBgLayer(l)}
                 title="Hintergrund-Layer unter der 2D-Visualization"
+                aria-pressed={bgLayer === l}
               >
                 {l === "off" ? "aus" : l}
               </button>
             ))}
             {bgLayer !== "off" && (
               <button
+                type="button"
                 className="mode-btn"
                 onClick={() =>
                   setBlendMode(
@@ -752,28 +956,47 @@ function App() {
                 ⊕ {blendMode}
               </button>
             )}
+            {bgLayer === "milkdrop" &&
+              (milkdropStatus === "idle" ||
+                milkdropStatus === "loading") && (
+                <span className="feature-status" role="status">
+                  Milkdrop wird geladen…
+                </span>
+              )}
+            {bgLayer === "milkdrop" && milkdropStatus === "error" && (
+              <button
+                type="button"
+                className="mode-btn danger"
+                onClick={() => void requestMilkdropRuntime()}
+              >
+                Milkdrop erneut laden
+              </button>
+            )}
           </div>
         )}
         {mode === "milkdrop" && (
           <div className="hud-row hud-sub">
             <button
+              type="button"
               className="mode-btn"
               onClick={() => stepPreset(-1)}
               title="Vorheriges Preset (←)"
+              aria-label="Vorheriges Preset"
             >
-              ‹
+              Zurück
             </button>
             <select
               className="src-select preset-select"
               value={presetKey}
               onChange={(e) => setPresetKey(e.target.value)}
-              title="Milkdrop-Preset"
+              title={presetKey}
+              aria-label="Milkdrop-Preset"
             >
               {userPresets.length > 0 && (
-                <optgroup label="★ Eigene">
+                <optgroup label="Eigene Presets">
                   {userPresets.map((p) => (
                     <option key={`user:${p.name}`} value={`user:${p.name}`}>
-                      ★ {p.name}
+                      {p.name}
                     </option>
                   ))}
                 </optgroup>
@@ -787,33 +1010,61 @@ function App() {
               </optgroup>
             </select>
             <button
+              type="button"
               className="mode-btn"
               onClick={() => stepPreset(1)}
               title="Nächstes Preset (→)"
+              aria-label="Nächstes Preset"
             >
-              ›
+              Weiter
             </button>
             <button
+              type="button"
               className="mode-btn"
               onClick={randomPreset}
               title="Zufälliges Preset (R)"
+              aria-label="Zufälliges Preset"
+              aria-keyshortcuts="R"
             >
-              🎲
+              Zufall
             </button>
             <button
+              type="button"
               className={`mode-btn ${autoSwitch ? "active" : ""}`}
               onClick={() => setAutoSwitch((v) => !v)}
               title="Auto-Wechsel bei Beats (A)"
+              aria-label="Automatischen Preset-Wechsel umschalten"
+              aria-pressed={autoSwitch}
+              aria-keyshortcuts="A"
             >
               auto
             </button>
             <button
+              type="button"
               className={`mode-btn ${tweakOpen ? "active" : ""}`}
               onClick={() => setTweakOpen((v) => !v)}
               title="Preset-Tweaks — verbiegen & als eigenes Preset speichern"
+              aria-label="Preset-Tweaks öffnen"
+              aria-pressed={tweakOpen}
+              aria-controls="tweak-panel"
             >
-              🎛
+              Tweaks
             </button>
+            {(milkdropStatus === "idle" ||
+              milkdropStatus === "loading") && (
+              <span className="feature-status" role="status">
+                Milkdrop wird geladen…
+              </span>
+            )}
+            {milkdropStatus === "error" && (
+              <button
+                type="button"
+                className="mode-btn danger"
+                onClick={() => void requestMilkdropRuntime()}
+              >
+                Erneut laden
+              </button>
+            )}
           </div>
         )}
         {mode === "3d" && (
@@ -821,32 +1072,36 @@ function App() {
             {SCENE_NAMES.map((s) => (
               <button
                 key={s}
+                type="button"
                 className={`mode-btn ${scene3d === s ? "active" : ""}`}
                 onClick={() => setScene3d(s)}
                 title="Szene (←/→)"
+                aria-pressed={scene3d === s}
               >
                 {s}
               </button>
             ))}
             <button
+              type="button"
               className="mode-btn"
               onClick={() => {
                 camResetRef.current += 1;
               }}
               title="Kamera zurücksetzen (auch: Doppelklick) — Maus: ziehen = kreisen, Rad = zoomen, rechts = verschieben"
             >
-              ⟲ Kamera
+              Kamera zurücksetzen
             </button>
             {scene3d === "model" && (
               <button
+                type="button"
                 className="mode-btn lib-btn"
                 onClick={() => {
                   refreshModels();
                   setLibraryOpen(true);
                 }}
                 title="Modell-Library öffnen"
-              >
-                📦{" "}
+            >
+                Modell: {" "}
                 {selectedModelId != null
                   ? (models.find((m) => m.id === selectedModelId)?.name ??
                     "Library")
@@ -873,6 +1128,13 @@ function App() {
           ]}
           onClose={() => setEditorOpen(false)}
           onResetAll={resetAll}
+          returnFocusRef={editorButtonRef}
+        />
+      )}
+      {helpOpen && (
+        <HelpPanel
+          onClose={() => setHelpOpen(false)}
+          returnFocusRef={helpButtonRef}
         />
       )}
       {libraryOpen && (
@@ -945,6 +1207,7 @@ function startVisualizer(
 
   // 3D state (lazy)
   let viz3d: Viz3D | null = null;
+  let viz3dLoading: Promise<void> | null = null;
   let viz3dFailed = false;
   let loadedModelSeq = 0;
   let lastCamReset = 0;
@@ -955,15 +1218,21 @@ function startVisualizer(
     if (gl3dCanvas.clientWidth === 0 || gl3dCanvas.clientHeight === 0) {
       return false;
     }
-    try {
-      viz3d = new Viz3D(gl3dCanvas, sceneRef.current, flog);
-      flog(`[3d] renderer init ok, ${gl3dCanvas.width}x${gl3dCanvas.height}`);
-      return true;
-    } catch (e) {
-      viz3dFailed = true;
-      flog(`[3d] renderer init FAILED: ${e}`);
-      return false;
+    if (!viz3dLoading) {
+      viz3dLoading = import("./scenes3d")
+        .then(({ Viz3D: Viz3DClass }) => {
+          if (!running) return;
+          viz3d = new Viz3DClass(gl3dCanvas, sceneRef.current, flog);
+          flog(
+            `[3d] renderer init ok, ${gl3dCanvas.width}x${gl3dCanvas.height}`,
+          );
+        })
+        .catch((e) => {
+          viz3dFailed = true;
+          flog(`[3d] renderer init FAILED: ${e}`);
+        });
     }
+    return false;
   }
 
   function render3D(dt: number, t: number) {
@@ -989,6 +1258,9 @@ function startVisualizer(
 
   // butterchurn state (lazy)
   let bc: BCVisualizer | null = null;
+  let bcRuntimeLoading: Promise<void> | null = null;
+  let bcRuntimeFailed = false;
+  let bcAudioCtx: AudioContext | null = null;
   let bcFailed = false;
   let bcLoadedPreset = "";
   let bcLoadedOvVersion = -1;
@@ -1002,9 +1274,22 @@ function startVisualizer(
     if (mdCanvas.clientWidth === 0 || mdCanvas.clientHeight === 0) {
       return false; // layout not ready yet — retry next frame
     }
+    if (!milkdropRuntime) {
+      if (bcRuntimeFailed) return false;
+      if (!bcRuntimeLoading) {
+        bcRuntimeLoading = loadMilkdropRuntime()
+          .then(() => undefined)
+          .catch((error) => {
+            bcRuntimeFailed = true;
+            flog(`[md] runtime load FAILED: ${error}`);
+          });
+      }
+      return false;
+    }
+    bcRuntimeFailed = false;
     try {
-      const audioCtx = new AudioContext();
-      bc = butterchurn.createVisualizer(audioCtx, mdCanvas, {
+      bcAudioCtx = new AudioContext();
+      bc = milkdropRuntime.butterchurn.createVisualizer(bcAudioCtx, mdCanvas, {
         width: mdCanvas.width,
         height: mdCanvas.height,
       });
@@ -1015,6 +1300,8 @@ function startVisualizer(
       return true;
     } catch (e) {
       bcFailed = true;
+      if (bcAudioCtx) void bcAudioCtx.close();
+      bcAudioCtx = null;
       flog(`[md] butterchurn init FAILED: ${e}`);
       return false;
     }
@@ -1178,11 +1465,6 @@ function startVisualizer(
   }
   window.addEventListener("resize", resize);
   resize();
-
-  // Eager init so a broken WebGL/butterchurn/three setup surfaces in the
-  // dev log immediately instead of on the first mode switch.
-  ensureButterchurn();
-  ensure3D();
 
   let last = performance.now();
   // fps = rendered frames per 1s window. Counting is the honest metric here:
@@ -1498,6 +1780,12 @@ function startVisualizer(
     cancelAnimationFrame(raf);
     window.removeEventListener("resize", resize);
     viz3d?.dispose();
+    try {
+      bc?.loseGLContext();
+    } catch {
+      // Butterchurn may already have lost its context after a render failure.
+    }
+    if (bcAudioCtx) void bcAudioCtx.close();
   };
 }
 

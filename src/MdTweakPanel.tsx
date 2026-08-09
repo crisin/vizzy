@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { TWEAK_DEFS } from "./mdTweaks";
+import { useDialogFocus } from "./useDialogFocus";
 
 export function MdTweakPanel({
   presetKey,
@@ -25,17 +26,31 @@ export function MdTweakPanel({
     isUser ? presetKey.slice(5) : "Mein Preset",
   );
   const dirty = Object.keys(overrides).length > 0;
+  const panelRef = useDialogFocus<HTMLElement>(false);
 
   return (
-    <div className="editor-panel tweak-panel">
+    <aside
+      ref={panelRef}
+      id="tweak-panel"
+      className="editor-panel tweak-panel"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="tweak-title"
+    >
       <div className="editor-head">
-        <span>Preset-Tweaks</span>
-        <button className="mode-btn" onClick={onClose} title="Schließen">
-          ✕
+        <h2 id="tweak-title">Preset-Tweaks</h2>
+        <button
+          type="button"
+          className="mode-btn"
+          onClick={onClose}
+          title="Schließen"
+          aria-label="Preset-Tweaks schließen"
+        >
+          Schließen
         </button>
       </div>
       <div className="tweak-hint" title={presetKey}>
-        {isUser ? `★ ${presetKey.slice(5)}` : presetKey}
+        {isUser ? `Eigenes Preset: ${presetKey.slice(5)}` : presetKey}
       </div>
       {TWEAK_DEFS.map((d) => {
         const base = baseVals[d.key];
@@ -61,9 +76,9 @@ export function MdTweakPanel({
               value={value}
               onChange={(e) => onChange(d.key, Number(e.target.value))}
             />
-            <span className="editor-value">
+            <output className="editor-value">
               {value.toFixed(d.step >= 1 ? 0 : d.step >= 0.01 ? 2 : 3)}
-            </span>
+            </output>
           </label>
         );
       })}
@@ -100,6 +115,6 @@ export function MdTweakPanel({
           </button>
         )}
       </div>
-    </div>
+    </aside>
   );
 }
