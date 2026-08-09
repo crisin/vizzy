@@ -191,6 +191,8 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "blend", label: "Überblendzeit", min: 0, max: 8, step: 0.1, default: 2.7, unit: "s" },
     { key: "cooldown", label: "Frühestens wechseln nach", min: 5, max: 120, step: 5, default: 30,
       unit: "s", hint: "Danach wird auf die nächste musikalische Grenze gewartet" },
+    { key: "phraseDyn", label: "Phrasen-Dynamik", min: 0, max: 1, step: 0.05, default: 0.35,
+      hint: "Lässt das Bild über die Phrase anschwellen und auf der Eins anspringen" },
     {
       key: "switchOn",
       label: "Wechsel auf",

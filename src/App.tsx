@@ -35,6 +35,12 @@ import {
   loadUserPresets,
   saveUserPreset,
 } from "./mdTweaks";
+import {
+  CURATED,
+  CURATED_PREFIX,
+  DEFAULT_PRESET_KEY,
+  findCurated,
+} from "./curated";
 
 /** Shallow preset copy with baseVals overrides applied. */
 function mergeBaseVals(
@@ -54,6 +60,11 @@ import "./App.css";
 //  beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf]
 // Must match `HEADER` in src-tauri/src/audio.rs.
 const HEADER = 14;
+
+/** grid_conf above which bar/phrase positions are worth acting on. Measured
+ *  in phrasing.rs: metrical input lands at 0.90–1.00, unmetrical at 0.13–0.27,
+ *  so the threshold sits in the gap between them. */
+const GRID_LOCKED = 0.5;
 const PEAK_GRAVITY = 0.5; // units/s
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -188,6 +199,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** Human-readable name for a preset key of any flavour. */
+function presetLabel(key: string): string {
+  if (key.startsWith(CURATED_PREFIX)) {
+    return `✦ ${key.slice(CURATED_PREFIX.length)}`;
+  }
+  return key.startsWith("user:") ? key.slice(5) : key;
+}
+
 function splitOnce(v: string, sep: string): [string, string] {
   const i = v.indexOf(sep);
   return [v.slice(0, i), v.slice(i + 1)];
@@ -233,15 +252,16 @@ function App() {
   const [userPresets, setUserPresets] = useState(loadUserPresets);
   const [presetKey, setPresetKey] = useState(() => {
     const k = saved.presetKey;
-    if (!k) return PRESET_KEYS[0] ?? "";
+    if (!k) return DEFAULT_PRESET_KEY; // first run opens on a curated one
     if (PRESET_KEYS.includes(k)) return k;
+    if (findCurated(k)) return k;
     if (
       k.startsWith("user:") &&
       loadUserPresets().some((p) => `user:${p.name}` === k)
     ) {
       return k;
     }
-    return PRESET_KEYS[0] ?? "";
+    return DEFAULT_PRESET_KEY;
   });
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
   const [favorites, setFavorites] = useState<string[]>(
@@ -380,6 +400,11 @@ function App() {
 
   const resolvePreset = useCallback(
     (key: string): unknown | null => {
+      const curated = findCurated(key);
+      if (curated) {
+        const base = PRESETS[curated.base];
+        return base ? mergeBaseVals(base, curated.overrides) : null;
+      }
       if (key.startsWith("user:")) {
         const up = userPresets.find((p) => p.name === key.slice(5));
         if (!up) return null;
@@ -397,7 +422,11 @@ function App() {
   }, [resolvePreset]);
 
   const allPresetKeys = useMemo(
-    () => [...userPresets.map((p) => `user:${p.name}`), ...PRESET_KEYS],
+    () => [
+      ...CURATED.map((p) => `${CURATED_PREFIX}${p.name}`),
+      ...userPresets.map((p) => `user:${p.name}`),
+      ...PRESET_KEYS,
+    ],
     [userPresets],
   );
 
@@ -410,14 +439,20 @@ function App() {
 
   const saveTweaks = useCallback(
     (name: string) => {
+      // Saving forks whatever is on screen into a user preset. Curated and
+      // user presets are themselves base+overrides, so resolve down to the
+      // real Butterchurn key and carry their overrides along — storing
+      // "vizzy:Kirchenfenster" as a base would not resolve later.
+      const curated = findCurated(presetKey);
       const currentUser = presetKey.startsWith("user:")
         ? userPresets.find((p) => p.name === presetKey.slice(5))
         : undefined;
-      const baseKey = currentUser?.base ?? presetKey;
+      const parent = curated ?? currentUser;
+      const baseKey = parent?.base ?? presetKey;
       const list = saveUserPreset({
         name,
         base: baseKey,
-        overrides: { ...(currentUser?.overrides ?? {}), ...mdOverrides },
+        overrides: { ...(parent?.overrides ?? {}), ...mdOverrides },
       });
       setUserPresets(list);
       setPresetKey(`user:${name}`);
@@ -1061,11 +1096,21 @@ function App() {
                 <optgroup label="★ Favoriten">
                   {favorites.map((k) => (
                     <option key={`fav-${k}`} value={k}>
-                      {k.startsWith("user:") ? k.slice(5) : k}
+                      {presetLabel(k)}
                     </option>
                   ))}
                 </optgroup>
               )}
+              <optgroup label="✦ Vizzy — kuratiert">
+                {CURATED.map((p) => (
+                  <option
+                    key={`${CURATED_PREFIX}${p.name}`}
+                    value={`${CURATED_PREFIX}${p.name}`}
+                  >
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
               {userPresets.length > 0 && (
                 <optgroup label="Eigene Presets">
                   {userPresets.map((p) => (
@@ -1491,7 +1536,7 @@ function startVisualizer(
     if (mode === 5) return section >= 0.7 && prevSection < 0.7;
     // Without a trustworthy grid there are no boundaries to hit — fall back
     // to the plain onset trigger rather than never switching at all.
-    if (mode === 0 || gridConf < 0.25) return beat >= 0.95 && prevBeat < 0.95;
+    if (mode === 0 || gridConf < GRID_LOCKED) return beat >= 0.95 && prevBeat < 0.95;
     const b = currentBoundary();
     return prevBoundary !== -1 && b !== prevBoundary;
   }
@@ -1544,8 +1589,19 @@ function startVisualizer(
       }
     }
 
-    // sensitivity applies to the waveform butterchurn analyzes, too
-    const gain = params.get("audio", "gain");
+    // Sensitivity applies to the waveform butterchurn analyzes, too — and
+    // that waveform is the only lever we have on a preset once it is loaded,
+    // since its equations run inside butterchurn. Shaping the level by
+    // musical position therefore makes any preset breathe with the phrase,
+    // smoothly and without reloading (a reload would restart its motion).
+    const dyn = params.get("milkdrop", "phraseDyn");
+    let envelope = 1;
+    if (dyn > 0 && gridConf >= GRID_LOCKED) {
+      const swell = 0.8 + 0.4 * phrasePhase; // builds across the 32 beats
+      const accent = 1 + 0.5 * Math.pow(1 - barPhase, 5); // lands on the one
+      envelope = 1 + dyn * (swell * accent - 1);
+    }
+    const gain = params.get("audio", "gain") * envelope;
     const n = Math.min(wave.length, timeByte.length);
     for (let j = 0; j < n; j++) {
       const v = Math.max(-1, Math.min(1, wave[j] * gain));
@@ -1604,36 +1660,92 @@ function startVisualizer(
     }
   }
 
-  // Animated fake data so the plain-browser preview (no Tauri IPC) shows life.
+  // Fake data for the plain-browser preview (no Tauri IPC). It synthesizes an
+  // actual little track — kick, bassline, hats, pad — rather than a smooth
+  // drone, because Milkdrop presets are driven by transients: fed a steady
+  // tone they barely move, and the preview looks nothing like the real thing.
+  const MOCK_BPM = 128;
+  const MOCK_SR = 48000;
+  /** bass note per bar, a slow four-chord loop in semitones */
+  const MOCK_NOTES = [55, 55, 62, 58];
+
   function mockFrame(t: number) {
-    for (let i = 0; i < bands.length; i++) {
-      const base = Math.pow(1 - i / bands.length, 0.7);
-      const a = 0.5 + 0.5 * Math.sin(t * 1.7 + i * 0.42);
-      const b = 0.5 + 0.5 * Math.sin(t * 3.3 + i * 0.11 + 1.4);
-      bands[i] = base * (0.18 + 0.6 * a * b);
-    }
+    const TAU = Math.PI * 2;
+    const beatDur = 60 / MOCK_BPM;
+    const beats = t / beatDur;
+    const bar = Math.floor(beats / 4);
+
+    // envelopes at *this* moment, for the band spectrum and the meters
+    const inBeat = beats % 1;
+    const inEighth = (beats * 2) % 1;
+    const kickNow = Math.exp(-inBeat * 13);
+    const hatNow = Math.exp(-inEighth * 38) * (inEighth < 0.5 ? 0.55 : 0.85);
+    const snareNow = Math.floor(beats) % 2 === 1 ? Math.exp(-inBeat * 15) : 0;
+    // slow build over each 32-beat phrase, dropping back at the top
+    const build = 0.55 + 0.45 * ((beats % 32) / 32);
+
+    const hz = 55 * Math.pow(2, (MOCK_NOTES[bar % MOCK_NOTES.length] - 55) / 12);
+
     for (let j = 0; j < wave.length; j++) {
-      wave[j] =
-        0.28 * Math.sin(j * 0.055 + t * 7) +
-        0.18 * Math.sin(j * 0.013 + t * 2.6);
+      const s = t + j / MOCK_SR;
+      const bt = (s / beatDur) % 1;
+      const et = ((s / beatDur) * 2) % 1;
+
+      // kick: short body with a falling pitch, the thing presets react to
+      const kEnv = Math.exp(-bt * 13);
+      const kHz = 48 + 110 * Math.exp(-bt * 26);
+      let v = 0.62 * kEnv * Math.sin(TAU * kHz * s);
+
+      // bassline + a couple of harmonics for the mids
+      v += 0.2 * Math.sin(TAU * hz * s) * (0.55 + 0.45 * kEnv);
+      v += 0.09 * Math.sin(TAU * hz * 3 * s + Math.sin(s * 0.6));
+      v += 0.05 * Math.sin(TAU * hz * 5 * s);
+
+      // hats: cheap deterministic noise, louder on the off-beat
+      const hEnv = Math.exp(-et * 38) * (et < 0.5 ? 0.55 : 0.85);
+      v += 0.16 * hEnv * Math.sin(s * 91393.7);
+
+      // snare on 2 and 4
+      if (Math.floor(s / beatDur) % 2 === 1) {
+        v += 0.22 * Math.exp(-bt * 15) * Math.sin(s * 47221.3);
+      }
+
+      wave[j] = Math.max(-1, Math.min(1, v * build));
     }
-    rms = 0.2 + 0.1 * Math.sin(t * 2.2);
-    peak = rms * 2.2;
-    beat = Math.pow(0.5 + 0.5 * Math.sin(t * 4.2), 12);
+
+    // Bands shaped to match: lows follow the kick, highs the hats, mids the
+    // sustained tone — so the bar visualizations and the waveform agree.
+    for (let i = 0; i < bands.length; i++) {
+      const f = i / bands.length; // 0 = low, 1 = high
+      const low = Math.exp(-f * 9);
+      const mid = Math.exp(-Math.pow((f - 0.42) * 3.4, 2));
+      const high = Math.exp(-Math.pow((f - 0.82) * 4.5, 2));
+      bands[i] = Math.min(
+        1,
+        (kickNow * low * 1.15 +
+          (0.42 + 0.2 * Math.sin(t * 0.9 + f * 6)) * mid +
+          (hatNow + snareNow * 0.6) * high * 0.95 +
+          0.04) *
+          build,
+      );
+    }
+
+    rms = (0.12 + 0.3 * kickNow + 0.08 * hatNow) * build;
+    peak = Math.min(1, rms * 2.4);
+    beat = Math.pow(kickNow, 1.5);
     flux = beat * 0.7;
-    bpm = 128;
+    bpm = MOCK_BPM;
     bpmConf = 0.9;
 
     // a perfectly steady fake grid, so phrase-driven behaviour is testable
     // in the plain-browser preview too
-    const beats = t / (60 / 128);
     beatCount = Math.floor(beats);
-    beatPhase = beats - beatCount;
+    beatPhase = inBeat;
     barPhase = (beats % 4) / 4;
     phrasePhase = (beats % 32) / 32;
     gridConf = 0.9;
     // a "section change" every 32 s, decaying like the real pulse
-    section = Math.max(0, 1 - ((t % 32) / 0.4));
+    section = Math.max(0, 1 - (t % 32) / 0.4);
   }
 
   let gradient: CanvasGradient | null = null;
@@ -1786,7 +1898,7 @@ function startVisualizer(
       // Once the grid is locked the badge ticks with it — a steady metronome
       // that rides through missed onsets instead of stuttering on them.
       const pulse =
-        gridConf >= 0.25 ? Math.pow(1 - beatPhase, 3) : beat;
+        gridConf >= GRID_LOCKED ? Math.pow(1 - beatPhase, 3) : beat;
       el.style.transform = `scale(${(1 + pulse * 0.15).toFixed(3)})`;
     }
 
@@ -1908,7 +2020,7 @@ function startVisualizer(
         : "ipc — (browser-demo, mock data)",
       `rms ${rms.toFixed(3)} · peak ${peak.toFixed(3)} · flux ${flux.toFixed(2)} · beat ${beat.toFixed(2)}`,
       `bpm ${bpm.toFixed(1)} · conf ${bpmConf.toFixed(2)}`,
-      gridConf >= 0.25
+      gridConf >= GRID_LOCKED
         ? `takt ${(Math.round(barPhase * 4) % 4) + 1}/4 · phrase ` +
           `${(Math.round(phrasePhase * 32) % 32) + 1}/32 · ` +
           `grid ${gridConf.toFixed(2)}${section > 0.05 ? " · SEKTION" : ""}`
@@ -2079,7 +2191,7 @@ function startVisualizer(
     // history reads like bars on a ruler. Without one, fall back to a plain
     // tick per detected onset.
     let markAlpha = 0;
-    if (gridConf >= 0.25) {
+    if (gridConf >= GRID_LOCKED) {
       const beatIdx = Math.floor(beatCount);
       if (beatIdx !== prevSpectroBeatIdx) {
         prevSpectroBeatIdx = beatIdx;

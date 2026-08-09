@@ -343,7 +343,8 @@ impl Analyzer {
             self.beat_times.push_back(now_s);
             self.update_bpm();
             // fed after update_bpm so the grid sees the current tempo estimate
-            self.phrasing.on_onset(now_s, self.bpm, flux);
+            self.phrasing
+                .on_onset(now_s, self.bpm, self.bpm_conf, flux);
         } else {
             self.beat_env *= 0.88;
         }

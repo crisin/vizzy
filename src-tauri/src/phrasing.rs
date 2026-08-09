@@ -41,9 +41,32 @@ const MAX_BPM: f32 = 200.0;
 const MIN_PERIOD: f32 = 60.0 / MAX_BPM;
 const MAX_PERIOD: f32 = 60.0 / MIN_BPM;
 
-/// The grid stops advancing after this long without a single onset, so a
-/// paused track does not silently count hundreds of imaginary beats.
-const SILENCE_TIMEOUT: f32 = 2.5;
+/// Confidence is measured as how tightly onset timings cluster on the
+/// subdivision circle — map each onset's position within the beat onto a
+/// circle that wraps once per eighth (and once per sixteenth), and average the
+/// unit vectors. Hits that consistently land on a subdivision all point the
+/// same way and the average is long; onsets scattered at random point
+/// everywhere and cancel out to nearly nothing.
+///
+/// Several subdivisions are tracked and the best one wins: the eighth circle
+/// tolerates loose timing, the sixteenth circle recognises a busy pattern that
+/// the eighth circle would see as two opposing clusters, and the triplet
+/// circle covers shuffle and swung grooves — which otherwise measured as
+/// completely unlocked despite being perfectly in time.
+const SYNC_SUBDIVS: [f32; 3] = [2.0, 3.0, 4.0];
+const SYNC_RATE: f32 = 0.06;
+
+/// Confidence starts fading after this long without an onset, but the grid
+/// keeps counting: bars run on through a breakdown, and dropping the count
+/// there would leave the phrase misaligned when the track comes back.
+const SILENCE_TIMEOUT: f32 = 3.5;
+/// Only after this long is the track considered stopped rather than quiet.
+const RESET_TIMEOUT: f32 = 12.0;
+
+/// Consecutive onsets the tempo estimator must disagree by an octave before
+/// the grid throws away its lock. A single bad estimate resyncing the grid is
+/// its own source of wobble.
+const OCTAVE_STRIKES: u32 = 8;
 
 /// Sections are never shorter than this — keeps one transition from firing
 /// again a moment later as the new part settles.
@@ -58,8 +81,11 @@ pub struct Phrasing {
     beat_phase: f32,
     beat_count: u64,
     grid_conf: f32,
+    /// (cos, sin) accumulators per entry in [`SYNC_SUBDIVS`].
+    sync: [(f32, f32); SYNC_SUBDIVS.len()],
     last_onset: f32,
     running: bool,
+    octave_strikes: u32,
 
     // --- downbeat ---
     bar_scores: [f32; BEATS_PER_BAR as usize],
@@ -85,8 +111,10 @@ impl Phrasing {
             beat_phase: 0.0,
             beat_count: 0,
             grid_conf: 0.0,
+            sync: [(0.0, 0.0); SYNC_SUBDIVS.len()],
             last_onset: -1000.0,
             running: false,
+            octave_strikes: 0,
             bar_scores: [0.0; BEATS_PER_BAR as usize],
             downbeat_off: 0,
             phrase_anchor: 0,
@@ -99,23 +127,45 @@ impl Phrasing {
         }
     }
 
-    /// Feed a detected onset. `bpm` is the independent tempo estimate (0 when
-    /// it has none yet), `strength` the onset's bass-weighted flux.
-    pub fn on_onset(&mut self, t: f32, bpm: f32, strength: f32) {
+    /// Feed a detected onset. `bpm` / `bpm_conf` are the independent tempo
+    /// estimate (0 when it has none yet), `strength` the onset's bass-weighted
+    /// flux.
+    pub fn on_onset(&mut self, t: f32, bpm: f32, bpm_conf: f32, strength: f32) {
         self.last_onset = t;
 
-        // Cold start, or the tempo estimator has moved to a different octave
-        // than the grid is holding: take its word for it and start over.
         if bpm > 40.0 {
             let p = (60.0 / bpm).clamp(MIN_PERIOD, MAX_PERIOD);
-            let octave_off = self.running && (self.period / p).log2().abs() > 0.35;
-            if !self.running || octave_off {
+
+            // Cold start: adopt the estimate and put a grid line on this onset.
+            if !self.running {
                 self.period = p;
                 self.next_beat = t + p;
                 self.beat_phase = 0.0;
-                self.grid_conf = if octave_off { self.grid_conf * 0.3 } else { 0.15 };
+                self.grid_conf = 0.0;
+                self.sync = [(0.0, 0.0); SYNC_SUBDIVS.len()];
+                self.octave_strikes = 0;
                 self.running = true;
                 return;
+            }
+
+            // The estimator says we are tracking the wrong octave (half or
+            // double time). Throwing the lock away on one reading makes the
+            // grid jump around, so it has to say so repeatedly and be sure of
+            // itself before we act.
+            if (self.period / p).log2().abs() > 0.35 {
+                self.octave_strikes += 1;
+                if self.octave_strikes >= OCTAVE_STRIKES && bpm_conf > 0.5 {
+                    self.period = p;
+                    self.next_beat = t + p;
+                    // the clustering evidence describes the grid we just threw
+                    // away, so it has to be earned again on the new one
+                    self.grid_conf = 0.0;
+                    self.sync = [(0.0, 0.0); SYNC_SUBDIVS.len()];
+                    self.octave_strikes = 0;
+                    return;
+                }
+            } else {
+                self.octave_strikes = 0;
             }
         }
         if !self.running {
@@ -123,39 +173,63 @@ impl Phrasing {
         }
 
         // Where did this onset land relative to the grid? `raw` counts beats
-        // from the most recent grid line, so rounding it picks the nearest
-        // line and the remainder is the timing error.
+        // from the most recent grid line, so the distance to the nearest whole
+        // number is how far it sits from a beat.
         let last_beat = self.next_beat - self.period;
         let raw = (t - last_beat) / self.period;
         let k = raw.round();
-        let err = (raw - k) * self.period;
-        let rel = (err / self.period).abs(); // 0 = dead on, 0.5 = worst case
+        let to_beat = (raw - k).abs(); // 0 = on the beat, 0.5 = exactly between
 
-        // Onsets that land near a grid line are evidence the grid is right.
-        let agree = (1.0 - rel * 4.0).clamp(0.0, 1.0);
-        self.grid_conf += (agree - self.grid_conf) * 0.12;
-
-        self.next_beat += err * PHASE_GAIN;
-        // Only well-placed onsets get a say in the tempo itself.
-        if rel < 0.25 {
-            self.period = (self.period + err * PERIOD_GAIN).clamp(MIN_PERIOD, MAX_PERIOD);
+        // Confidence: how tightly onsets cluster on the subdivision circles.
+        // Judging them by distance to the nearest *beat* is what pinned this
+        // near zero on real music — half the hits in a groove sit between
+        // beats and are perfectly in time.
+        let frac = raw - raw.floor();
+        for (acc, &sub) in self.sync.iter_mut().zip(SYNC_SUBDIVS.iter()) {
+            let (s, c) = (std::f32::consts::TAU * (frac * sub).fract()).sin_cos();
+            acc.0 += (c - acc.0) * SYNC_RATE;
+            acc.1 += (s - acc.1) * SYNC_RATE;
         }
+        self.grid_conf = self
+            .sync
+            .iter()
+            .map(|(c, s)| (c * c + s * s).sqrt())
+            .fold(0.0f32, f32::max);
 
-        // Downbeat evidence: credit this onset's weight to the bar position
-        // it belongs to. Over a few bars the kick pattern makes beat 1 stand
-        // out — imperfect on tracks with a four-on-the-floor kick, which is
-        // why the phrase counter also re-anchors on section changes.
-        if rel < 0.3 {
+        // Only onsets near an actual beat may move the grid. An off-beat hit
+        // is half a beat from a grid line, and letting it correct the phase
+        // drags the grid a little further off with every hit. The window is
+        // wide while searching for a lock and tightens once we have one.
+        let capture = if self.grid_conf > 0.5 { 0.18 } else { 0.3 };
+        if to_beat < capture {
+            let err = (raw - k) * self.period;
+            self.next_beat += err * PHASE_GAIN;
+            if to_beat < 0.12 {
+                self.period = (self.period + err * PERIOD_GAIN).clamp(MIN_PERIOD, MAX_PERIOD);
+            }
+
+            // Downbeat evidence: credit this onset's weight to the bar
+            // position it belongs to. Over a few bars the kick pattern makes
+            // beat 1 stand out — imperfect on tracks with a four-on-the-floor
+            // kick, which is why the phrase counter also re-anchors on
+            // section changes.
             let idx = (self.beat_count as i64 + k as i64).rem_euclid(BEATS_PER_BAR as i64);
-            self.bar_scores[idx as usize] += strength * (1.0 - rel);
-            let best = self
+            self.bar_scores[idx as usize] += strength * (1.0 - to_beat);
+
+            // A plain argmax flips the downbeat back and forth whenever two
+            // positions score within a hair of each other — and every flip
+            // jumps the bar and phrase position. The new leader has to be
+            // clearly ahead before the "one" moves.
+            let (best, score) = self
                 .bar_scores
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .map(|(i, _)| i as u64)
-                .unwrap_or(0);
-            self.downbeat_off = best;
+                .map(|(i, s)| (i as u64, *s))
+                .unwrap_or((0, 0.0));
+            if score > self.bar_scores[self.downbeat_off as usize] * 1.15 {
+                self.downbeat_off = best;
+            }
         }
     }
 
@@ -173,14 +247,18 @@ impl Phrasing {
             return;
         }
 
-        if t - self.last_onset > SILENCE_TIMEOUT {
-            // Nothing to track — fade the confidence out and park the grid
-            // rather than counting beats through the silence.
-            self.grid_conf *= 0.97;
-            if self.grid_conf < 0.02 {
-                self.running = false;
-            }
+        let quiet_for = t - self.last_onset;
+        if quiet_for > RESET_TIMEOUT {
+            // Long enough that the track is stopped, not just quiet.
+            self.running = false;
+            self.grid_conf = 0.0;
             return;
+        }
+        if quiet_for > SILENCE_TIMEOUT {
+            // A breakdown with nothing to lock onto. Keep counting — the bars
+            // carry on underneath and the phrase must still line up when the
+            // beat returns — but say out loud that we are flying blind.
+            self.grid_conf *= 0.995;
         }
 
         // A long stall (device switch, buffer gap) would otherwise be walked
@@ -328,20 +406,28 @@ mod tests {
 
     const HOP_S: f32 = 512.0 / 48000.0;
 
-    /// Run the tracker over `secs` of onsets placed on a `bpm` grid.
-    /// `jitter` displaces each onset (seconds), `drop_every` silences every
-    /// n-th onset — both stand in for a real detector's mistakes.
-    fn run(bpm: f32, secs: f32, jitter: impl Fn(u32) -> f32, drop_every: u32) -> Phrasing {
+    /// Run the tracker over `secs` of onsets placed on a grid of `per_beat`
+    /// events per beat. `jitter` displaces each onset (seconds), `drop_every`
+    /// silences every n-th one — both stand in for a real detector's mistakes.
+    fn run_subdiv(
+        bpm: f32,
+        secs: f32,
+        per_beat: u32,
+        jitter: impl Fn(u32) -> f32,
+        drop_every: u32,
+    ) -> Phrasing {
         let mut p = Phrasing::new(8);
-        let period = 60.0 / bpm;
+        let step = 60.0 / bpm / per_beat as f32;
         let bands = [0.4f32; 8];
         let mut t = 0.0f32;
         let mut onset = 0u32;
         while t < secs {
-            let due = onset as f32 * period + jitter(onset);
+            let due = onset as f32 * step + jitter(onset);
             if t >= due {
                 if drop_every == 0 || !onset.is_multiple_of(drop_every) {
-                    p.on_onset(due, bpm, 1.0);
+                    // on-beat hits carry more weight, as a kick would
+                    let strength = if onset.is_multiple_of(per_beat) { 1.0 } else { 0.4 };
+                    p.on_onset(due, bpm, 0.8, strength);
                 }
                 onset += 1;
             }
@@ -349,6 +435,10 @@ mod tests {
             t += HOP_S;
         }
         p
+    }
+
+    fn run(bpm: f32, secs: f32, jitter: impl Fn(u32) -> f32, drop_every: u32) -> Phrasing {
+        run_subdiv(bpm, secs, 1, jitter, drop_every)
     }
 
     #[test]
@@ -394,22 +484,126 @@ mod tests {
         );
     }
 
+    /// The regression test for the bug that showed up on a real DJ set: with
+    /// hits on every eighth, half of them sit exactly between two beats. Those
+    /// used to be scored as disagreement *and* allowed to correct the phase,
+    /// so the grid was dragged around and the confidence sat near 0.06 while
+    /// every synthetic on-the-beat test passed.
+    #[test]
+    fn locks_on_when_half_the_onsets_are_off_the_beat() {
+        let p = run_subdiv(126.0, 25.0, 2, |_| 0.0, 0);
+        assert!(p.grid_conf() > 0.6, "grid_conf was {}", p.grid_conf());
+        let expected = 25.0 / (60.0 / 126.0);
+        assert!(
+            (p.beat_count() - expected).abs() <= 1.0,
+            "counted {} beats, expected ~{expected} — the grid wandered",
+            p.beat_count()
+        );
+    }
+
+    /// Sixteenths on top of the beat: a busy drum pattern must not shake the
+    /// grid loose either.
+    #[test]
+    fn survives_a_busy_sixteenth_pattern() {
+        let jitter = |i: u32| ((i as f32 * 7.13).sin() * 0.008).clamp(-0.008, 0.008);
+        let p = run_subdiv(140.0, 25.0, 4, jitter, 7);
+        assert!(p.grid_conf() > 0.5, "grid_conf was {}", p.grid_conf());
+        let expected = 25.0 / (60.0 / 140.0);
+        assert!(
+            (p.beat_count() - expected).abs() <= 2.0,
+            "counted {} beats, expected ~{expected}",
+            p.beat_count()
+        );
+    }
+
+    /// The other half of the confidence contract: onsets with no metrical
+    /// relationship to the grid must read as *not* locked. Without this a
+    /// permissive measure would just report "locked" for everything.
+    #[test]
+    fn unmetrical_onsets_do_not_read_as_locked() {
+        let mut p = Phrasing::new(8);
+        let bands = [0.4f32; 8];
+        let mut t = 0.0f32;
+        let mut next = 0.0f32;
+        let mut i = 0u32;
+        while t < 30.0 {
+            if t >= next {
+                p.on_onset(next, 120.0, 0.8, 1.0);
+                // irregular spacing, unrelated to any 120 BPM subdivision
+                let r = ((i as f32 * 12.9898).sin() * 43758.547).fract().abs();
+                next += 0.18 + r * 0.5;
+                i += 1;
+            }
+            p.advance(t, HOP_S, &bands);
+            t += HOP_S;
+        }
+        assert!(
+            p.grid_conf() < 0.45,
+            "random onsets reported as locked: {}",
+            p.grid_conf()
+        );
+    }
+
+    #[test]
+    fn bars_keep_running_through_a_breakdown() {
+        let mut p = run(128.0, 12.0, |_| 0.0, 0);
+        let counted = p.beat_count();
+        // 6 s with nothing to lock onto — the bars underneath carry on, so
+        // the phrase still lines up when the beat comes back
+        let bands = [0.4f32; 8];
+        let mut t = 12.0f32;
+        while t < 18.0 {
+            p.advance(t, HOP_S, &bands);
+            t += HOP_S;
+        }
+        let elapsed_beats = 6.0 / (60.0 / 128.0);
+        assert!(
+            (p.beat_count() - counted - elapsed_beats).abs() <= 1.0,
+            "counted {} beats through the break, expected ~{elapsed_beats}",
+            p.beat_count() - counted
+        );
+    }
+
     #[test]
     fn grid_parks_itself_when_the_music_stops() {
         let mut p = run(128.0, 10.0, |_| 0.0, 0);
-        let counted = p.beat_count();
-        // no more onsets — the grid must stop counting rather than run on
+        // far past RESET_TIMEOUT — this is a stopped track, not a breakdown
         let bands = [0.4f32; 8];
         let mut t = 10.0f32;
         while t < 30.0 {
             p.advance(t, HOP_S, &bands);
             t += HOP_S;
         }
-        assert!(p.grid_conf() < 0.05, "grid_conf was {}", p.grid_conf());
+        assert_eq!(p.grid_conf(), 0.0, "grid should have given up");
+    }
+
+    /// A single stray tempo reading must not throw the lock away.
+    #[test]
+    fn one_bad_tempo_estimate_does_not_resync_the_grid() {
+        let mut p = Phrasing::new(8);
+        let bpm = 128.0;
+        let period = 60.0 / bpm;
+        let bands = [0.4f32; 8];
+        let mut t = 0.0f32;
+        let mut onset = 0u32;
+        while t < 20.0 {
+            let due = onset as f32 * period;
+            if t >= due {
+                // every 10th onset reports half-time, as the estimator does
+                // when it latches onto the snare for a moment
+                let reported = if onset % 10 == 3 { bpm / 2.0 } else { bpm };
+                p.on_onset(due, reported, 0.8, 1.0);
+                onset += 1;
+            }
+            p.advance(t, HOP_S, &bands);
+            t += HOP_S;
+        }
+        assert!(p.grid_conf() > 0.7, "grid_conf was {}", p.grid_conf());
+        let expected = 20.0 / period;
         assert!(
-            p.beat_count() - counted < 10.0,
-            "counted {} phantom beats",
-            p.beat_count() - counted
+            (p.beat_count() - expected).abs() <= 1.0,
+            "counted {} beats, expected ~{expected}",
+            p.beat_count()
         );
     }
 
@@ -442,5 +636,38 @@ mod tests {
         assert!(peak > 0.9, "missed the change, peak section={peak}");
         let delay = fired_at.expect("never reached full pulse") - 12.0;
         assert!(delay < 1.0, "reacted {delay:.2} s late");
+    }
+
+    /// Not an assertion — prints the confidence each scenario settles at, so
+    /// the threshold the frontend uses can be chosen against real numbers
+    /// instead of guessed. Run with `cargo test -- --nocapture measured`.
+    #[test]
+    fn measured_confidence_by_scenario() {
+        let jit8 = |i: u32| ((i as f32 * 7.13).sin() * 0.008).clamp(-0.008, 0.008);
+        let jit12 = |i: u32| ((i as f32 * 12.9898).sin() * 0.012).clamp(-0.012, 0.012);
+        println!("clean beats      {:.3}", run(128.0, 25.0, |_| 0.0, 0).grid_conf());
+        println!("jittered+gaps    {:.3}", run(174.0, 25.0, jit12, 4).grid_conf());
+        println!("eighths          {:.3}", run_subdiv(126.0, 25.0, 2, |_| 0.0, 0).grid_conf());
+        println!("eighths+jitter   {:.3}", run_subdiv(126.0, 25.0, 2, jit12, 5).grid_conf());
+        println!("sixteenths       {:.3}", run_subdiv(140.0, 25.0, 4, jit8, 7).grid_conf());
+        println!("triplets         {:.3}", run_subdiv(120.0, 25.0, 3, |_| 0.0, 0).grid_conf());
+
+        // the noise floor: what unmetrical input reports, which is what the
+        // frontend threshold has to sit above
+        for seed in [12.9898f32, 3.7, 21.4, 55.1] {
+            let mut p = Phrasing::new(8);
+            let bands = [0.4f32; 8];
+            let (mut t, mut next, mut i) = (0.0f32, 0.0f32, 0u32);
+            while t < 30.0 {
+                if t >= next {
+                    p.on_onset(next, 120.0, 0.8, 1.0);
+                    next += 0.18 + ((i as f32 * seed).sin() * 43758.547).fract().abs() * 0.5;
+                    i += 1;
+                }
+                p.advance(t, HOP_S, &bands);
+                t += HOP_S;
+            }
+            println!("random (s={seed})  {:.3}", p.grid_conf());
+        }
     }
 }
