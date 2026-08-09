@@ -59,6 +59,13 @@ export function HelpPanel({
           </div>
         ))}
       </dl>
+      <h3>Auto-Wechsel im Takt</h3>
+      <p className="help-intro">
+        Vizzy hört das Tempo mit und zählt Takte und 32er-Phrasen mit. Steht der
+        Auto-Wechsel auf „4 Takte“, ist die Wartezeit in den Einstellungen nur
+        die Untergrenze — gewechselt wird danach auf der nächsten Taktgrenze,
+        nicht mitten im Beat.
+      </p>
       <p className="help-tip">
         Tipp: Bewege die Maus oder drücke eine Taste, um die Steuerung wieder
         einzublenden.

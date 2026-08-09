@@ -1,4 +1,5 @@
 mod audio;
+mod phrasing;
 
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -9,7 +10,7 @@ struct AudioState {
 }
 
 /// Returns the latest analysis frame as raw little-endian f32 bytes:
-/// `[rms, peak, n_bands, n_wave, bands..., wave...]`
+/// `[header..., bands..., wave...]` — see `audio::HEADER` for the layout.
 #[tauri::command]
 fn get_analysis_frame(state: tauri::State<'_, AudioState>) -> tauri::ipc::Response {
     let frame = state.shared.lock().unwrap();

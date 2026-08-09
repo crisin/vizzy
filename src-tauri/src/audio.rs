@@ -10,7 +10,7 @@
 //! the client.
 //!
 //! The analysis result is published as a flat f32 frame:
-//! `[rms, peak, n_bands, n_wave, bands[n_bands], wave[n_wave]]`
+//! `[header[HEADER], bands[n_bands], wave[n_wave]]` — see [`HEADER`].
 //!
 //! On any other platform a silent stub keeps the pipeline alive.
 
@@ -83,8 +83,12 @@ pub struct AppInfo {
 }
 
 /// Frame header layout:
-/// `[rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]`
-pub const HEADER: usize = 8;
+/// `[rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf,
+///   beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf]`
+///
+/// Indices 0–7 are the raw per-hop analysis, 8–13 the musical position
+/// tracked by [`crate::phrasing`]. Keep in sync with `HEADER` in `App.tsx`.
+pub const HEADER: usize = 14;
 const FLUX_HISTORY: usize = 188; // ~2 s of hops for the adaptive threshold
 const BEAT_REFRACTORY_HOPS: usize = 11; // ~120 ms
 
@@ -162,6 +166,7 @@ struct Analyzer {
     beat_times: VecDeque<f32>, // seconds (analysis time), most recent last
     bpm: f32,
     bpm_conf: f32,
+    phrasing: crate::phrasing::Phrasing,
     published: u64,
 }
 
@@ -210,6 +215,7 @@ impl Analyzer {
             beat_times: VecDeque::with_capacity(24),
             bpm: 0.0,
             bpm_conf: 0.0,
+            phrasing: crate::phrasing::Phrasing::new(NUM_BANDS),
             published: 0,
         }
     }
@@ -321,6 +327,8 @@ impl Analyzer {
 
         let sigma = self.params.lock().map(|p| p.beat_sigma).unwrap_or(1.5);
         self.hops_since_beat += 1;
+        let now_s = self.published as f32 * HOP as f32 / self.sample_rate as f32;
+        let hop_s = HOP as f32 / self.sample_rate as f32;
         let is_beat = self.flux_hist.len() > 20
             && flux > mean + sigma * std
             && flux > 0.05
@@ -329,15 +337,17 @@ impl Analyzer {
             self.beat_env = 1.0;
             self.hops_since_beat = 0;
             self.beats += 1;
-            let now_s = self.published as f32 * HOP as f32 / self.sample_rate as f32;
             if self.beat_times.len() == 24 {
                 self.beat_times.pop_front();
             }
             self.beat_times.push_back(now_s);
             self.update_bpm();
+            // fed after update_bpm so the grid sees the current tempo estimate
+            self.phrasing.on_onset(now_s, self.bpm, flux);
         } else {
             self.beat_env *= 0.88;
         }
+        self.phrasing.advance(now_s, hop_s, &self.bands);
         let flux_norm = if std > 1e-6 {
             ((flux - mean) / (3.0 * std)).clamp(0.0, 1.0)
         } else {
@@ -360,6 +370,12 @@ impl Analyzer {
         frame[5] = flux_norm;
         frame[6] = self.bpm;
         frame[7] = self.bpm_conf;
+        frame[8] = self.phrasing.beat_phase();
+        frame[9] = self.phrasing.beat_count();
+        frame[10] = self.phrasing.bar_phase();
+        frame[11] = self.phrasing.phrase_phase();
+        frame[12] = self.phrasing.section();
+        frame[13] = self.phrasing.grid_conf();
         for (i, b) in self.bands.iter().enumerate() {
             frame[HEADER + i] = *b;
         }
@@ -375,11 +391,14 @@ impl Analyzer {
             *b *= 0.82;
         }
         self.beat_env *= 0.8;
+        self.phrasing.decay();
         let mut frame = shared.lock().unwrap();
         frame[0] *= 0.82;
         frame[1] *= 0.82;
         frame[4] = self.beat_env;
         frame[5] *= 0.8;
+        frame[12] = self.phrasing.section();
+        frame[13] = self.phrasing.grid_conf();
         for (i, b) in self.bands.iter().enumerate() {
             frame[HEADER + i] = *b;
         }

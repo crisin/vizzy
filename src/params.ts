@@ -188,8 +188,27 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "explode", label: "Explosion 💥", min: 0, max: 3, step: 0.1, default: 1 },
   ],
   milkdrop: [
-    { key: "blend", label: "Überblendzeit (s)", min: 0, max: 8, step: 0.1, default: 2.7 },
-    { key: "cooldown", label: "Auto-Wechsel (s)", min: 5, max: 120, step: 5, default: 30 },
+    { key: "blend", label: "Überblendzeit", min: 0, max: 8, step: 0.1, default: 2.7, unit: "s" },
+    { key: "cooldown", label: "Frühestens wechseln nach", min: 5, max: 120, step: 5, default: 30,
+      unit: "s", hint: "Danach wird auf die nächste musikalische Grenze gewartet" },
+    {
+      key: "switchOn",
+      label: "Wechsel auf",
+      min: 0,
+      max: 5,
+      step: 1,
+      default: 3,
+      kind: "select",
+      hint: "Woran der Wechsel ausgerichtet wird",
+      options: [
+        { value: 0, label: "Beat (ungetaktet)" },
+        { value: 1, label: "Takt — 4 Beats" },
+        { value: 2, label: "2 Takte — 8 Beats" },
+        { value: 3, label: "4 Takte — 16 Beats" },
+        { value: 4, label: "Phrase — 32 Beats" },
+        { value: 5, label: "Nur bei Sektionswechsel" },
+      ],
+    },
   ],
 };
 

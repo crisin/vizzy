@@ -50,7 +50,10 @@ type ModelAction =
   | { action: "clear"; seq: number };
 import "./App.css";
 
-const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
+// [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf,
+//  beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf]
+// Must match `HEADER` in src-tauri/src/audio.rs.
+const HEADER = 14;
 const PEAK_GRAVITY = 0.5; // units/s
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -1339,8 +1342,18 @@ function startVisualizer(
   let beat = 0;
   let bpm = 0;
   let bpmConf = 0;
+  // musical position tracked by the Rust phrasing module
+  let beatPhase = 0;
+  let beatCount = 0;
+  let barPhase = 0;
+  let phrasePhase = 0;
+  let section = 0;
+  let gridConf = 0;
   let prevBeat = 0;
+  let prevSection = 0;
+  let prevBoundary = -1;
   let prevSpectroBeat = 0;
+  let prevSpectroBeatIdx = -1;
   let spectroCol: ImageData | null = null;
   let lastAutoSwitch = 0;
 
@@ -1452,19 +1465,52 @@ function startVisualizer(
     }
   }
 
+  /** Beats between switches per `switchOn` mode; 0 = not grid-based. */
+  const SWITCH_BEATS = [0, 4, 8, 16, 32, 0];
+
+  /** Which N-beat bucket of the current phrase we are in. It ticks over
+   *  exactly on the chosen boundary, and because it is derived from the
+   *  phrase phase the buckets line up with real bars — not with an arbitrary
+   *  beat count that happened to start when the app did. */
+  function currentBoundary(): number {
+    const every = SWITCH_BEATS[params.get("milkdrop", "switchOn") | 0] ?? 16;
+    if (every === 0) return -1;
+    return Math.floor((phrasePhase * 32) / every);
+  }
+
+  function wantsAutoSwitch(): boolean {
+    if (
+      performance.now() - lastAutoSwitch <
+      params.get("milkdrop", "cooldown") * 1000
+    ) {
+      return false;
+    }
+    const mode = params.get("milkdrop", "switchOn") | 0;
+    // The section pulse decays in ~0.4 s; testing well below the peak keeps a
+    // dropped IPC frame from swallowing the whole transition.
+    if (mode === 5) return section >= 0.7 && prevSection < 0.7;
+    // Without a trustworthy grid there are no boundaries to hit — fall back
+    // to the plain onset trigger rather than never switching at all.
+    if (mode === 0 || gridConf < 0.25) return beat >= 0.95 && prevBeat < 0.95;
+    const b = currentBoundary();
+    return prevBoundary !== -1 && b !== prevBoundary;
+  }
+
   function renderMilkdrop() {
     if (!ensureButterchurn() || !bc) return;
     if (mdCanvas.width === 0 || mdCanvas.height === 0) return;
 
-    // beat-driven auto preset switching (rising edge + cooldown)
-    if (autoRef.current && beat >= 0.95 && prevBeat < 0.95) {
-      const nowMs = performance.now();
-      if (nowMs - lastAutoSwitch > params.get("milkdrop", "cooldown") * 1000) {
-        lastAutoSwitch = nowMs;
-        onAutoSwitch();
-      }
+    // Auto preset switching. The cooldown is a *minimum* wait, not the
+    // interval: once it has elapsed the switch is held until the music
+    // reaches the chosen boundary, so presets change in time with the track
+    // instead of whenever the timer happens to run out.
+    if (autoRef.current && wantsAutoSwitch()) {
+      lastAutoSwitch = performance.now();
+      onAutoSwitch();
     }
     prevBeat = beat;
+    prevSection = section;
+    prevBoundary = currentBoundary();
 
     const want = presetKeyRef.current;
     const ov = overridesRef.current;
@@ -1538,6 +1584,12 @@ function startVisualizer(
       flux = f[5];
       bpm = f[6];
       bpmConf = f[7];
+      beatPhase = f[8];
+      beatCount = f[9];
+      barPhase = f[10];
+      phrasePhase = f[11];
+      section = f[12];
+      gridConf = f[13];
       bands = f.subarray(HEADER, HEADER + nBands);
       wave = f.subarray(HEADER + nBands, HEADER + nBands + nWave);
       if (disp.length !== nBands) {
@@ -1571,6 +1623,17 @@ function startVisualizer(
     flux = beat * 0.7;
     bpm = 128;
     bpmConf = 0.9;
+
+    // a perfectly steady fake grid, so phrase-driven behaviour is testable
+    // in the plain-browser preview too
+    const beats = t / (60 / 128);
+    beatCount = Math.floor(beats);
+    beatPhase = beats - beatCount;
+    barPhase = (beats % 4) / 4;
+    phrasePhase = (beats % 32) / 32;
+    gridConf = 0.9;
+    // a "section change" every 32 s, decaying like the real pulse
+    section = Math.max(0, 1 - ((t % 32) / 0.4));
   }
 
   let gradient: CanvasGradient | null = null;
@@ -1720,7 +1783,11 @@ function startVisualizer(
       const text =
         bpmConf > 0.3 && bpm > 40 ? `${Math.round(bpm)} BPM` : "· · ·";
       if (el.textContent !== text) el.textContent = text;
-      el.style.transform = `scale(${(1 + beat * 0.15).toFixed(3)})`;
+      // Once the grid is locked the badge ticks with it — a steady metronome
+      // that rides through missed onsets instead of stuttering on them.
+      const pulse =
+        gridConf >= 0.25 ? Math.pow(1 - beatPhase, 3) : beat;
+      el.style.transform = `scale(${(1 + pulse * 0.15).toFixed(3)})`;
     }
 
     updateDebugHud(now, cap);
@@ -1841,6 +1908,11 @@ function startVisualizer(
         : "ipc — (browser-demo, mock data)",
       `rms ${rms.toFixed(3)} · peak ${peak.toFixed(3)} · flux ${flux.toFixed(2)} · beat ${beat.toFixed(2)}`,
       `bpm ${bpm.toFixed(1)} · conf ${bpmConf.toFixed(2)}`,
+      gridConf >= 0.25
+        ? `takt ${(Math.round(barPhase * 4) % 4) + 1}/4 · phrase ` +
+          `${(Math.round(phrasePhase * 32) % 32) + 1}/32 · ` +
+          `grid ${gridConf.toFixed(2)}${section > 0.05 ? " · SEKTION" : ""}`
+        : `grid nicht eingerastet (${gridConf.toFixed(2)})`,
     ];
     if (debugErrors.length) {
       lines.push("", "— letzte Fehler —", ...debugErrors);
@@ -2002,10 +2074,24 @@ function startVisualizer(
     }
     ctx.putImageData(spectroCol, colX, 0);
 
-    // beat marker: one tick per beat (rising edge — a level test would smear
-    // a stripe across every frame the envelope stays high)
-    if (beat > 0.6 && prevSpectroBeat <= 0.6) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
+    // Time markers. With a locked grid these are musical — faint on beats,
+    // brighter on the downbeat, brightest at the start of a phrase — so the
+    // history reads like bars on a ruler. Without one, fall back to a plain
+    // tick per detected onset.
+    let markAlpha = 0;
+    if (gridConf >= 0.25) {
+      const beatIdx = Math.floor(beatCount);
+      if (beatIdx !== prevSpectroBeatIdx) {
+        prevSpectroBeatIdx = beatIdx;
+        const inPhrase = Math.round(phrasePhase * 32) % 32;
+        const inBar = Math.round(barPhase * 4) % 4;
+        markAlpha = inPhrase === 0 ? 0.55 : inBar === 0 ? 0.3 : 0.12;
+      }
+    } else if (beat > 0.6 && prevSpectroBeat <= 0.6) {
+      markAlpha = 0.42;
+    }
+    if (markAlpha > 0) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${markAlpha})`;
       ctx.fillRect(colX, 0, Math.max(1, Math.round(step * 0.4)), h);
     }
     prevSpectroBeat = beat;
