@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { params } from "./params";
 import { centerAndScale, loadModelObject } from "./modelLoader";
+import { FloraScene } from "./flora";
 
 export interface AudioFrame3D {
   disp: Float32Array; // smoothed bands 0..1
@@ -24,6 +25,7 @@ export type SceneName =
   | "cubes"
   | "critters"
   | "surf"
+  | "flora"
   | "model";
 export const SCENE_NAMES: SceneName[] = [
   "orb",
@@ -35,6 +37,7 @@ export const SCENE_NAMES: SceneName[] = [
   "cubes",
   "critters",
   "surf",
+  "flora",
   "model",
 ];
 
@@ -1352,6 +1355,8 @@ export class Viz3D {
         return new CrittersScene(aspect);
       case "surf":
         return new SurfScene(aspect);
+      case "flora":
+        return new FloraScene(aspect);
       case "model": {
         const scene = new ModelScene(aspect, this.log);
         if (this.pendingModel) {
