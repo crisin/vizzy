@@ -64,11 +64,16 @@ const SWAY = /* glsl */ `
 `;
 
 const LIGHT = /* glsl */ `
-  // cheap stylized lighting: wrap diffuse + sky ambient + rim
-  vec3 shade(vec3 base, vec3 n, vec3 viewDir) {
-    vec3 l = normalize(vec3(0.5, 0.8, 0.35));
+  // cheap stylized lighting: wrap diffuse + sky ambient + rim.
+  // n and viewDir are BOTH view-space (interpolated varyings arrive
+  // denormalized, so renormalize here).
+  vec3 shade(vec3 base, vec3 nIn, vec3 viewDirIn) {
+    vec3 n = normalize(nIn);
+    vec3 viewDir = normalize(viewDirIn);
+    vec3 l = normalize((viewMatrix * vec4(0.5, 0.8, 0.35, 0.0)).xyz);
+    vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
     float diff = clamp(dot(n, l) * 0.5 + 0.5, 0.0, 1.0);
-    float sky = n.y * 0.25 + 0.75;
+    float sky = dot(n, up) * 0.25 + 0.75;
     float rim = pow(1.0 - abs(dot(n, viewDir)), 2.5) * 0.4;
     return base * (0.55 + 0.75 * diff) * sky + base * rim;
   }
@@ -90,6 +95,19 @@ const PLANT_UNIFORMS = /* glsl */ `
   uniform vec3 uColLeaf;
 `;
 
+// Fog: ShaderMaterial has no built-in fog — these two chunks plus
+// `fog: true` on the material (renderer then feeds fogColor/Near/Far).
+const FOG_VERT_DECL = /* glsl */ `varying float vFogDepth;`;
+const FOG_FRAG_DECL = /* glsl */ `
+  uniform vec3 fogColor;
+  uniform float fogNear;
+  uniform float fogFar;
+  varying float vFogDepth;
+  vec3 applyFog(vec3 c) {
+    return mix(c, fogColor, smoothstep(fogNear, fogFar, vFogDepth));
+  }
+`;
+
 // -------------------------------------------------------------- segments ---
 
 const SEGMENT_VERT = /* glsl */ `
@@ -101,6 +119,7 @@ const SEGMENT_VERT = /* glsl */ `
   varying vec3 vNormal;
   varying vec3 vView;
   varying float vY;
+  ${FOG_VERT_DECL}
   ${SWAY}
   void main() {
     float t = max(uTime - aBirth, 0.0);
@@ -113,10 +132,11 @@ const SEGMENT_VERT = /* glsl */ `
     p.y *= reveal;
     vec4 wp = instanceMatrix * vec4(p, 1.0);
     wp = applySway(wp, aSway, uSwayPhase);
-    vNormal = normalize(mat3(instanceMatrix) * normal);
+    vNormal = normalize(normalMatrix * (mat3(instanceMatrix) * normal));
     vY = uv.y;
     vec4 mv = modelViewMatrix * wp;
     vView = normalize(-mv.xyz);
+    vFogDepth = -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -128,11 +148,12 @@ const SEGMENT_FRAG = /* glsl */ `
   varying vec3 vView;
   varying float vY;
   ${LIGHT}
+  ${FOG_FRAG_DECL}
   void main() {
     vec3 base = uColLeaf * mix(0.55, 0.95, vY); // darker toward the ground
     base = mix(base, base * vec3(0.85, 0.7, 0.55), 0.35); // woody tint
     base = witherTint(base);
-    gl_FragColor = vec4(shade(base, normalize(vNormal), vView), 1.0);
+    gl_FragColor = vec4(applyFog(shade(base, vNormal, vView)), 1.0);
   }
 `;
 
@@ -149,6 +170,7 @@ const LEAF_VERT = /* glsl */ `
   varying vec3 vNormal;
   varying vec3 vView;
   varying float vFlutter;
+  ${FOG_VERT_DECL}
   ${SWAY}
   void main() {
     float t = max(uTime - aBirth, 0.0);
@@ -165,9 +187,10 @@ const LEAF_VERT = /* glsl */ `
     vFlutter = flutter;
     vec4 wp = instanceMatrix * vec4(p, 1.0);
     wp = applySway(wp, aSway, uSwayPhase + aPhase * 0.3);
-    vNormal = normalize(mat3(instanceMatrix) * normal);
+    vNormal = normalize(normalMatrix * (mat3(instanceMatrix) * normal));
     vec4 mv = modelViewMatrix * wp;
     vView = normalize(-mv.xyz);
+    vFogDepth = -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -180,6 +203,7 @@ const LEAF_FRAG = /* glsl */ `
   varying vec3 vView;
   varying float vFlutter;
   ${LIGHT}
+  ${FOG_FRAG_DECL}
   void main() {
     float ux = vUv.x * 2.0 - 1.0; // center: plane uvs run 0..1
     // leaf silhouette: width profile over length, cut by discard
@@ -195,7 +219,7 @@ const LEAF_FRAG = /* glsl */ `
     base += uColLeaf * uEnergy * (0.35 + 0.25 * sin(vFlutter * 40.0));
     base = witherTint(base);
     vec3 n = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
-    gl_FragColor = vec4(shade(base, n, vView), 1.0);
+    gl_FragColor = vec4(applyFog(shade(base, n, vView)), 1.0);
   }
 `;
 
@@ -220,6 +244,7 @@ const PETAL_VERT = /* glsl */ `
   varying vec3 vView;
   varying float vOpen;
   varying float vPhase;
+  ${FOG_VERT_DECL}
   ${SWAY}
   void main() {
     float t = max(uTime - aBirth, 0.0);
@@ -240,10 +265,12 @@ const PETAL_VERT = /* glsl */ `
     p = vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
     vec4 wp = instanceMatrix * vec4(p, 1.0);
     wp = applySway(wp, aSway, uSwayPhase + aPhase * 0.15);
-    vNormal = normalize(mat3(instanceMatrix) *
-      normalize(vec3(0.0, s, -c) + normal * 0.001));
+    // true rotated plane normal: R_x(ang) * (0,0,1) = (0, -s, c)
+    vNormal = normalize(normalMatrix * (mat3(instanceMatrix) *
+      normalize(vec3(0.0, -s, c) + normal * 0.001)));
     vec4 mv = modelViewMatrix * wp;
     vView = normalize(-mv.xyz);
+    vFogDepth = -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -257,6 +284,7 @@ const PETAL_FRAG = /* glsl */ `
   varying float vOpen;
   varying float vPhase;
   ${LIGHT}
+  ${FOG_FRAG_DECL}
   void main() {
     float ux = vUv.x * 2.0 - 1.0; // center: plane uvs run 0..1
     // pointed-oval silhouette
@@ -270,12 +298,12 @@ const PETAL_FRAG = /* glsl */ `
     base = mix(base, base * vec3(0.82, 0.45, 0.5), vein * vUv.y * 0.8);
     // fake backlight translucency: petals glow when lit from behind
     vec3 n = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
-    vec3 l = normalize(vec3(0.5, 0.8, 0.35));
+    vec3 l = normalize((viewMatrix * vec4(0.5, 0.8, 0.35, 0.0)).xyz);
     float back = clamp(dot(-n, l), 0.0, 1.0);
     base += uColB * pow(back, 2.0) * 0.4;
     base += uColA * uBeat * 0.15; // beat shimmer in the heart
     base = witherTint(base);
-    gl_FragColor = vec4(shade(base, n, vView), 1.0);
+    gl_FragColor = vec4(applyFog(shade(base, n, vView)), 1.0);
   }
 `;
 
@@ -292,6 +320,7 @@ const SPINE_VERT = /* glsl */ `
   uniform float uGrowDur;
   varying float vTip;
   varying float vAge;
+  ${FOG_VERT_DECL}
   void main() {
     float t = max(uTime - aBirth, 0.0);
     float r = clamp(t / uGrowDur, 0.0, 1.0);
@@ -304,7 +333,9 @@ const SPINE_VERT = /* glsl */ `
     // spines quiver on the beat
     p.x += sin(aPhase * 13.0 + uTime * 6.0) * uBeat * 0.012 * uv.y;
     vec4 wp = instanceMatrix * vec4(p, 1.0);
-    gl_Position = projectionMatrix * modelViewMatrix * wp;
+    vec4 mv = modelViewMatrix * wp;
+    vFogDepth = -mv.z;
+    gl_Position = projectionMatrix * mv;
   }
 `;
 
@@ -313,51 +344,69 @@ const SPINE_FRAG = /* glsl */ `
   ${PLANT_UNIFORMS}
   varying float vTip;
   varying float vAge;
+  ${FOG_FRAG_DECL}
   void main() {
     // fresh spines are pale straw, aging toward amber (reference: DAY 160)
     vec3 young = vec3(0.92, 0.88, 0.78);
     vec3 old = vec3(0.78, 0.64, 0.42);
     vec3 c = mix(young, old, vAge) * mix(1.0, 0.75, vTip);
     c += vec3(0.3, 0.25, 0.1) * uEnergy * vTip;
-    gl_FragColor = vec4(c, 1.0);
+    gl_FragColor = vec4(applyFog(c), 1.0);
   }
 `;
 
-// ----------------------------------------------------------- cactus body ---
+// ----------------------------------------------------------- cactus pads ---
+//
+// A cactus is a CHAIN of instanced pads budding out of each other, offset
+// less than their radii so they visibly grow into one another. Each pad
+// inflates with an elastic pop off its own aBirth.
 
-const BODY_VERT = /* glsl */ `
+const PAD_VERT = /* glsl */ `
+  attribute float aBirth;
+  attribute float aPhase;
+  attribute float aScale;
   ${PLANT_UNIFORMS}
-  uniform float uBodyScale;
+  uniform float uGrowDur;
   uniform float uRibs;
   varying vec3 vNormal;
   varying vec3 vView;
   varying float vRib;
+  ${FOG_VERT_DECL}
   void main() {
+    float t = max(uTime - aBirth, 0.0);
+    float r = clamp(t / uGrowDur, 0.0, 1.0);
+    float reveal = r + 0.35 * sin(r * 3.14159) * (1.0 - r);
     vec3 p = position;
     float ang = atan(p.x, p.z);
-    float rib = sin(ang * uRibs);
+    // per-pad rib phase so stacked pads don't share seams
+    float rib = sin(ang * uRibs + aPhase);
     vRib = rib;
-    p += normal * rib * 0.05;
-    p *= uBodyScale * (1.0 + uBeat * 0.02);
-    vNormal = normalize(normalMatrix * normal);
-    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    p += normal * rib * 0.055;
+    p *= aScale * reveal * (1.0 + uBeat * 0.025);
+    // withering: pads sag into each other
+    p.y -= uWither * aScale * 0.25;
+    vec4 wp = instanceMatrix * vec4(p, 1.0);
+    vNormal = normalize(normalMatrix * (mat3(instanceMatrix) * normal));
+    vec4 mv = modelViewMatrix * wp;
     vView = normalize(-mv.xyz);
+    vFogDepth = -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
 
-const BODY_FRAG = /* glsl */ `
+const PAD_FRAG = /* glsl */ `
   precision highp float;
   ${PLANT_UNIFORMS}
   varying vec3 vNormal;
   varying vec3 vView;
   varying float vRib;
   ${LIGHT}
+  ${FOG_FRAG_DECL}
   void main() {
     vec3 base = uColLeaf * mix(0.8, 1.15, vRib * 0.5 + 0.5);
     base += uColLeaf * uEnergy * 0.3;
     base = witherTint(base);
-    gl_FragColor = vec4(shade(base, normalize(vNormal), vView), 1.0);
+    gl_FragColor = vec4(applyFog(shade(base, vNormal, vView)), 1.0);
   }
 `;
 
@@ -372,7 +421,16 @@ function material(
   return new THREE.ShaderMaterial({
     vertexShader: vert,
     fragmentShader: frag,
-    uniforms,
+    // plain spread, NOT UniformsUtils.merge — merge clones and would break
+    // the PlantUniforms sharing across a slot's materials. The renderer
+    // overwrites the fog values each frame because `fog: true`.
+    uniforms: {
+      ...uniforms,
+      fogColor: { value: new THREE.Color() },
+      fogNear: { value: 1 },
+      fogFar: { value: 100 },
+    },
+    fog: true,
     side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
   });
 }
@@ -398,10 +456,10 @@ export function spineMaterial(u: PlantUniforms): THREE.ShaderMaterial {
   return material(SPINE_VERT, SPINE_FRAG, { ...u, uGrowDur: { value: 1.1 } });
 }
 
-export function bodyMaterial(u: PlantUniforms): THREE.ShaderMaterial {
-  return material(BODY_VERT, BODY_FRAG, {
+export function padMaterial(u: PlantUniforms): THREE.ShaderMaterial {
+  return material(PAD_VERT, PAD_FRAG, {
     ...u,
-    uBodyScale: { value: 0.01 },
+    uGrowDur: { value: 3.2 },
     uRibs: { value: 9 },
   });
 }
@@ -410,9 +468,12 @@ export function bodyMaterial(u: PlantUniforms): THREE.ShaderMaterial {
 
 const GROUND_VERT = /* glsl */ `
   varying vec2 vUv;
+  ${FOG_VERT_DECL}
   void main() {
     vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vFogDepth = -mv.z;
+    gl_Position = projectionMatrix * mv;
   }
 `;
 
@@ -420,17 +481,16 @@ const GROUND_FRAG = /* glsl */ `
   precision highp float;
   varying vec2 vUv;
   uniform vec3 uColor;
+  ${FOG_FRAG_DECL}
   void main() {
     float d = length(vUv - 0.5) * 2.0;
-    vec3 c = uColor * mix(1.4, 0.4, smoothstep(0.0, 1.0, d));
-    gl_FragColor = vec4(c, 1.0);
+    vec3 c = uColor * mix(1.7, 0.5, smoothstep(0.0, 1.0, d));
+    gl_FragColor = vec4(applyFog(c), 1.0);
   }
 `;
 
 export function groundMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: GROUND_VERT,
-    fragmentShader: GROUND_FRAG,
-    uniforms: { uColor: { value: new THREE.Color(0x231c2c) } },
+  return material(GROUND_VERT, GROUND_FRAG, {
+    uColor: { value: new THREE.Color(0x322a40) },
   });
 }

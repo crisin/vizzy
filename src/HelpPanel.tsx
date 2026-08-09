@@ -2,13 +2,14 @@ import type { RefObject } from "react";
 import { useDialogFocus } from "./useDialogFocus";
 
 const SHORTCUTS = [
-  ["1–5", "Visualisierung wechseln"],
+  ["1–6", "Visualisierung wechseln"],
   ["← / →", "Preset oder 3D-Szene wechseln"],
   ["R", "Zufälliges Milkdrop-Preset"],
+  ["S", "Preset als Favorit markieren (★)"],
   ["A", "Automatischen Preset-Wechsel umschalten"],
   ["B", "Tempoanzeige ein- oder ausblenden"],
   ["D", "Diagnoseanzeige ein- oder ausblenden"],
-  ["E", "Parameter öffnen"],
+  ["E", "Einstellungen öffnen"],
   ["F", "Vollbild umschalten"],
   ["?", "Diese Hilfe öffnen"],
   ["Esc", "Offenes Panel schließen"],

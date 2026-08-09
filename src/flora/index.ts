@@ -35,6 +35,7 @@ export class FloraScene {
   private plantedCount = -1;
   private plantedDichte = -1;
   private respawnCursor = 0;
+  private canopySmooth = 1.2;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(55, aspect, 0.1, 100);
@@ -58,9 +59,11 @@ export class FloraScene {
     }
     this.plants = [];
 
-    const seed = Math.round(params.get("flora", "seed"));
-    const count = Math.round(params.get("flora", "pflanzen"));
-    const dichte = params.get("flora", "dichte");
+    // base values, NOT modulated ones: a routing assignment on these params
+    // must never tear the garden down every frame
+    const seed = Math.round(params.getBase("flora", "seed"));
+    const count = Math.round(params.getBase("flora", "pflanzen"));
+    const dichte = params.getBase("flora", "dichte");
     this.plantedSeed = seed;
     this.plantedCount = count;
     this.plantedDichte = dichte;
@@ -99,11 +102,11 @@ export class FloraScene {
   update(frame: AudioFrameLike) {
     const now = frame.t;
 
-    // watch the replant-triggering params
+    // watch the replant-triggering params (base values — see replant())
     if (
-      Math.round(params.get("flora", "seed")) !== this.plantedSeed ||
-      Math.round(params.get("flora", "pflanzen")) !== this.plantedCount ||
-      params.get("flora", "dichte") !== this.plantedDichte
+      Math.round(params.getBase("flora", "seed")) !== this.plantedSeed ||
+      Math.round(params.getBase("flora", "pflanzen")) !== this.plantedCount ||
+      params.getBase("flora", "dichte") !== this.plantedDichte
     ) {
       this.replant(now);
     }
@@ -138,12 +141,21 @@ export class FloraScene {
       }
     }
 
+    // the camera rides the canopy: pull back and look up as things get big
+    let canopy = 0;
+    for (const p of this.plants) canopy = Math.max(canopy, p.topY);
+    this.canopySmooth += (canopy - this.canopySmooth) * Math.min(1, frame.dt);
     if (frame.cameraAuto) {
       const a = now * 0.07;
+      const dist = 6 + this.canopySmooth * 1.1;
+      this.cameraTarget.set(0, 0.8 + this.canopySmooth * 0.4, 0);
       this.camera.position.set(
-        Math.sin(a) * 7,
-        2.2 + Math.sin(now * 0.11) * 0.5 + frame.rms * 0.8,
-        Math.cos(a) * 7,
+        Math.sin(a) * dist,
+        1.8 +
+          this.canopySmooth * 0.55 +
+          Math.sin(now * 0.11) * 0.5 +
+          frame.rms * 0.8,
+        Math.cos(a) * dist,
       );
       this.camera.lookAt(this.cameraTarget);
     }

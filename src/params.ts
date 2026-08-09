@@ -9,14 +9,34 @@ export type ParamDef = {
   max: number;
   step: number;
   default: number;
+  /** How the settings UI renders this parameter. Default: "range". */
+  kind?: "range" | "toggle" | "select";
+  /** Choices for `kind: "select"` — the stored value is the option value. */
+  options?: { value: number; label: string }[];
+  /** Suffix behind the value readout, e.g. "s" or "%". */
+  unit?: string;
+  /** One-line explanation under the control. */
+  hint?: string;
 };
+
+/** 0/1 parameter rendered as a checkbox instead of a slider. */
+function toggle(
+  key: string,
+  label: string,
+  def: 0 | 1,
+  hint?: string,
+): ParamDef {
+  return { key, label, min: 0, max: 1, step: 1, default: def, kind: "toggle", hint };
+}
 
 export const GROUP_LABELS: Record<string, string> = {
   audio: "Audio",
   render: "Rendering",
+  ui: "Bedienung",
   bars: "Bars",
   radial: "Radial",
   scope: "Scope",
+  spektro: "Spektrogramm",
   orb: "Orb",
   terrain: "Terrain",
   tunnel: "Tunnel",
@@ -42,9 +62,19 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
   ],
   audio: [
     { key: "gain", label: "Empfindlichkeit", min: 0.25, max: 4, step: 0.05, default: 1 },
-    { key: "attack", label: "Ansprechzeit (ms)", min: 5, max: 200, step: 5, default: 35 },
-    { key: "release", label: "Abklingzeit (ms)", min: 50, max: 1000, step: 10, default: 220 },
-    { key: "beatSigma", label: "Beat-Schwelle (σ)", min: 0.5, max: 3, step: 0.1, default: 1.5 },
+    { key: "attack", label: "Ansprechzeit", min: 5, max: 200, step: 5, default: 35, unit: "ms" },
+    { key: "release", label: "Abklingzeit", min: 50, max: 1000, step: 10, default: 220, unit: "ms" },
+    { key: "beatSigma", label: "Beat-Schwelle (σ)", min: 0.5, max: 3, step: 0.1, default: 1.5,
+      hint: "Niedriger = mehr erkannte Beats" },
+  ],
+  // Everything about how the interface itself behaves. Read live by the app,
+  // so changes take effect without a reload.
+  ui: [
+    { key: "hideDelay", label: "Steuerung ausblenden nach", min: 0, max: 30, step: 1, default: 5,
+      unit: "s", hint: "0 = nie automatisch ausblenden" },
+    toggle("hideCursor", "Mauszeiger mit ausblenden", 1),
+    toggle("showFps", "FPS-Anzeige im Bild", 1),
+    toggle("showBrand", "VIZZY-Schriftzug zeigen", 1),
   ],
   bars: [
     { key: "height", label: "Höhe", min: 0.3, max: 1, step: 0.05, default: 0.72 },
@@ -60,6 +90,34 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     { key: "amp", label: "Amplitude", min: 0.1, max: 0.45, step: 0.01, default: 0.32 },
     { key: "glow", label: "Glow", min: 0, max: 30, step: 1, default: 12 },
     { key: "trail", label: "Trail-Stärke", min: 0.05, max: 0.9, step: 0.05, default: 0.35 },
+  ],
+  // Scrolling waterfall: time runs right-to-left, frequency bottom-to-top.
+  spektro: [
+    { key: "speed", label: "Scroll-Tempo", min: 1, max: 12, step: 1, default: 3, unit: "px" },
+    { key: "contrast", label: "Kontrast", min: 0.5, max: 4, step: 0.1, default: 1.6 },
+    { key: "floor", label: "Rausch-Schwelle", min: 0, max: 0.3, step: 0.01, default: 0.04,
+      hint: "Blendet leises Grundrauschen aus" },
+    {
+      key: "palette",
+      label: "Farbschema",
+      min: 0,
+      max: 3,
+      step: 1,
+      default: 0,
+      kind: "select",
+      options: [
+        { value: 0, label: "Inferno (schwarz → rot → gelb)" },
+        { value: 1, label: "Eis (blau → cyan → weiß)" },
+        { value: 2, label: "Retro (grün → gelb → rot)" },
+        { value: 3, label: "Neon (violett → pink → weiß)" },
+      ],
+    },
+    // The analyzer already delivers log-spaced bands (40 Hz … 16 kHz), so 1
+    // is an even split; higher values stretch the low end on top of that.
+    { key: "tilt", label: "Bass-Lupe", min: 1, max: 2.5, step: 0.1, default: 1,
+      hint: "1 = gleichmäßig, höher = mehr Platz für Bässe" },
+    toggle("bars", "Balken-Overlay", 1, "Die klassischen Balken am rechten Rand"),
+    toggle("grid", "Frequenz-Raster", 0),
   ],
   orb: [
     { key: "displace", label: "Ausschlag", min: 0.2, max: 1.5, step: 0.05, default: 0.65 },
@@ -181,11 +239,26 @@ class ParamStore {
   set(group: string, key: string, value: number) {
     (this.values[group] ??= {})[key] = value;
     this.save();
+    this.notify();
   }
 
   reset(group: string) {
     delete this.values[group];
     this.save();
+    this.notify();
+  }
+
+  /** React components that render from parameters subscribe here — the render
+   *  loop reads `get()` per frame and needs none of this. */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private listeners = new Set<() => void>();
+
+  private notify() {
+    for (const fn of this.listeners) fn();
   }
 
   isDefault(group: string): boolean {

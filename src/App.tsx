@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ChangeEvent,
@@ -13,7 +14,7 @@ import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
 import { SCENE_NAMES, type SceneName } from "./sceneCatalog";
 import type { Viz3D } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
-import { EditorPanel } from "./EditorPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { debugErrors, installErrorCapture, noteError } from "./debug";
 import {
   addModel,
@@ -51,7 +52,6 @@ import "./App.css";
 
 const HEADER = 8; // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf]
 const PEAK_GRAVITY = 0.5; // units/s
-const HUD_HIDE_MS = 5000;
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -120,15 +120,43 @@ type AppInfo = {
   active: boolean;
 };
 
-type VizMode = "bars" | "radial" | "scope" | "milkdrop" | "3d";
-const VIZ_MODES: VizMode[] = ["bars", "radial", "scope", "milkdrop", "3d"];
+type VizMode = "bars" | "radial" | "scope" | "spektro" | "milkdrop" | "3d";
+const VIZ_MODES: VizMode[] = [
+  "bars",
+  "radial",
+  "scope",
+  "spektro",
+  "milkdrop",
+  "3d",
+];
 const VIZ_MODE_LABELS: Record<VizMode, string> = {
   bars: "Balken",
   radial: "Radial",
   scope: "Welle",
+  spektro: "Spektro",
   milkdrop: "Milkdrop",
   "3d": "3D",
 };
+
+/** UI size tiers: dedicated dimensions per screen class, applied through
+ *  CSS custom properties on the stage (see App.css `[data-ui=...]`). */
+type UiScalePref = "auto" | "compact" | "normal" | "tv";
+const UI_SCALES: UiScalePref[] = ["auto", "compact", "normal", "tv"];
+const UI_SCALE_LABELS: Record<UiScalePref, string> = {
+  auto: "Auto",
+  compact: "Kompakt",
+  normal: "Normal",
+  tv: "TV",
+};
+
+function resolveUiTier(pref: UiScalePref, width: number): string {
+  if (pref !== "auto") return pref;
+  if (width <= 760) return "compact";
+  // 10-foot UI: very wide, or big screen without hover (TV browsers/remotes)
+  const noHover = window.matchMedia?.("(hover: none)").matches ?? false;
+  if (width >= 2200 || (width >= 1600 && noHover)) return "tv";
+  return "normal";
+}
 
 type BgLayer = "off" | "milkdrop" | "3d";
 const BG_LAYERS: BgLayer[] = ["off", "milkdrop", "3d"];
@@ -136,7 +164,15 @@ const BLEND_MODES = ["screen", "lighten", "overlay", "normal"] as const;
 type BlendMode = (typeof BLEND_MODES)[number];
 
 function is2DMode(m: VizMode): boolean {
-  return m === "bars" || m === "radial" || m === "scope";
+  return (
+    m === "bars" || m === "radial" || m === "scope" || m === "spektro"
+  );
+}
+
+/** The waterfall owns every pixel of its canvas, so it can't sit on top of a
+ *  background layer the way the translucent 2D modes do. */
+function supportsBgLayer(m: VizMode): boolean {
+  return is2DMode(m) && m !== "spektro";
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -165,6 +201,9 @@ type Persisted = {
   bgLayer?: BgLayer;
   blendMode?: BlendMode;
   debug?: boolean;
+  uiScale?: UiScalePref;
+  favorites?: string[];
+  favOnly?: boolean;
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -202,13 +241,33 @@ function App() {
     return PRESET_KEYS[0] ?? "";
   });
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
+  const [favorites, setFavorites] = useState<string[]>(
+    () => saved.favorites ?? [],
+  );
+  const [favOnly, setFavOnly] = useState(saved.favOnly ?? false);
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [debugOpen, setDebugOpen] = useState(saved.debug ?? false);
   const debugElRef = useRef<HTMLPreElement | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const freqCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [uiScale, setUiScale] = useState<UiScalePref>(
+    saved.uiScale && UI_SCALES.includes(saved.uiScale) ? saved.uiScale : "auto",
+  );
+  const [viewportW, setViewportW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const uiTier = resolveUiTier(uiScale, viewportW);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const editorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const helpButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Parameters live outside React (the render loop reads them per frame), so
+  // anything rendered from them needs an explicit nudge on change.
+  const [, bumpParams] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => params.subscribe(bumpParams), []);
   const [bgLayer, setBgLayer] = useState<BgLayer>(
     saved.bgLayer && BG_LAYERS.includes(saved.bgLayer) ? saved.bgLayer : "off",
   );
@@ -369,6 +428,7 @@ function App() {
       const up = userPresets.find((p) => p.name === name);
       const list = deleteUserPreset(name);
       setUserPresets(list);
+      setFavorites((prev) => prev.filter((k) => k !== `user:${name}`));
       if (presetKey === `user:${name}`) {
         setPresetKey(up && PRESETS[up.base] ? up.base : (PRESET_KEYS[0] ?? ""));
       }
@@ -467,6 +527,9 @@ function App() {
       bgLayer,
       blendMode,
       debug: debugOpen,
+      uiScale,
+      favorites,
+      favOnly,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
@@ -484,25 +547,52 @@ function App() {
     bgLayer,
     blendMode,
     debugOpen,
+    uiScale,
+    favorites,
+    favOnly,
   ]);
+
+  const isFavorite = favorites.includes(presetKey);
+
+  const toggleFavorite = useCallback((key: string) => {
+    if (!key) return;
+    setFavorites((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }, []);
+
+  // Favourites-only browsing falls back to the full list while there is
+  // nothing (or only one thing) starred — otherwise ←/→ would be a dead key.
+  const browseKeys = useMemo(() => {
+    if (!favOnly) return allPresetKeys;
+    const list = favorites.filter((k) => allPresetKeys.includes(k));
+    return list.length > 1 ? list : allPresetKeys;
+  }, [favOnly, favorites, allPresetKeys]);
 
   const stepPreset = useCallback(
     (dir: number) => {
       setPresetKey((current) => {
-        const i = allPresetKeys.indexOf(current);
-        return allPresetKeys[
-          (i + dir + allPresetKeys.length) % allPresetKeys.length
-        ];
+        const i = browseKeys.indexOf(current);
+        // not in the current list (e.g. unstarred while browsing favourites):
+        // dir > 0 lands on the first entry, dir < 0 on the last
+        if (i === -1) return browseKeys[dir > 0 ? 0 : browseKeys.length - 1];
+        return browseKeys[(i + dir + browseKeys.length) % browseKeys.length];
       });
     },
-    [allPresetKeys],
+    [browseKeys],
   );
 
   const randomPreset = useCallback(() => {
-    setPresetKey(
-      allPresetKeys[Math.floor(Math.random() * allPresetKeys.length)],
-    );
-  }, [allPresetKeys]);
+    setPresetKey((current) => {
+      if (browseKeys.length < 2) return browseKeys[0] ?? current;
+      // never redraw the preset that is already on screen
+      let next = current;
+      while (next === current) {
+        next = browseKeys[Math.floor(Math.random() * browseKeys.length)];
+      }
+      return next;
+    });
+  }, [browseKeys]);
 
   const nextModelSeq = useCallback(
     () => (modelFileRef.current?.seq ?? 0) + 1,
@@ -653,6 +743,7 @@ function App() {
       overridesRef,
       resolvePresetRef,
       debugElRef,
+      freqCanvasRef,
     );
   }, [randomPreset]);
 
@@ -668,25 +759,24 @@ function App() {
   }, []);
 
   const hudPinned =
-    editorOpen ||
+    settingsOpen ||
     helpOpen ||
     libraryOpen ||
     routingOpen ||
     (tweakOpen && mode === "milkdrop");
 
+  // read in render scope so a change in the settings panel re-arms the timer
+  const hideDelay = params.get("ui", "hideDelay");
   const pokeHud = useCallback(() => {
     setHudVisible(true);
     window.clearTimeout(hideTimer.current);
-    if (hudPinned) return;
-    hideTimer.current = window.setTimeout(
-      () => {
-        if (!document.querySelector(".hud:focus-within")) {
-          setHudVisible(false);
-        }
-      },
-      HUD_HIDE_MS,
-    );
-  }, [hudPinned]);
+    if (hudPinned || hideDelay <= 0) return; // 0 = stay visible
+    hideTimer.current = window.setTimeout(() => {
+      if (!document.querySelector(".hud:focus-within")) {
+        setHudVisible(false);
+      }
+    }, hideDelay * 1000);
+  }, [hudPinned, hideDelay]);
 
   useEffect(() => {
     pokeHud();
@@ -702,7 +792,7 @@ function App() {
         if (libraryOpen) setLibraryOpen(false);
         else if (routingOpen) setRoutingOpen(false);
         else if (tweakOpen) setTweakOpen(false);
-        else if (editorOpen) setEditorOpen(false);
+        else if (settingsOpen) setSettingsOpen(false);
         else if (helpOpen) setHelpOpen(false);
         else if (inTauri) void getCurrentWindow().setFullscreen(false);
         return;
@@ -719,8 +809,8 @@ function App() {
       if (key === "f" || e.key === "F11") {
         e.preventDefault();
         void toggleFullscreen();
-      } else if (key === "e") {
-        setEditorOpen((v) => !v);
+      } else if (key === "e" || e.key === ",") {
+        setSettingsOpen((v) => !v);
         setRoutingOpen(false);
         setHelpOpen(false);
       } else if (key === "b") {
@@ -729,7 +819,7 @@ function App() {
         setDebugOpen((v) => !v);
       } else if (key === "?") {
         setHelpOpen((v) => !v);
-        setEditorOpen(false);
+        setSettingsOpen(false);
         setRoutingOpen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
@@ -738,6 +828,7 @@ function App() {
         else if (e.key === "ArrowLeft") stepPreset(-1);
         else if (key === "r") randomPreset();
         else if (key === "a") setAutoSwitch((v) => !v);
+        else if (key === "s") toggleFavorite(presetKeyRef.current);
       } else if (modeRef.current === "3d") {
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           setScene3d((s) => {
@@ -756,10 +847,11 @@ function App() {
     toggleFullscreen,
     stepPreset,
     randomPreset,
+    toggleFavorite,
     libraryOpen,
     routingOpen,
     tweakOpen,
-    editorOpen,
+    settingsOpen,
     helpOpen,
     pokeHud,
   ]);
@@ -771,8 +863,11 @@ function App() {
   return (
     <div
       className={`stage mode-${mode} ${
-        is2DMode(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
-      } ${controlsVisible ? "" : "idle"}`}
+        supportsBgLayer(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
+      } ${controlsVisible ? "" : "idle"} ${
+        params.get("ui", "hideCursor") >= 0.5 ? "hide-cursor" : ""
+      }`}
+      data-ui={uiTier}
       onPointerMove={pokeHud}
       onPointerDown={pokeHud}
       onKeyDownCapture={pokeHud}
@@ -786,13 +881,22 @@ function App() {
         Aktive Visualisierung: {VIZ_MODE_LABELS[mode]}
       </div>
       {debugOpen && <pre className="debug-hud" ref={debugElRef} />}
+      {debugOpen && (
+        <canvas
+          className="freq-panel"
+          ref={freqCanvasRef}
+          aria-label="Frequenz-Analyse der eingehenden Audiosignale"
+        />
+      )}
       <div
         className={`hud ${controlsVisible ? "" : "hidden"}`}
         role="toolbar"
         aria-label="Vizzy-Steuerung"
       >
         <div className="hud-row">
-          <span className="brand">VIZZY</span>
+          {params.get("ui", "showBrand") >= 0.5 && (
+            <span className="brand">VIZZY</span>
+          )}
           {inTauri ? (
             <select
               className="src-select"
@@ -840,80 +944,46 @@ function App() {
               · · ·
             </span>
           )}
-          {VIZ_MODES.map((m, i) => (
-            <button
-              key={m}
-              type="button"
-              className={`mode-btn ${mode === m ? "active" : ""}`}
-              onClick={() => setMode(m)}
-              title={`${VIZ_MODE_LABELS[m]} · Taste ${i + 1}`}
-              aria-label={`Visualisierung: ${VIZ_MODE_LABELS[m]}`}
-              aria-pressed={mode === m}
-              aria-keyshortcuts={String(i + 1)}
-            >
-              {VIZ_MODE_LABELS[m]}
-            </button>
-          ))}
+          <div className="seg" role="group" aria-label="Visualisierung">
+            {VIZ_MODES.map((m, i) => (
+              <button
+                key={m}
+                type="button"
+                className={`mode-btn ${mode === m ? "active" : ""}`}
+                onClick={() => setMode(m)}
+                title={`${VIZ_MODE_LABELS[m]} · Taste ${i + 1}`}
+                aria-label={`Visualisierung: ${VIZ_MODE_LABELS[m]}`}
+                aria-pressed={mode === m}
+                aria-keyshortcuts={String(i + 1)}
+              >
+                {VIZ_MODE_LABELS[m]}
+              </button>
+            ))}
+          </div>
           <button
+            ref={settingsButtonRef}
             type="button"
-            className={`mode-btn ${showBpm ? "active" : ""}`}
-            onClick={() => setShowBpm((v) => !v)}
-            title="BPM-Anzeige (B)"
-            aria-label="Tempoanzeige ein- oder ausblenden"
-            aria-pressed={showBpm}
-            aria-keyshortcuts="B"
-          >
-            Tempo
-          </button>
-          <button
-            type="button"
-            className={`mode-btn ${routingOpen ? "active" : ""}`}
+            className={`icon-btn ${settingsOpen ? "active" : ""}`}
             onClick={() => {
-              setRoutingOpen((v) => !v);
-              setEditorOpen(false);
-              setHelpOpen(false);
-            }}
-            title="Frequenz-Listener & Routing"
-            aria-label="Frequenz-Routing öffnen"
-            aria-pressed={routingOpen}
-            aria-controls="routing-dialog"
-          >
-            Routing
-          </button>
-          <button
-            ref={editorButtonRef}
-            type="button"
-            className={`mode-btn ${editorOpen ? "active" : ""}`}
-            onClick={() => {
-              setEditorOpen((v) => !v);
+              setSettingsOpen((v) => !v);
               setRoutingOpen(false);
               setHelpOpen(false);
             }}
-            title="Parameter-Editor (E)"
-            aria-label="Parameter öffnen"
-            aria-pressed={editorOpen}
-            aria-controls="parameter-panel"
+            title="Einstellungen (E)"
+            aria-label="Einstellungen öffnen"
+            aria-pressed={settingsOpen}
+            aria-controls="settings-panel"
             aria-keyshortcuts="E"
           >
-            Parameter
-          </button>
-          <button
-            type="button"
-            className="mode-btn"
-            onClick={() => void toggleFullscreen()}
-            title="Fullscreen (F)"
-            aria-label="Vollbild umschalten"
-            aria-keyshortcuts="F"
-          >
-            Vollbild
+            ⚙
           </button>
           <button
             ref={helpButtonRef}
             type="button"
-            className={`mode-btn ${helpOpen ? "active" : ""}`}
+            className={`icon-btn ${helpOpen ? "active" : ""}`}
             onClick={() => {
               setHelpOpen((v) => !v);
-              setEditorOpen(false);
+              setSettingsOpen(false);
               setRoutingOpen(false);
             }}
             title="Hilfe & Tastenkürzel (?)"
@@ -922,40 +992,32 @@ function App() {
             aria-controls="help-panel"
             aria-keyshortcuts="?"
           >
-            Hilfe
+            ?
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => void toggleFullscreen()}
+            title="Vollbild (F)"
+            aria-label="Vollbild umschalten"
+            aria-keyshortcuts="F"
+          >
+            ⛶
           </button>
         </div>
-        {is2DMode(mode) && (
+        {supportsBgLayer(mode) && bgLayer !== "off" && (
           <div className="hud-row hud-sub">
-            <span className="demo-tag">Layer:</span>
-            {BG_LAYERS.map((l) => (
-              <button
-                key={l}
-                type="button"
-                className={`mode-btn ${bgLayer === l ? "active" : ""}`}
-                onClick={() => setBgLayer(l)}
-                title="Hintergrund-Layer unter der 2D-Visualization"
-                aria-pressed={bgLayer === l}
-              >
-                {l === "off" ? "aus" : l}
-              </button>
-            ))}
-            {bgLayer !== "off" && (
-              <button
-                type="button"
-                className="mode-btn"
-                onClick={() =>
-                  setBlendMode(
-                    BLEND_MODES[
-                      (BLEND_MODES.indexOf(blendMode) + 1) % BLEND_MODES.length
-                    ],
-                  )
-                }
-                title="Blend-Modus des Vordergrunds"
-              >
-                ⊕ {blendMode}
-              </button>
-            )}
+            <span className="demo-tag">
+              Layer: {bgLayer} ⊕ {blendMode}
+            </span>
+            <button
+              type="button"
+              className="mode-btn"
+              onClick={() => setBgLayer("off")}
+              title="Hintergrund-Layer abschalten"
+            >
+              Layer aus
+            </button>
             {bgLayer === "milkdrop" &&
               (milkdropStatus === "idle" ||
                 milkdropStatus === "loading") && (
@@ -992,6 +1054,15 @@ function App() {
               title={presetKey}
               aria-label="Milkdrop-Preset"
             >
+              {favorites.length > 0 && (
+                <optgroup label="★ Favoriten">
+                  {favorites.map((k) => (
+                    <option key={`fav-${k}`} value={k}>
+                      {k.startsWith("user:") ? k.slice(5) : k}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {userPresets.length > 0 && (
                 <optgroup label="Eigene Presets">
                   {userPresets.map((p) => (
@@ -1009,6 +1080,25 @@ function App() {
                 ))}
               </optgroup>
             </select>
+            <button
+              type="button"
+              className={`icon-btn star-btn ${isFavorite ? "active" : ""}`}
+              onClick={() => toggleFavorite(presetKey)}
+              title={
+                isFavorite
+                  ? "Aus Favoriten entfernen (S)"
+                  : "Zu Favoriten hinzufügen (S)"
+              }
+              aria-label={
+                isFavorite
+                  ? "Preset aus Favoriten entfernen"
+                  : "Preset zu Favoriten hinzufügen"
+              }
+              aria-pressed={isFavorite}
+              aria-keyshortcuts="S"
+            >
+              {isFavorite ? "★" : "☆"}
+            </button>
             <button
               type="button"
               className="mode-btn"
@@ -1038,6 +1128,17 @@ function App() {
               aria-keyshortcuts="A"
             >
               auto
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${favOnly ? "active" : ""}`}
+              onClick={() => setFavOnly((v) => !v)}
+              disabled={favorites.length === 0}
+              title="Nur Favoriten durchblättern — gilt für ←/→, Zufall und Auto"
+              aria-label="Nur Favoriten verwenden"
+              aria-pressed={favOnly}
+            >
+              nur ★
             </button>
             <button
               type="button"
@@ -1118,17 +1219,56 @@ function App() {
           </div>
         )}
       </div>
-      {editorOpen && (
-        <EditorPanel
-          groups={[
-            "audio",
-            "render",
-            ...(is2DMode(mode) && bgLayer !== "off" ? ["layer"] : []),
+      {settingsOpen && (
+        <SettingsPanel
+          paramGroups={[
             mode === "3d" ? scene3d : mode,
+            ...(supportsBgLayer(mode) && bgLayer !== "off" ? ["layer"] : []),
           ]}
-          onClose={() => setEditorOpen(false)}
+          milkdropAvailable={mode === "milkdrop"}
+          sources={sources}
+          apps={apps}
+          selectedSource={selected}
+          onSelectSource={(v) => void selectSource(v)}
+          onRefreshSources={loadLists}
+          uiScale={uiScale}
+          uiScales={UI_SCALES}
+          uiScaleLabels={UI_SCALE_LABELS}
+          onUiScale={(v) => setUiScale(v as UiScalePref)}
+          showBpm={showBpm}
+          onShowBpm={setShowBpm}
+          debugOpen={debugOpen}
+          onDebug={setDebugOpen}
+          bgLayer={bgLayer}
+          bgLayers={BG_LAYERS}
+          onBgLayer={(v) => setBgLayer(v as BgLayer)}
+          blendMode={blendMode}
+          blendModes={BLEND_MODES}
+          onBlendMode={(v) => setBlendMode(v as BlendMode)}
+          showLayerControls={supportsBgLayer(mode)}
+          autoSwitch={autoSwitch}
+          onAutoSwitch={setAutoSwitch}
+          favOnly={favOnly}
+          onFavOnly={setFavOnly}
+          favorites={favorites}
+          onPickPreset={(k) => {
+            setPresetKey(k);
+            setMode("milkdrop");
+          }}
+          onUnfavorite={toggleFavorite}
+          userPresets={userPresets}
+          onDeleteUserPreset={removeUserPreset}
+          onOpenRouting={() => {
+            setRoutingOpen(true);
+            setSettingsOpen(false);
+          }}
+          onOpenTweaks={() => {
+            setTweakOpen(true);
+            setSettingsOpen(false);
+          }}
           onResetAll={resetAll}
-          returnFocusRef={editorButtonRef}
+          onClose={() => setSettingsOpen(false)}
+          returnFocusRef={settingsButtonRef}
         />
       )}
       {helpOpen && (
@@ -1183,6 +1323,7 @@ function startVisualizer(
   overridesRef: { current: { version: number; map: Record<string, number> } },
   resolveRef: { current: (key: string) => unknown | null },
   debugEl: { current: HTMLPreElement | null },
+  freqCanvas: { current: HTMLCanvasElement | null },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -1199,6 +1340,8 @@ function startVisualizer(
   let bpm = 0;
   let bpmConf = 0;
   let prevBeat = 0;
+  let prevSpectroBeat = 0;
+  let spectroCol: ImageData | null = null;
   let lastAutoSwitch = 0;
 
   // smoothed display state
@@ -1223,6 +1366,8 @@ function startVisualizer(
         .then(({ Viz3D: Viz3DClass }) => {
           if (!running) return;
           viz3d = new Viz3DClass(gl3dCanvas, sceneRef.current, flog);
+          // debug hook: lets the debug HUD / devtools poke the live scene
+          (window as unknown as Record<string, unknown>).__viz3d = viz3d;
           flog(
             `[3d] renderer init ok, ${gl3dCanvas.width}x${gl3dCanvas.height}`,
           );
@@ -1560,12 +1705,15 @@ function startVisualizer(
     } else if (modeRef.current === "3d") {
       render3D(dt, now / 1000);
     } else {
-      // layered background under the 2D visualization
-      if (bgLayerRef.current === "milkdrop") renderMilkdrop();
-      else if (bgLayerRef.current === "3d") render3D(dt, now / 1000);
+      // layered background under the 2D visualization (the waterfall paints
+      // every pixel itself, so it never gets one)
+      if (supportsBgLayer(modeRef.current)) {
+        if (bgLayerRef.current === "milkdrop") renderMilkdrop();
+        else if (bgLayerRef.current === "3d") render3D(dt, now / 1000);
+      }
       draw();
     }
-    applyLayerStyles(is2DMode(modeRef.current));
+    applyLayerStyles(supportsBgLayer(modeRef.current));
 
     const el = bpmEl.current;
     if (el) {
@@ -1576,8 +1724,100 @@ function startVisualizer(
     }
 
     updateDebugHud(now, cap);
+    drawFreqPanel(dt);
 
     raf = requestAnimationFrame(frame);
+  }
+
+  // Frequency-analysis panel (debug mode): live spectrum with peak hold,
+  // waveform strip and a beat/flux history lane — the incoming audio at a
+  // glance, independent of whatever the current visualization shows.
+  const freqPeaks = new Float32Array(64);
+  const beatHist = new Float32Array(240); // ~4 s at 60fps
+  const fluxHist = new Float32Array(240);
+  let histIdx = 0;
+  function drawFreqPanel(dt: number) {
+    const el = freqCanvas.current;
+    if (!el) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = el.clientWidth || 300;
+    const cssH = el.clientHeight || 200;
+    const W = Math.round(cssW * dpr);
+    const H = Math.round(cssH * dpr);
+    if (el.width !== W || el.height !== H) {
+      el.width = W;
+      el.height = H;
+    }
+    const g = el.getContext("2d");
+    if (!g) return;
+
+    histIdx = (histIdx + 1) % beatHist.length;
+    beatHist[histIdx] = beat;
+    fluxHist[histIdx] = flux;
+
+    g.clearRect(0, 0, W, H);
+    const pad = 8 * dpr;
+    const specH = H * 0.52;
+    const waveH = H * 0.2;
+    const histH = H - specH - waveH - pad * 2;
+
+    // --- spectrum: 64 bands, log-ish palette, peak-hold caps -------------
+    const n = bands.length || 64;
+    const bw = (W - pad * 2) / n;
+    for (let i = 0; i < n; i++) {
+      const v = bands[i] ?? 0;
+      if (v > freqPeaks[i]) freqPeaks[i] = v;
+      else freqPeaks[i] = Math.max(0, freqPeaks[i] - dt * 0.35);
+      const h = v * (specH - pad);
+      const hue = 200 - (i / n) * 160; // cyan lows -> pink highs
+      g.fillStyle = `hsl(${hue} 85% ${35 + v * 30}%)`;
+      g.fillRect(pad + i * bw, specH - h, Math.max(bw - 1, 1), h);
+      const ph = freqPeaks[i] * (specH - pad);
+      g.fillStyle = "rgba(226, 232, 240, 0.8)";
+      g.fillRect(pad + i * bw, specH - ph - 1.5 * dpr, Math.max(bw - 1, 1), 1.5 * dpr);
+    }
+    g.fillStyle = "rgba(148, 163, 184, 0.75)";
+    g.font = `${9 * dpr}px ui-monospace, monospace`;
+    g.fillText("40 Hz", pad, specH + 10 * dpr);
+    g.fillText("16 kHz", W - pad - 34 * dpr, specH + 10 * dpr);
+
+    // --- waveform strip ---------------------------------------------------
+    const wy = specH + pad;
+    g.strokeStyle = "#7dd3fc";
+    g.lineWidth = 1.2 * dpr;
+    g.beginPath();
+    for (let j = 0; j < wave.length; j += 2) {
+      const x = pad + (j / (wave.length - 1)) * (W - pad * 2);
+      const y = wy + waveH * 0.5 + (wave[j] ?? 0) * waveH * 0.48;
+      if (j === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.stroke();
+
+    // --- beat env + flux history ------------------------------------------
+    const hy = wy + waveH + pad;
+    g.fillStyle = "rgba(148, 163, 184, 0.25)";
+    g.fillRect(pad, hy, W - pad * 2, 1);
+    for (let k = 0; k < beatHist.length; k++) {
+      const idx = (histIdx + 1 + k) % beatHist.length;
+      const x = pad + (k / (beatHist.length - 1)) * (W - pad * 2);
+      const bv = beatHist[idx];
+      const fv = fluxHist[idx];
+      if (fv > 0.01) {
+        g.fillStyle = "rgba(251, 191, 36, 0.55)";
+        g.fillRect(x, hy + histH - fv * histH, 1.5 * dpr, fv * histH);
+      }
+      if (bv > 0.01) {
+        g.fillStyle = "rgba(129, 140, 248, 0.9)";
+        g.fillRect(x, hy + histH - bv * histH, 1 * dpr, 2 * dpr);
+      }
+    }
+    g.fillStyle = "#a5b4fc";
+    g.fillText(
+      `beat/flux · bpm ${bpm.toFixed(0)} (${(bpmConf * 100).toFixed(0)}%)`,
+      pad,
+      hy + histH - 3 * dpr,
+    );
   }
 
   // Debug HUD (key: D) — written straight to the DOM at 4 Hz, same pattern
@@ -1616,43 +1856,257 @@ function startVisualizer(
     // bitmap is downscaled and CSS stretches it back up
     const dpr = effectiveDpr();
 
-    // translucent clear → motion trails (lower alpha = longer trails)
-    const trail = params.get(modeRef.current, "trail") || 0.35;
-    ctx.fillStyle = `rgba(7, 7, 12, ${trail.toFixed(2)})`;
-    ctx.fillRect(0, 0, w, h);
-
-    // subtle beat flash
-    if (beat > 0.05) {
-      ctx.fillStyle = `rgba(129, 140, 248, ${(beat * 0.06).toFixed(3)})`;
+    if (modeRef.current === "spektro") {
+      // the waterfall keeps its own history — no trail clear, no beat flash
+      drawSpectro(w, h, dpr);
+    } else {
+      // translucent clear → motion trails (lower alpha = longer trails)
+      const trail = params.get(modeRef.current, "trail") || 0.35;
+      ctx.fillStyle = `rgba(7, 7, 12, ${trail.toFixed(2)})`;
       ctx.fillRect(0, 0, w, h);
+
+      // subtle beat flash
+      if (beat > 0.05) {
+        ctx.fillStyle = `rgba(129, 140, 248, ${(beat * 0.06).toFixed(3)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      switch (modeRef.current) {
+        case "bars":
+          drawBars(w, h);
+          break;
+        case "radial":
+          drawRadial(w, h);
+          break;
+        case "scope":
+          drawScope(w, h, dpr);
+          break;
+        case "milkdrop":
+          break;
+      }
     }
 
-    switch (modeRef.current) {
-      case "bars":
-        drawBars(w, h);
-        break;
-      case "radial":
-        drawRadial(w, h);
-        break;
-      case "scope":
-        drawScope(w, h, dpr);
-        break;
-      case "milkdrop":
-        break;
+    if (params.get("ui", "showFps") >= 0.5) {
+      ctx.font = `${11 * dpr}px ui-monospace, Consolas, monospace`;
+      ctx.fillStyle = "rgba(226, 232, 240, 0.55)";
+      ctx.textBaseline = "bottom";
+      ctx.textAlign = "right";
+      ctx.fillText(
+        `${fps.toFixed(0)} fps  rms ${rms.toFixed(3)}`,
+        w - 12 * dpr,
+        h - 10 * dpr,
+      );
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
     }
+  }
 
-    // HUD text bottom-right
-    ctx.font = `${11 * dpr}px ui-monospace, Consolas, monospace`;
-    ctx.fillStyle = "rgba(226, 232, 240, 0.55)";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-    ctx.fillText(
-      `${fps.toFixed(0)} fps  rms ${rms.toFixed(3)}`,
-      w - 12 * dpr,
-      h - 10 * dpr,
+  // --- Spektrogramm (waterfall) ----------------------------------------
+  // Time scrolls right-to-left, frequency runs bottom (bass) to top. The
+  // canvas *is* the history buffer: every frame the existing picture is
+  // blitted a few pixels to the left and only the freshly freed column is
+  // painted. Optionally a live bar spectrum sits in a strip on the right,
+  // outside the scrolled region so it never smears into the history.
+
+  // Colour ramps as RGB stops, interpolated per sample. Every ramp starts at
+  // near-black so quiet passages stay dark and the loud parts pop — that
+  // contrast is what makes a spectrogram readable.
+  const SPECTRO_RAMPS: number[][][] = [
+    // inferno — black → purple → orange → pale yellow
+    [[0, 0, 4], [40, 11, 84], [120, 28, 109], [190, 55, 84], [237, 121, 83], [252, 255, 164]],
+    // ice — near-black blue → cyan → white
+    [[2, 4, 20], [10, 40, 90], [20, 110, 170], [60, 190, 220], [190, 240, 250], [255, 255, 255]],
+    // retro analyser — the old green/yellow/red bar colours
+    [[0, 6, 2], [0, 90, 20], [40, 180, 40], [210, 220, 40], [240, 140, 30], [250, 40, 40]],
+    // neon — violet → magenta → white
+    [[6, 0, 16], [60, 10, 90], [130, 20, 160], [220, 40, 180], [255, 120, 220], [255, 255, 255]],
+  ];
+
+  /** value 0..1 → [r, g, b] on the given ramp. */
+  function spectroRgb(v: number, ramp: number[][]): [number, number, number] {
+    const t = Math.min(1, Math.max(0, v)) * (ramp.length - 1);
+    const i = Math.min(ramp.length - 2, t | 0);
+    const f = t - i;
+    const a = ramp[i];
+    const b = ramp[i + 1];
+    return [
+      a[0] + (b[0] - a[0]) * f,
+      a[1] + (b[1] - a[1]) * f,
+      a[2] + (b[2] - a[2]) * f,
+    ];
+  }
+
+  /** Row y (device px, 0 = top) → band value, with optional bass stretch. */
+  function bandAtRow(y: number, h: number, n: number, tilt: number): number {
+    // 0 at the bottom (lowest frequency) … 1 at the top
+    const up = 1 - y / h;
+    const frac = tilt > 1.001 ? Math.pow(up, tilt) : up;
+    const pos = frac * (n - 1);
+    const i = Math.min(n - 2, Math.floor(pos));
+    const f = pos - i;
+    return (bands[i] ?? 0) * (1 - f) + (bands[i + 1] ?? 0) * f;
+  }
+
+  function drawSpectro(w: number, h: number, dpr: number) {
+    const n = bands.length || 64;
+    const step = Math.max(1, Math.round(params.get("spektro", "speed") * dpr));
+    const contrast = params.get("spektro", "contrast");
+    const floor = params.get("spektro", "floor");
+    const tilt = params.get("spektro", "tilt");
+    const palette = params.get("spektro", "palette") | 0;
+    const barsOn = params.get("spektro", "bars") >= 0.5;
+
+    const gridOn = params.get("spektro", "grid") >= 0.5;
+    const barW = barsOn ? Math.min(w * 0.22, 240 * dpr) : 0;
+    // the axis labels need a strip of their own — anything painted into the
+    // scrolled region would be dragged along and smear
+    const axisW = gridOn ? Math.round(Math.min(w * 0.08, 46 * dpr)) : 0;
+    const wfW = Math.max(1, Math.round(w - barW));
+    if (wfW - axisW <= step) return; // too narrow to scroll — nothing sensible to draw
+
+    // shift the history left by one step, then paint the freed column
+    ctx.drawImage(
+      canvas,
+      axisW + step, 0, wfW - axisW - step, h,
+      axisW, 0, wfW - axisW - step, h,
     );
+
+    // The fresh column is built as pixels rather than ~1000 fillRect calls —
+    // same picture, a fraction of the per-frame cost.
+    const colX = wfW - step;
+    if (!spectroCol || spectroCol.width !== step || spectroCol.height !== h) {
+      spectroCol = ctx.createImageData(step, h);
+    }
+    const px = spectroCol.data;
+    const ramp = SPECTRO_RAMPS[palette] ?? SPECTRO_RAMPS[0];
+    // Gridlines are blended into the column and then scroll along with the
+    // data — drawing them across the history every frame would instead pile
+    // alpha onto the same rows until they turned solid.
+    const gridRows = gridOn ? spectroGridRows(h, tilt) : null;
+    for (let y = 0; y < h; y++) {
+      const raw = bandAtRow(y, h, n, tilt);
+      const v = raw <= floor ? 0 : Math.min(1, (raw - floor) * contrast);
+      let [r, g, b] = spectroRgb(v, ramp);
+      if (gridRows?.has(y)) {
+        r += (226 - r) * 0.22;
+        g += (232 - g) * 0.22;
+        b += (240 - b) * 0.22;
+      }
+      for (let dx = 0; dx < step; dx++) {
+        const o = (y * step + dx) * 4;
+        px[o] = r;
+        px[o + 1] = g;
+        px[o + 2] = b;
+        px[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(spectroCol, colX, 0);
+
+    // beat marker: one tick per beat (rising edge — a level test would smear
+    // a stripe across every frame the envelope stays high)
+    if (beat > 0.6 && prevSpectroBeat <= 0.6) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
+      ctx.fillRect(colX, 0, Math.max(1, Math.round(step * 0.4)), h);
+    }
+    prevSpectroBeat = beat;
+
+    if (gridOn) drawSpectroAxis(axisW, h, dpr, tilt);
+    if (barsOn) drawSpectroBars(wfW, w, h, dpr, n, tilt, contrast, floor, palette);
+  }
+
+  const SPECTRO_MARKS = [100, 250, 500, 1000, 2000, 4000, 8000];
+
+  /** Row of each labelled frequency — inverse of the band mapping. */
+  function spectroRow(f: number, h: number, tilt: number): number {
+    const F_MIN = 40;
+    const F_MAX = 16000;
+    const up = Math.log(f / F_MIN) / Math.log(F_MAX / F_MIN);
+    const frac = tilt > 1.001 ? Math.pow(up, 1 / tilt) : up;
+    return Math.round((1 - frac) * h);
+  }
+
+  let gridRowCache = { h: 0, tilt: -1, rows: new Set<number>() };
+  function spectroGridRows(h: number, tilt: number): Set<number> {
+    if (gridRowCache.h !== h || gridRowCache.tilt !== tilt) {
+      const rows = new Set<number>();
+      for (const f of SPECTRO_MARKS) rows.add(spectroRow(f, h, tilt));
+      gridRowCache = { h, tilt, rows };
+    }
+    return gridRowCache.rows;
+  }
+
+  /** Frequency scale in its own strip on the left, repainted every frame. */
+  function drawSpectroAxis(axisW: number, h: number, dpr: number, tilt: number) {
+    ctx.fillStyle = "#07070c";
+    ctx.fillRect(0, 0, axisW, h);
+    ctx.font = `${9 * dpr}px ui-monospace, Consolas, monospace`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "right";
+    for (const f of SPECTRO_MARKS) {
+      const y = spectroRow(f, h, tilt);
+      ctx.fillStyle = "rgba(226, 232, 240, 0.3)";
+      ctx.fillRect(axisW - 4 * dpr, y, 4 * dpr, 1);
+      ctx.fillStyle = "rgba(226, 232, 240, 0.55)";
+      ctx.fillText(
+        f >= 1000 ? `${f / 1000}k` : String(f),
+        axisW - 6 * dpr,
+        y,
+      );
+    }
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
+  }
+
+  /** Live spectrum as horizontal bars in the right-hand strip — the classic
+   *  analyser feeding the waterfall. Fully repainted every frame. */
+  const spectroPeaks = new Float32Array(4096);
+  function drawSpectroBars(
+    wfW: number,
+    w: number,
+    h: number,
+    dpr: number,
+    n: number,
+    tilt: number,
+    contrast: number,
+    floor: number,
+    palette: number,
+  ) {
+    const strip = w - wfW;
+    const ramp = SPECTRO_RAMPS[palette] ?? SPECTRO_RAMPS[0];
+    ctx.fillStyle = "#07070c";
+    ctx.fillRect(wfW, 0, strip, h);
+
+    // separator between history and live bars
+    ctx.fillStyle = "rgba(148, 163, 184, 0.25)";
+    ctx.fillRect(wfW, 0, Math.max(1, dpr), h);
+
+    const rowH = Math.max(2 * dpr, h / 96);
+    const rows = Math.floor(h / rowH);
+    const gap = rowH > 4 * dpr ? Math.max(1, dpr) : 0;
+    const maxLen = strip - 2 * dpr;
+
+    for (let r = 0; r < rows; r++) {
+      const y = r * rowH;
+      const raw = bandAtRow(y + rowH * 0.5, h, n, tilt);
+      const v = raw <= floor ? 0 : Math.min(1, (raw - floor) * contrast);
+
+      // peak hold decays slowly, like the caps on the bars visualization
+      spectroPeaks[r] = Math.max(v, (spectroPeaks[r] ?? 0) - 0.012);
+
+      const len = v * maxLen;
+      if (len >= 1) {
+        // bars read at a glance, so they take the bright end of the ramp
+        const [cr, cg, cb] = spectroRgb(0.45 + v * 0.55, ramp);
+        ctx.fillStyle = `rgb(${cr | 0} ${cg | 0} ${cb | 0})`;
+        // anchored at the right edge, growing toward the waterfall
+        ctx.fillRect(w - len, y, len, rowH - gap);
+      }
+      const pk = spectroPeaks[r] * maxLen;
+      if (pk >= 2) {
+        ctx.fillStyle = "rgba(248, 250, 252, 0.7)";
+        ctx.fillRect(w - pk, y, Math.max(1, dpr), rowH - gap);
+      }
+    }
   }
 
   function drawBars(w: number, h: number) {

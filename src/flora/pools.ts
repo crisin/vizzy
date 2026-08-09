@@ -148,3 +148,11 @@ export function spineGeometry(): THREE.BufferGeometry {
   g.translate(0, 0.5, 0);
   return g;
 }
+
+/** Unit cactus pad: sphere, slightly egg-shaped; per-instance radius comes
+ *  from aScale, ribs from the shader. */
+export function padGeometry(): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(1, 20, 14);
+  g.scale(1, 1.15, 1);
+  return g;
+}
