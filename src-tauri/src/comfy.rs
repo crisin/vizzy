@@ -94,11 +94,16 @@ pub async fn ping(url: &str) -> Result<String, String> {
     Ok(format!("ComfyUI {comfy} · {device}"))
 }
 
-/// Upload an image, run the workflow over it, return the first output image.
+/// Upload an image, run the workflow over it, return every output image.
 ///
 /// `image_b64` is the raw file, base64-encoded: Tauri's IPC takes a JSON
 /// payload here, and a `Vec<u8>` would travel as a JSON array of numbers —
 /// several times larger than the base64 it replaces.
+///
+/// The results come back the other way as one blob, framed as
+/// `[u32 count][u32 len]*count[bytes]*count`, all little-endian. A depth bake
+/// returns one image and a variant bake a dozen; base64-ing a dozen PNGs
+/// through JSON would cost more than the framing is worth.
 #[tauri::command]
 pub async fn comfy_bake(
     url: String,
@@ -109,18 +114,37 @@ pub async fn comfy_bake(
     let bytes = B64
         .decode(image_b64.as_bytes())
         .map_err(|e| format!("Bild ließ sich nicht dekodieren: {e}"))?;
-    let out = bake(&url, &workflow, bytes, &filename).await?;
-    Ok(tauri::ipc::Response::new(out))
+    let images = bake(&url, &workflow, bytes, &filename).await?;
+    Ok(tauri::ipc::Response::new(frame_images(&images)))
+}
+
+/// `[u32 count][u32 len]*count[payload]*count`, little-endian.
+fn frame_images(images: &[Vec<u8>]) -> Vec<u8> {
+    let total: usize =
+        4 + images.len() * 4 + images.iter().map(|i| i.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&(images.len() as u32).to_le_bytes());
+    for img in images {
+        out.extend_from_slice(&(img.len() as u32).to_le_bytes());
+    }
+    for img in images {
+        out.extend_from_slice(img);
+    }
+    out
 }
 
 /// The bake itself, free of Tauri types so it can be driven from a test
 /// against a stand-in ComfyUI (see `tests/comfy_mock.rs`).
+///
+/// Returns the images in the order the workflow saved them, which for a
+/// batched sampler is the batch order — that is what the morph grid reads as
+/// its control-surface order.
 pub async fn bake(
     url: &str,
     workflow: &str,
     bytes: Vec<u8>,
     filename: &str,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<Vec<u8>>, String> {
     let base = base(url);
     let http = client()?;
 
@@ -191,26 +215,34 @@ pub async fn bake(
         .prompt_id
         .ok_or_else(|| "ComfyUI lieferte keine prompt_id".to_string())?;
 
-    // 3. wait for it, then fetch the first image the workflow saved
-    let output = poll_history(&http, &base, &prompt_id).await?;
-    let view = http
-        .get(format!("{base}/view"))
-        .query(&[
-            ("filename", output.filename.as_str()),
-            ("subfolder", output.subfolder.as_str()),
-            ("type", output.kind.as_str()),
-        ])
-        .send()
-        .await
-        .map_err(|e| format!("Ergebnis-Download fehlgeschlagen: {e}"))?;
-    if !view.status().is_success() {
-        return Err(format!("Ergebnis-Download: HTTP {}", view.status()));
+    // 3. wait for it, then fetch everything the workflow saved
+    let outputs = poll_history(&http, &base, &prompt_id).await?;
+    let mut images = Vec::with_capacity(outputs.len());
+    for output in &outputs {
+        let view = http
+            .get(format!("{base}/view"))
+            .query(&[
+                ("filename", output.filename.as_str()),
+                ("subfolder", output.subfolder.as_str()),
+                ("type", output.kind.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("Ergebnis-Download fehlgeschlagen: {e}"))?;
+        if !view.status().is_success() {
+            return Err(format!(
+                "Ergebnis-Download ({}): HTTP {}",
+                output.filename,
+                view.status()
+            ));
+        }
+        let data = view
+            .bytes()
+            .await
+            .map_err(|e| format!("Ergebnis unvollständig: {e}"))?;
+        images.push(data.to_vec());
     }
-    let data = view
-        .bytes()
-        .await
-        .map_err(|e| format!("Ergebnis unvollständig: {e}"))?;
-    Ok(data.to_vec())
+    Ok(images)
 }
 
 struct OutputRef {
@@ -223,7 +255,7 @@ async fn poll_history(
     http: &reqwest::Client,
     base: &str,
     prompt_id: &str,
-) -> Result<OutputRef, String> {
+) -> Result<Vec<OutputRef>, String> {
     let deadline = std::time::Instant::now() + JOB_TIMEOUT;
     loop {
         if std::time::Instant::now() > deadline {
@@ -261,41 +293,59 @@ async fn poll_history(
             }
         }
 
-        if let Some(found) = first_image(entry) {
+        let found = all_images(entry);
+        if !found.is_empty() {
             return Ok(found);
         }
         // entry present but no images yet — keep waiting
     }
 }
 
-/// First image across all output nodes. Node ids are strings and their order
-/// in the map is arbitrary, so a workflow that saves more than one image has
-/// no defined winner — which is why the default template saves exactly one.
-fn first_image(entry: &serde_json::Value) -> Option<OutputRef> {
-    let outputs = entry.get("outputs")?.as_object()?;
-    for (_node, value) in outputs {
-        let images = value.get("images").and_then(|i| i.as_array());
-        let Some(images) = images else { continue };
+/// Every image the run saved, in a stable order.
+///
+/// Order is the whole point for a variant bake: it becomes the morph grid's
+/// control surface, where cell 1 and cell 9 are opposite corners. Within one
+/// save node the array is already the batch order; across several save nodes
+/// the map keys are node ids, so they are sorted numerically — "10" would
+/// otherwise sort before "3".
+fn all_images(entry: &serde_json::Value) -> Vec<OutputRef> {
+    let Some(outputs) = entry.get("outputs").and_then(|o| o.as_object()) else {
+        return Vec::new();
+    };
+    let mut nodes: Vec<(&String, &serde_json::Value)> = outputs.iter().collect();
+    nodes.sort_by_key(|(id, _)| {
+        (id.parse::<u64>().unwrap_or(u64::MAX), (*id).clone())
+    });
+
+    let mut out = Vec::new();
+    for (_node, value) in nodes {
+        let Some(images) = value.get("images").and_then(|i| i.as_array()) else {
+            continue;
+        };
         for img in images {
-            let filename = img.get("filename")?.as_str()?.to_string();
-            let subfolder = img
-                .get("subfolder")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let Some(filename) = img.get("filename").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            // ComfyUI also lists previews here; those are not the result
             let kind = img
                 .get("type")
                 .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            return Some(OutputRef {
-                filename,
-                subfolder,
-                kind,
+                .unwrap_or("output");
+            if kind == "temp" {
+                continue;
+            }
+            out.push(OutputRef {
+                filename: filename.to_string(),
+                subfolder: img
+                    .get("subfolder")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                kind: kind.to_string(),
             });
         }
     }
-    None
+    out
 }
 
 /// Keep the uploaded name tame: it becomes a path inside ComfyUI's input
@@ -361,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn first_image_reads_the_history_shape() {
+    fn all_images_reads_the_history_shape() {
         let entry = serde_json::json!({
             "outputs": {
                 "9": { "images": [
@@ -369,16 +419,54 @@ mod tests {
                 ]}
             }
         });
-        let got = first_image(&entry).expect("an image");
-        assert_eq!(got.filename, "d_00001_.png");
-        assert_eq!(got.kind, "output");
+        let got = all_images(&entry);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].filename, "d_00001_.png");
+        assert_eq!(got[0].kind, "output");
     }
 
     #[test]
-    fn first_image_ignores_nodes_without_images() {
+    fn all_images_ignores_nodes_without_images_and_previews() {
         let entry = serde_json::json!({
-            "outputs": { "7": { "text": ["nope"] } }
+            "outputs": {
+                "7": { "text": ["nope"] },
+                "8": { "images": [
+                    { "filename": "preview.png", "subfolder": "", "type": "temp" }
+                ]}
+            }
         });
-        assert!(first_image(&entry).is_none());
+        assert!(all_images(&entry).is_empty());
+    }
+
+    /// A variant bake's order *is* the control surface, so it has to survive
+    /// both the batch array and node ids that do not sort as strings.
+    #[test]
+    fn all_images_keeps_batch_order_and_sorts_nodes_numerically() {
+        let img = |n: &str| {
+            serde_json::json!({ "filename": n, "subfolder": "", "type": "output" })
+        };
+        let entry = serde_json::json!({
+            "outputs": {
+                "10": { "images": [img("second.png")] },
+                "3":  { "images": [img("a.png"), img("b.png"), img("c.png")] }
+            }
+        });
+        let names: Vec<_> = all_images(&entry)
+            .into_iter()
+            .map(|o| o.filename)
+            .collect();
+        assert_eq!(names, ["a.png", "b.png", "c.png", "second.png"]);
+    }
+
+    #[test]
+    fn framing_round_trips() {
+        let images = vec![vec![1u8, 2, 3], vec![], vec![9u8; 300]];
+        let blob = frame_images(&images);
+        assert_eq!(&blob[0..4], &3u32.to_le_bytes());
+        assert_eq!(&blob[4..8], &3u32.to_le_bytes());
+        assert_eq!(&blob[8..12], &0u32.to_le_bytes());
+        assert_eq!(&blob[12..16], &300u32.to_le_bytes());
+        assert_eq!(blob.len(), 4 + 12 + 3 + 0 + 300);
+        assert_eq!(&blob[16..19], &[1, 2, 3]);
     }
 }

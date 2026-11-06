@@ -43,8 +43,86 @@ export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
   2,
 );
 
+/**
+ * Variant bake for the morph grid: N takes on the same picture.
+ *
+ * Core nodes only — `RepeatLatentBatch` copies the encoded image N times and
+ * the sampler gives each batch index its own noise, so one run yields N
+ * images that share the composition and differ in detail. That is the part
+ * the morph grid needs, and it works on a bare ComfyUI with no custom nodes.
+ *
+ * What it does *not* give you is a meaningful order. The grid's axes read
+ * left-to-right as timbre and top-to-bottom as energy, and batch noise is
+ * unordered — so the surface will be coherent but arbitrary. For axes that
+ * mean something, vary a prompt weight or an IP-Adapter weight per output
+ * instead; that is install-specific, which is why it is not the default.
+ *
+ * `ckpt_name` has to match a checkpoint you actually have.
+ */
+export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
+  {
+    "1": {
+      class_type: "LoadImage",
+      inputs: { image: IMAGE_TOKEN, upload: "image" },
+    },
+    "2": {
+      class_type: "CheckpointLoaderSimple",
+      inputs: { ckpt_name: "sd_xl_base_1.0.safetensors" },
+    },
+    "3": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: ["2", 1], text: "same scene, shifting mood and light" },
+    },
+    "4": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: ["2", 1], text: "text, watermark, blurry" },
+    },
+    "5": {
+      class_type: "VAEEncode",
+      inputs: { pixels: ["1", 0], vae: ["2", 2] },
+    },
+    "6": {
+      class_type: "RepeatLatentBatch",
+      inputs: { samples: ["5", 0], amount: 9 },
+    },
+    "7": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["2", 0],
+        positive: ["3", 0],
+        negative: ["4", 0],
+        latent_image: ["6", 0],
+        seed: 1234,
+        steps: 20,
+        cfg: 6,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        // low enough that the composition survives, high enough to differ
+        denoise: 0.45,
+      },
+    },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["2", 2] } },
+    "9": {
+      class_type: "SaveImage",
+      inputs: { images: ["8", 0], filename_prefix: "vizzy_variant" },
+    },
+  },
+  null,
+  2,
+);
+
+export type BakeKind = "depth" | "variants";
+
 const URL_KEY = "vizzy.comfy.url";
-const WORKFLOW_KEY = "vizzy.comfy.workflow.depth";
+const WORKFLOW_KEY: Record<BakeKind, string> = {
+  depth: "vizzy.comfy.workflow.depth",
+  variants: "vizzy.comfy.workflow.variants",
+};
+
+export const DEFAULT_WORKFLOW: Record<BakeKind, string> = {
+  depth: DEFAULT_DEPTH_WORKFLOW,
+  variants: DEFAULT_VARIANT_WORKFLOW,
+};
 
 export function loadComfyUrl(): string {
   try {
@@ -62,20 +140,20 @@ export function saveComfyUrl(url: string) {
   }
 }
 
-export function loadDepthWorkflow(): string {
+export function loadWorkflow(kind: BakeKind): string {
   try {
-    return localStorage.getItem(WORKFLOW_KEY) || DEFAULT_DEPTH_WORKFLOW;
+    return localStorage.getItem(WORKFLOW_KEY[kind]) || DEFAULT_WORKFLOW[kind];
   } catch {
-    return DEFAULT_DEPTH_WORKFLOW;
+    return DEFAULT_WORKFLOW[kind];
   }
 }
 
-export function saveDepthWorkflow(json: string) {
+export function saveWorkflow(kind: BakeKind, json: string) {
   try {
-    if (json.trim() === DEFAULT_DEPTH_WORKFLOW.trim()) {
-      localStorage.removeItem(WORKFLOW_KEY);
+    if (json.trim() === DEFAULT_WORKFLOW[kind].trim()) {
+      localStorage.removeItem(WORKFLOW_KEY[kind]);
     } else {
-      localStorage.setItem(WORKFLOW_KEY, json);
+      localStorage.setItem(WORKFLOW_KEY[kind], json);
     }
   } catch {
     // see above
@@ -88,22 +166,48 @@ export function comfyPing(url: string): Promise<string> {
 }
 
 /**
- * Run `workflow` over `image` and return the first image it saved.
+ * Run `workflow` over `image` and return every image it saved, in order.
  *
- * The bytes travel as base64: Tauri's IPC payload is JSON, where a byte array
- * would be serialised as a list of numbers — several times the size.
+ * The input travels as base64 — Tauri's IPC payload is JSON, where a byte
+ * array becomes a list of numbers, several times the size. The results come
+ * back framed as `[u32 count][u32 len]*count[bytes]*count` (little-endian),
+ * which keeps a nine-frame variant bake out of JSON entirely.
  */
 export async function comfyBake(
   url: string,
   workflow: string,
   image: ArrayBuffer,
   filename: string,
-): Promise<ArrayBuffer> {
-  return invoke<ArrayBuffer>("comfy_bake", {
+): Promise<ArrayBuffer[]> {
+  const blob = await invoke<ArrayBuffer>("comfy_bake", {
     url,
     workflow,
     imageB64: toBase64(image),
     filename,
+  });
+  return unframe(blob);
+}
+
+/** Exported for the wire-format check against `frame_images` in comfy.rs. */
+export function unframe(blob: ArrayBuffer): ArrayBuffer[] {
+  if (blob.byteLength < 4) throw new Error("Leere Antwort von ComfyUI");
+  const view = new DataView(blob);
+  const count = view.getUint32(0, true);
+  const lengths: number[] = [];
+  for (let i = 0; i < count; i++) {
+    lengths.push(view.getUint32(4 + i * 4, true));
+  }
+  let offset = 4 + count * 4;
+  const expected = lengths.reduce((n, l) => n + l, offset);
+  if (expected !== blob.byteLength) {
+    throw new Error(
+      `Antwort unvollständig: ${blob.byteLength} statt ${expected} Bytes`,
+    );
+  }
+  return lengths.map((len) => {
+    const slice = blob.slice(offset, offset + len);
+    offset += len;
+    return slice;
   });
 }
 

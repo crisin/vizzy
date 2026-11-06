@@ -39,6 +39,7 @@ import {
 } from "./imageStore";
 import type { ParallaxAsset } from "./parallax";
 import type { MorphAsset } from "./morph";
+import { gridFor } from "./morph";
 import {
   MAX_FRAMES,
   addMorphSet,
@@ -54,9 +55,10 @@ import { ComfyPanel, type BakeState } from "./ComfyPanel";
 import {
   comfyBake,
   loadComfyUrl,
-  loadDepthWorkflow,
+  loadWorkflow,
   saveComfyUrl,
-  saveDepthWorkflow,
+  saveWorkflow,
+  type BakeKind,
 } from "./comfy";
 import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
@@ -359,8 +361,12 @@ function App() {
   const [morphSets, setMorphSets] = useState<MorphMeta[]>([]);
   const [selectedMorphId, setSelectedMorphId] = useState<number | null>(null);
   const [comfyOpen, setComfyOpen] = useState(false);
+  const [bakeKind, setBakeKind] = useState<BakeKind>("depth");
   const [comfyUrl, setComfyUrl] = useState(loadComfyUrl);
-  const [depthWorkflow, setDepthWorkflow] = useState(loadDepthWorkflow);
+  const [workflows, setWorkflows] = useState<Record<BakeKind, string>>(() => ({
+    depth: loadWorkflow("depth"),
+    variants: loadWorkflow("variants"),
+  }));
   const [bakeState, setBakeState] = useState<BakeState>({ kind: "idle" });
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
@@ -1019,7 +1025,7 @@ function App() {
    * Push the selected image through ComfyUI and keep the result as its depth
    * map. Runs once per picture — the scene itself never touches ComfyUI.
    */
-  const bakeDepth = useCallback(async () => {
+  const runBake = useCallback(async () => {
     if (selectedImageId == null) return;
     if (!inTauri) {
       setBakeState({
@@ -1033,30 +1039,88 @@ function App() {
     try {
       const record = await getImage(selectedImageId);
       if (!record) throw new Error("Bild ist nicht mehr in der Library");
-      const depth = await comfyBake(
+      const out = await comfyBake(
         comfyUrl,
-        depthWorkflow,
+        workflows[bakeKind],
         record.image,
         record.name,
       );
-      if (depth.byteLength === 0) {
-        throw new Error("ComfyUI lieferte ein leeres Bild zurück");
+      if (out.length === 0 || out[0].byteLength === 0) {
+        throw new Error("ComfyUI lieferte kein Bild zurück");
       }
-      const updated = await setImageDepth(selectedImageId, depth, "image/png");
-      if (!updated) throw new Error("Tiefenkarte ließ sich nicht speichern");
-      queueImage(updated); // the scene picks it up on the next frame
-      refreshImages();
       const secs = ((performance.now() - started) / 1000).toFixed(1);
+      const kb = Math.round(
+        out.reduce((n, b) => n + b.byteLength, 0) / 1024,
+      );
+
+      if (bakeKind === "depth") {
+        const updated = await setImageDepth(
+          selectedImageId,
+          out[0],
+          "image/png",
+        );
+        if (!updated) throw new Error("Tiefenkarte ließ sich nicht speichern");
+        queueImage(updated); // the scene picks it up on the next frame
+        refreshImages();
+        setBakeState({
+          kind: "ok",
+          msg: `${kb} KB in ${secs}s — die Parallax-Szene läuft schon darauf.`,
+        });
+        flog(`[comfy] depth baked for ${record.name} in ${secs}s`);
+        return;
+      }
+
+      // variants: the run's output order becomes the morph control surface
+      const frames = out.slice(0, MAX_FRAMES);
+      const name = `${record.name} ×${frames.length}`;
+      const id = await addMorphSet(name, frames, "image/png");
+      setSelectedMorphId(id);
+      queueMorph({
+        name,
+        frames,
+        frameType: "image/png",
+        size: kb * 1024,
+        addedAt: Date.now(),
+      });
+      refreshMorphSets();
+      setScene3d("morph");
+      const { cols, rows } = gridFor(frames.length);
       setBakeState({
         kind: "ok",
-        msg: `${Math.round(depth.byteLength / 1024)} KB in ${secs}s — die Szene läuft schon darauf.`,
+        msg:
+          `${frames.length} Varianten in ${secs}s → ${cols}×${rows}-Raster.` +
+          (out.length > MAX_FRAMES
+            ? ` (${out.length - MAX_FRAMES} verworfen, Maximum ${MAX_FRAMES})`
+            : ""),
       });
-      flog(`[comfy] depth baked for ${record.name} in ${secs}s`);
+      flog(
+        `[comfy] ${frames.length} variants baked from ${record.name} in ${secs}s`,
+      );
+      try {
+        const { morphThumb } = await import("./morph");
+        const bitmap = await createImageBitmap(
+          new Blob([frames[0]], { type: "image/png" }),
+        );
+        await updateMorphThumb(id, morphThumb(bitmap));
+        bitmap.close();
+        refreshMorphSets();
+      } catch {
+        // preview is optional
+      }
     } catch (err) {
       setBakeState({ kind: "error", msg: String(err) });
       flog(`[comfy] bake FAILED: ${err}`);
     }
-  }, [selectedImageId, comfyUrl, depthWorkflow, queueImage, refreshImages]);
+  }, [
+    selectedImageId,
+    comfyUrl,
+    workflows,
+    bakeKind,
+    queueImage,
+    refreshImages,
+    queueMorph,
+    refreshMorphSets,
+  ]);
 
   // Restore the model library + last selection (also in browser demo mode).
   const modelRestoredRef = useRef(false);
@@ -1696,6 +1760,7 @@ function App() {
                   className="mode-btn"
                   disabled={selectedImageId == null}
                   onClick={() => {
+                    setBakeKind("depth");
                     setBakeState({ kind: "idle" });
                     setComfyOpen(true);
                   }}
@@ -1743,6 +1808,23 @@ function App() {
                   title={`Varianten laden — mehrere Bilder auf einmal, nach Dateiname sortiert (max. ${MAX_FRAMES}). Gleicher Seed, variierende Stimmung.`}
                 >
                   Varianten +
+                </button>
+                <button
+                  type="button"
+                  className="mode-btn"
+                  disabled={selectedImageId == null}
+                  onClick={() => {
+                    setBakeKind("variants");
+                    setBakeState({ kind: "idle" });
+                    setComfyOpen(true);
+                  }}
+                  title={
+                    selectedImageId == null
+                      ? "Quellbild fehlt — erst „Bild +“ in der Parallax-Szene laden"
+                      : "Varianten aus dem Parallax-Bild in ComfyUI backen"
+                  }
+                >
+                  {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
                 </button>
                 {selectedMorphId != null && (
                   <button
@@ -1859,21 +1941,26 @@ function App() {
       {routingOpen && <RoutingModal onClose={() => setRoutingOpen(false)} />}
       {comfyOpen && (
         <ComfyPanel
+          kind={bakeKind}
+          onKindChange={(k) => {
+            setBakeKind(k);
+            setBakeState({ kind: "idle" });
+          }}
           url={comfyUrl}
           onUrlChange={(u) => {
             setComfyUrl(u);
             saveComfyUrl(u);
           }}
-          workflow={depthWorkflow}
+          workflow={workflows[bakeKind]}
           onWorkflowChange={(json) => {
-            setDepthWorkflow(json);
-            saveDepthWorkflow(json);
+            setWorkflows((prev) => ({ ...prev, [bakeKind]: json }));
+            saveWorkflow(bakeKind, json);
           }}
           imageName={
             images.find((i) => i.id === selectedImageId)?.name ?? null
           }
           bake={bakeState}
-          onBake={() => void bakeDepth()}
+          onBake={() => void runBake()}
           onClose={() => setComfyOpen(false)}
         />
       )}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDialogFocus } from "./useDialogFocus";
-import { DEFAULT_DEPTH_WORKFLOW, IMAGE_TOKEN, comfyPing } from "./comfy";
+import { DEFAULT_WORKFLOW, IMAGE_TOKEN, comfyPing, type BakeKind } from "./comfy";
 
 export type BakeState =
   | { kind: "idle" }
@@ -8,7 +8,36 @@ export type BakeState =
   | { kind: "ok"; msg: string }
   | { kind: "error"; msg: string };
 
+const COPY: Record<
+  BakeKind,
+  { title: string; label: string; hint: string; button: string }
+> = {
+  depth: {
+    title: "Tiefenkarte backen",
+    label: "Workflow — Tiefenkarte",
+    hint:
+      "Die erste gespeicherte Ausgabe wird als Tiefenkarte des Bildes übernommen. " +
+      "Der Standard braucht die Custom Nodes comfyui_controlnet_aux — fehlen sie, " +
+      "tausch den mittleren Knoten gegen deinen eigenen Tiefen-Schätzer.",
+    button: "Tiefenkarte backen",
+  },
+  variants: {
+    title: "Varianten backen",
+    label: "Workflow — Varianten",
+    hint:
+      "Alle gespeicherten Ausgaben werden in ihrer Reihenfolge zu einem Morph-Satz. " +
+      "Der Standard kommt mit Core Nodes aus (RepeatLatentBatch + img2img bei " +
+      "denoise 0.45): neun Varianten, die sich die Komposition teilen. Die " +
+      "Reihenfolge ist dabei allerdings beliebig — für Achsen, die wirklich " +
+      "etwas bedeuten, muss pro Ausgabe ein Prompt- oder IP-Adapter-Gewicht " +
+      "variieren. Passe ckpt_name an ein Checkpoint an, das du hast.",
+    button: "Varianten backen",
+  },
+};
+
 export function ComfyPanel({
+  kind,
+  onKindChange,
   url,
   onUrlChange,
   workflow,
@@ -18,16 +47,19 @@ export function ComfyPanel({
   onBake,
   onClose,
 }: {
+  kind: BakeKind;
+  onKindChange: (kind: BakeKind) => void;
   url: string;
   onUrlChange: (url: string) => void;
   workflow: string;
   onWorkflowChange: (json: string) => void;
-  /** currently selected parallax image, or null when none is loaded */
+  /** currently selected parallax image — the source for both bakes */
   imageName: string | null;
   bake: BakeState;
   onBake: () => void;
   onClose: () => void;
 }) {
+  const copy = COPY[kind];
   const dialogRef = useDialogFocus<HTMLDivElement>();
   const [ping, setPing] = useState<BakeState>({ kind: "idle" });
 
@@ -62,7 +94,7 @@ export function ComfyPanel({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h2 id="comfy-title">Tiefenkarte backen</h2>
+          <h2 id="comfy-title">{copy.title}</h2>
           <button
             type="button"
             className="mode-btn"
@@ -70,6 +102,27 @@ export function ComfyPanel({
             title="Schließen (Esc)"
           >
             Schließen
+          </button>
+        </div>
+
+        <div className="comfy-row" role="group" aria-label="Was gebacken wird">
+          <button
+            type="button"
+            className={`mode-btn ${kind === "depth" ? "active" : ""}`}
+            onClick={() => onKindChange("depth")}
+            aria-pressed={kind === "depth"}
+            disabled={busy}
+          >
+            Tiefenkarte → Parallax
+          </button>
+          <button
+            type="button"
+            className={`mode-btn ${kind === "variants" ? "active" : ""}`}
+            onClick={() => onKindChange("variants")}
+            aria-pressed={kind === "variants"}
+            disabled={busy}
+          >
+            Varianten → Morph-Grid
           </button>
         </div>
 
@@ -105,15 +158,11 @@ export function ComfyPanel({
 
         <div className="comfy-field">
           <label className="set-field-label" htmlFor="comfy-workflow">
-            Workflow (ComfyUI-API-Format)
+            {copy.label} (ComfyUI-API-Format)
           </label>
           <p className="set-hint">
             In ComfyUI über „Export (API)“ erzeugt. Der Platzhalter{" "}
-            <code>{IMAGE_TOKEN}</code> markiert das Eingangsbild; die erste
-            gespeicherte Ausgabe wird als Tiefenkarte übernommen. Der
-            Standard-Workflow braucht die Custom Nodes{" "}
-            <code>comfyui_controlnet_aux</code> — fehlen sie, tausch den
-            mittleren Knoten gegen deinen eigenen Tiefen-Schätzer.
+            <code>{IMAGE_TOKEN}</code> markiert das Eingangsbild. {copy.hint}
           </p>
           <textarea
             id="comfy-workflow"
@@ -127,8 +176,8 @@ export function ComfyPanel({
             <button
               type="button"
               className="mode-btn"
-              onClick={() => onWorkflowChange(DEFAULT_DEPTH_WORKFLOW)}
-              disabled={workflow.trim() === DEFAULT_DEPTH_WORKFLOW.trim()}
+              onClick={() => onWorkflowChange(DEFAULT_WORKFLOW[kind])}
+              disabled={workflow.trim() === DEFAULT_WORKFLOW[kind].trim()}
             >
               Auf Standard zurücksetzen
             </button>
@@ -152,16 +201,16 @@ export function ComfyPanel({
               disabled={busy || !imageName || !workflowValid || !hasToken}
               title={
                 imageName
-                  ? `Tiefenkarte für ${imageName} backen`
+                  ? `${copy.button} — Quelle: ${imageName}`
                   : "Erst ein Bild in die Parallax-Szene laden"
               }
             >
-              {busy ? "backt…" : "Backen"}
+              {busy ? "backt…" : copy.button}
             </button>
             <span className="set-hint">
               {imageName
-                ? `Bild: ${imageName}`
-                : "Kein Bild geladen — erst „Bild +“ in der Parallax-Szene."}
+                ? `Quellbild: ${imageName}`
+                : "Kein Quellbild — erst „Bild +“ in der Parallax-Szene laden."}
             </span>
           </div>
           {bake.kind === "running" && (

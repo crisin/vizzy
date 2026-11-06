@@ -23,9 +23,10 @@ DEPTH_PNG = bytes.fromhex(
     "3c0000000049454e44ae426082"
 )
 
-# prompt_id -> how many /history polls are still answered as "not there yet",
+# prompt_id -> [polls still answered as "not there yet", images the run saved]
 # so the client's polling loop is actually exercised
 PENDING = {}
+BATCH = {}
 UPLOADS = {}
 LOCK = threading.Lock()
 
@@ -63,29 +64,31 @@ class Handler(BaseHTTPRequestHandler):
                 if left > 0:
                     PENDING[prompt_id] = left - 1
                     return self._json(200, {})  # still queued
+                count = BATCH.get(prompt_id, 1)
+            # a batched sampler saves the whole batch under one node, in order
+            images = [
+                {
+                    "filename": "vizzy_out_%05d_.png" % (i + 1),
+                    "subfolder": "",
+                    "type": "output",
+                }
+                for i in range(count)
+            ]
             return self._json(
                 200,
                 {
                     prompt_id: {
                         "status": {"completed": True},
-                        "outputs": {
-                            "3": {
-                                "images": [
-                                    {
-                                        "filename": "vizzy_depth_00001_.png",
-                                        "subfolder": "",
-                                        "type": "output",
-                                    }
-                                ]
-                            }
-                        },
+                        "outputs": {"3": {"images": images}},
                     }
                 },
             )
 
         if url.path == "/view":
             q = parse_qs(url.query)
-            if q.get("filename", [""])[0] != "vizzy_depth_00001_.png":
+            if not re.fullmatch(
+                r"vizzy_out_\d{5}_\.png", q.get("filename", [""])[0]
+            ):
                 self.send_error(404)
                 return
             self.send_response(200)
@@ -139,9 +142,20 @@ class Handler(BaseHTTPRequestHandler):
                                 "node_errors": {},
                             },
                         )
+            # a RepeatLatentBatch in the workflow means the run saves a batch
+            repeat = next(
+                (
+                    n
+                    for n in prompt.values()
+                    if n.get("class_type") == "RepeatLatentBatch"
+                ),
+                None,
+            )
+            count = int(repeat["inputs"]["amount"]) if repeat else 1
             prompt_id = str(uuid.uuid4())
             with LOCK:
                 PENDING[prompt_id] = 2  # make the client poll a couple of times
+                BATCH[prompt_id] = count
             return self._json(200, {"prompt_id": prompt_id, "number": 1})
 
         self.send_error(404)

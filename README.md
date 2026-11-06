@@ -34,15 +34,17 @@ See [PLAN.md](PLAN.md) for the roadmap.
   prompt/IP-Adapter weight, so they share composition and differ in mood.
   Three blend modes: weighted mean, per-pixel dissolve, and brightest
   channel wins; both axes have their own gain and can be switched off.
-- **ComfyUI bake** ("Backen ✨" in the parallax scene): vizzy hands the
-  image to a locally running ComfyUI and keeps the result as the depth
-  map. The ComfyUI address and the workflow are editable in the panel —
-  the workflow is ComfyUI's own API-format JSON with the placeholder
-  `__VIZZY_INPUT_IMAGE__` where the input image goes, so any depth
-  estimator you have installed can be swapped in. The shipped default
-  wants the `comfyui_controlnet_aux` custom nodes
-  (`DepthAnythingV2Preprocessor`). The HTTP work runs in Rust because
-  ComfyUI serves no CORS headers unless started with
+- **ComfyUI bake** ("Backen ✨", in both scenes): vizzy hands the selected
+  image to a locally running ComfyUI and keeps what comes back — one
+  image becomes a parallax depth map, a batch becomes a morph set in
+  output order. Address and workflows are editable in the panel; a
+  workflow is ComfyUI's own API-format JSON with the placeholder
+  `__VIZZY_INPUT_IMAGE__` where the input image goes, so whatever nodes
+  you have can be swapped in. Defaults: depth wants the
+  `comfyui_controlnet_aux` custom nodes (`DepthAnythingV2Preprocessor`);
+  variants use core nodes only (`RepeatLatentBatch` + img2img at denoise
+  0.45) and need a `ckpt_name` you actually have. The HTTP work runs in
+  Rust because ComfyUI serves no CORS headers unless started with
   `--enable-cors-header`.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —

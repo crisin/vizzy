@@ -72,9 +72,30 @@ async fn bake_uploads_queues_polls_and_downloads() {
     let out = vizzy_lib::comfy::bake(&url, WORKFLOW, b"not-really-a-png".to_vec(), "holiday snap.png")
         .await
         .expect("bake");
+    assert_eq!(out.len(), 1, "a depth workflow saves one image");
     // the PNG the mock hands back, byte for byte
-    assert_eq!(&out[..8], b"\x89PNG\r\n\x1a\n");
-    assert!(out.len() > 20);
+    assert_eq!(&out[0][..8], b"\x89PNG\r\n\x1a\n");
+    assert!(out[0].len() > 20);
+}
+
+/// A variant bake: one batched run, N images back, in batch order. This is
+/// what the morph grid's control surface is built from.
+#[tokio::test]
+async fn batched_workflow_returns_every_frame() {
+    let mock = mock_or_skip!();
+    let url = format!("http://127.0.0.1:{}", mock.port);
+    let workflow = r#"{
+      "1": {"class_type": "LoadImage", "inputs": {"image": "__VIZZY_INPUT_IMAGE__"}},
+      "2": {"class_type": "RepeatLatentBatch", "inputs": {"samples": ["1", 0], "amount": 9}},
+      "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}}
+    }"#;
+    let out = vizzy_lib::comfy::bake(&url, workflow, vec![1, 2, 3], "seed.png")
+        .await
+        .expect("bake");
+    assert_eq!(out.len(), 9);
+    for frame in &out {
+        assert_eq!(&frame[..8], b"\x89PNG\r\n\x1a\n");
+    }
 }
 
 #[tokio::test]
