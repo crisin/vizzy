@@ -2,6 +2,7 @@ mod audio;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
 pub mod comfy;
 mod phrasing;
+mod tempo;
 
 use std::sync::{mpsc, Arc, Mutex};
 

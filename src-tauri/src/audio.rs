@@ -159,11 +159,13 @@ struct Analyzer {
     params: SharedParams,
     bands: Vec<f32>,
     prev_bands: Vec<f32>,
+    prev_low_amp: f32,
+    prev_full_amp: f32,
     flux_hist: VecDeque<f32>,
     beat_env: f32,
     hops_since_beat: usize,
     beats: u64,
-    beat_times: VecDeque<f32>, // seconds (analysis time), most recent last
+    tempo: crate::tempo::Tempo,
     bpm: f32,
     bpm_conf: f32,
     phrasing: crate::phrasing::Phrasing,
@@ -208,55 +210,18 @@ impl Analyzer {
             params,
             bands: vec![0.0; NUM_BANDS],
             prev_bands: vec![0.0; NUM_BANDS],
+            prev_low_amp: 0.0,
+            prev_full_amp: 0.0,
             flux_hist: VecDeque::with_capacity(FLUX_HISTORY),
             beat_env: 0.0,
             hops_since_beat: 0,
             beats: 0,
-            beat_times: VecDeque::with_capacity(24),
+            tempo: crate::tempo::Tempo::new(HOP as f32 / sample_rate as f32),
             bpm: 0.0,
             bpm_conf: 0.0,
             phrasing: crate::phrasing::Phrasing::new(NUM_BANDS),
             published: 0,
         }
-    }
-
-    /// Estimate BPM from the median inter-onset interval of recent beats.
-    /// Intervals are folded into the 70–180 BPM octave so half/double-time
-    /// onsets (hats, snares) still vote for the same tempo.
-    fn update_bpm(&mut self) {
-        let mut iois: Vec<f32> = Vec::with_capacity(self.beat_times.len());
-        let mut prev: Option<f32> = None;
-        for &t in self.beat_times.iter() {
-            if let Some(p) = prev {
-                let mut d = t - p;
-                if d > 0.15 && d < 2.5 {
-                    while d < 60.0 / 180.0 {
-                        d *= 2.0;
-                    }
-                    while d > 60.0 / 70.0 {
-                        d /= 2.0;
-                    }
-                    iois.push(d);
-                }
-            }
-            prev = Some(t);
-        }
-        if iois.len() < 3 {
-            return;
-        }
-        iois.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let median = iois[iois.len() / 2];
-        let agreeing = iois
-            .iter()
-            .filter(|d| (**d - median).abs() < median * 0.1)
-            .count();
-        self.bpm_conf = agreeing as f32 / iois.len() as f32;
-        let instant = 60.0 / median;
-        self.bpm = if self.bpm > 0.0 {
-            self.bpm * 0.8 + instant * 0.2
-        } else {
-            instant
-        };
     }
 
     fn push(&mut self, sample: f32) {
@@ -316,6 +281,23 @@ impl Analyzer {
             }
             self.prev_bands[b] = self.bands[b];
         }
+
+        // A second envelope for *where* the beat sits: the rise in low-end
+        // amplitude (below ~180 Hz), plus a little of the full range so there
+        // is still something to align to when the bass drops out. Unlike the
+        // bands above this is linear, not dB — on a dB scale a quiet off-beat
+        // bass note rises as far as the kick does and the two are a toss-up;
+        // in amplitude the kick is plainly the bigger event.
+        let low_end = self.band_edges[16].min(FFT_SIZE / 2);
+        let amp = |bins: &[realfft::num_complex::Complex<f32>]| {
+            bins.iter().map(|c| c.norm()).sum::<f32>() * scale
+        };
+        let low_amp = amp(&self.spectrum[1..low_end]);
+        let full_amp = low_amp + amp(&self.spectrum[low_end..]);
+        let kick_flux = (low_amp - self.prev_low_amp).max(0.0)
+            + 0.1 * (full_amp - self.prev_full_amp).max(0.0);
+        self.prev_low_amp = low_amp;
+        self.prev_full_amp = full_amp;
         if self.flux_hist.len() == FLUX_HISTORY {
             self.flux_hist.pop_front();
         }
@@ -329,6 +311,19 @@ impl Analyzer {
         self.hops_since_beat += 1;
         let now_s = self.published as f32 * HOP as f32 / self.sample_rate as f32;
         let hop_s = HOP as f32 / self.sample_rate as f32;
+        // Tempo and beat position come from the envelope as a whole, a few
+        // times a second; the grid follows them.
+        if let Some(e) = self.tempo.push(flux, kick_flux) {
+            let instant = 60.0 / e.period;
+            // smoothing is for the readout only — the grid gets the raw value
+            self.bpm = if self.bpm > 0.0 && (self.bpm / instant).ln().abs() < 0.04 {
+                self.bpm * 0.7 + instant * 0.3
+            } else {
+                instant
+            };
+            self.bpm_conf = e.conf;
+            self.phrasing.on_tempo(now_s, e.period, e.beat_age, e.conf);
+        }
         let is_beat = self.flux_hist.len() > 20
             && flux > mean + sigma * std
             && flux > 0.05
@@ -337,14 +332,7 @@ impl Analyzer {
             self.beat_env = 1.0;
             self.hops_since_beat = 0;
             self.beats += 1;
-            if self.beat_times.len() == 24 {
-                self.beat_times.pop_front();
-            }
-            self.beat_times.push_back(now_s);
-            self.update_bpm();
-            // fed after update_bpm so the grid sees the current tempo estimate
-            self.phrasing
-                .on_onset(now_s, self.bpm, self.bpm_conf, flux);
+            self.phrasing.on_onset(now_s, flux);
         } else {
             self.beat_env *= 0.88;
         }
@@ -356,11 +344,15 @@ impl Analyzer {
         };
 
         self.published += 1;
-        if self.published % 470 == 0 {
+        if cfg!(not(test)) && self.published % 470 == 0 {
             // ~every 5 s at 94 frames/s
             eprintln!(
-                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={} bpm={:.1} conf={:.2}",
-                self.published, self.beats, self.bpm, self.bpm_conf
+                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={} bpm={:.1} conf={:.2} grid={:.2}",
+                self.published,
+                self.beats,
+                self.bpm,
+                self.bpm_conf,
+                self.phrasing.grid_conf()
             );
         }
 
@@ -657,6 +649,269 @@ fn capture_loop(
         analyzer.decay_publish(shared);
         if let Ok(next) = rx.recv_timeout(Duration::from_millis(100)) {
             return Ok(Some(next));
+        }
+    }
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    const SR: usize = 48000;
+
+    /// Deterministic white noise in -1…1.
+    fn noise(i: usize) -> f32 {
+        let mut x = (i as u32).wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x2C1B_3C6D);
+        x ^= x >> 12;
+        x = x.wrapping_mul(0x297A_2D39);
+        x ^= x >> 15;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub enum Groove {
+        /// kick on every beat, clap on 2+4, off-beat hat, 16th ticks, off-beat bass
+        FourFloor,
+        /// two-step breakbeat: kick on 1 and the "and" of 3, snare on 2 and 4
+        Break,
+        /// four-on-the-floor with loud syncopated stabs on dotted eighths
+        Syncopated,
+    }
+
+    /// Render `secs` of a drum loop at `bpm`. Beat 0 starts at t = 0.
+    pub fn synth(bpm: f32, secs: f32, groove: Groove) -> Vec<f32> {
+        let n = (secs * SR as f32) as usize;
+        let beat = 60.0 / bpm;
+        let mut out = vec![0.0f32; n];
+        let mut add = |at: f32, len: f32, f: &dyn Fn(f32, usize) -> f32| {
+            let s0 = (at * SR as f32) as usize;
+            let l = (len * SR as f32) as usize;
+            for i in 0..l {
+                if s0 + i >= n {
+                    break;
+                }
+                out[s0 + i] += f(i as f32 / SR as f32, s0 + i);
+            }
+        };
+        let kick = |t: f32, _: usize| {
+            let f = 45.0 + 110.0 * (-t * 28.0).exp();
+            (std::f32::consts::TAU * f * t).sin() * (-t * 9.0).exp() * 0.8
+        };
+        let snare = |t: f32, i: usize| {
+            (noise(i) * 0.5 + (std::f32::consts::TAU * 190.0 * t).sin() * 0.3) * (-t * 22.0).exp()
+        };
+        let hat = |t: f32, i: usize| (noise(i) - noise(i + 1)) * 0.18 * (-t * 70.0).exp();
+        let tick = |t: f32, i: usize| (noise(i) - noise(i + 1)) * 0.07 * (-t * 110.0).exp();
+        let bass = |t: f32, _: usize| {
+            let p = (t * 55.0).fract();
+            (p * 2.0 - 1.0) * 0.3 * (1.0 - (-t * 200.0).exp()) * (-t * 6.0).exp()
+        };
+        let stab = |t: f32, _: usize| {
+            let s = (std::f32::consts::TAU * 440.0 * t).sin()
+                + (std::f32::consts::TAU * 554.0 * t).sin()
+                + (std::f32::consts::TAU * 659.0 * t).sin();
+            s * 0.2 * (-t * 14.0).exp()
+        };
+
+        let beats = (secs / beat) as usize + 1;
+        for b in 0..beats {
+            let t = b as f32 * beat;
+            let in_bar = b % 4;
+            match groove {
+                Groove::FourFloor | Groove::Syncopated => {
+                    add(t, 0.35, &kick);
+                    if in_bar % 2 == 1 {
+                        add(t, 0.2, &snare);
+                    }
+                    add(t + beat * 0.5, 0.08, &hat);
+                    add(t + beat * 0.5, 0.3, &bass);
+                    add(t + beat * 0.25, 0.04, &tick);
+                    add(t + beat * 0.75, 0.04, &tick);
+                    if groove == Groove::Syncopated {
+                        // 3-3-2 pattern in eighths across each half bar
+                        if in_bar % 2 == 0 {
+                            add(t, 0.25, &stab);
+                            add(t + beat * 0.75, 0.25, &stab);
+                        } else {
+                            add(t + beat * 0.5, 0.25, &stab);
+                        }
+                    }
+                }
+                Groove::Break => {
+                    if in_bar == 0 {
+                        add(t, 0.35, &kick);
+                    }
+                    if in_bar == 2 {
+                        add(t + beat * 0.5, 0.35, &kick);
+                    }
+                    if in_bar % 2 == 1 {
+                        add(t, 0.2, &snare);
+                    }
+                    add(t, 0.08, &hat);
+                    add(t + beat * 0.5, 0.08, &hat);
+                    add(t + beat * 0.25, 0.04, &tick);
+                    add(t + beat * 0.75, 0.04, &tick);
+                }
+            }
+        }
+        out
+    }
+
+    pub struct Report {
+        pub bpm: f32,
+        pub bpm_conf: f32,
+        pub grid_conf: f32,
+        /// length of the mean phase-error vector: 1 = the grid holds a fixed
+        /// offset to the true beat, 0 = it slides all the way around
+        pub steadiness: f32,
+        /// mean offset of the grid from the true beat, in milliseconds
+        pub offset_ms: f32,
+        /// beats the grid gained or lost against the true count
+        pub slipped: f32,
+    }
+
+    /// Push audio through the real analyzer and compare the published grid
+    /// against the known beat positions, ignoring the first `warmup` seconds.
+    pub fn measure(audio: &[f32], true_bpm: f32, warmup: f32) -> Report {
+        measure_from(audio, true_bpm, warmup, 0.0)
+    }
+
+    /// As [`measure`], with the true beats counted from `origin` seconds in.
+    pub fn measure_from(audio: &[f32], true_bpm: f32, warmup: f32, origin: f32) -> Report {
+        // the estimator reports within one octave; judge against the same
+        // pulse folded into it
+        let mut true_bpm = true_bpm;
+        while true_bpm < 90.0 {
+            true_bpm *= 2.0;
+        }
+        while true_bpm >= 180.0 {
+            true_bpm /= 2.0;
+        }
+        let shared: SharedAnalysis = Arc::new(Mutex::new(empty_frame()));
+        let params: SharedParams = Arc::new(Mutex::new(AnalysisParams::default()));
+        let mut a = Analyzer::new(params, SR);
+        let beat = 60.0 / true_bpm;
+        let (mut sc, mut ss, mut n) = (0.0f32, 0.0f32, 0u32);
+        let mut conf_sum = 0.0f32;
+        let mut first: Option<(f32, f32)> = None;
+        let mut last = (0.0f32, 0.0f32);
+        for (i, &s) in audio.iter().enumerate() {
+            a.push(s);
+            let before = a.published;
+            a.maybe_publish(&shared);
+            if a.published == before {
+                continue;
+            }
+            let t = i as f32 / SR as f32;
+            if t < warmup {
+                continue;
+            }
+            let f = shared.lock().unwrap();
+            let truth = (t - origin) / beat;
+            let grid = f[9] + f[8];
+            let err = (f[8] - truth.fract()).rem_euclid(1.0);
+            let (s_, c_) = (std::f32::consts::TAU * err).sin_cos();
+            sc += c_;
+            ss += s_;
+            n += 1;
+            conf_sum += f[13];
+            if first.is_none() {
+                first = Some((grid, truth));
+            }
+            last = (grid, truth);
+        }
+        let f = shared.lock().unwrap();
+        let (g0, t0) = first.unwrap();
+        let nf = n as f32;
+        Report {
+            bpm: f[6],
+            bpm_conf: f[7],
+            grid_conf: conf_sum / nf,
+            steadiness: ((sc / nf).powi(2) + (ss / nf).powi(2)).sqrt(),
+            offset_ms: (ss / nf).atan2(sc / nf) / std::f32::consts::TAU * beat * 1000.0,
+            slipped: (last.0 - g0) - (last.1 - t0),
+        }
+    }
+
+    /// The regression test for the drift seen on real music: tempo read a few
+    /// percent off, the grid sliding around the beat every dozen seconds, and
+    /// the confidence stuck near 0.1 as a result. Every earlier test fed the
+    /// grid the *true* tempo and so never saw it. This one goes through the
+    /// whole analyzer, audio in, grid out.
+    #[test]
+    fn grid_holds_the_beat_end_to_end() {
+        for groove in [Groove::FourFloor, Groove::Syncopated, Groove::Break] {
+            for bpm in [92.0f32, 128.0, 137.0, 174.0] {
+                let r = measure(&synth(bpm, 45.0, groove), bpm, 12.0);
+                let what = format!("{groove:?} at {bpm} BPM");
+                assert!((r.bpm - bpm).abs() < 1.0, "{what}: read as {:.1}", r.bpm);
+                assert!(r.steadiness > 0.95, "{what}: steadiness {:.2}", r.steadiness);
+                assert!(r.slipped.abs() < 0.5, "{what}: slipped {:+.1} beats", r.slipped);
+                assert!(r.offset_ms.abs() < 15.0, "{what}: {:+.0} ms off", r.offset_ms);
+                assert!(r.grid_conf > 0.8, "{what}: grid_conf {:.2}", r.grid_conf);
+            }
+        }
+    }
+
+    /// A DJ blending into a faster track: the grid has to let go of the old
+    /// tempo and settle on the new one.
+    #[test]
+    fn follows_a_change_of_tempo() {
+        let mut audio = synth(126.0, 30.0, Groove::FourFloor);
+        audio.extend(synth(140.0, 40.0, Groove::FourFloor));
+        // judged over the last 20 s, against beats counted from the switch
+        let r = measure_from(&audio, 140.0, 50.0, 30.0);
+        assert!((r.bpm - 140.0).abs() < 1.0, "read as {:.1}", r.bpm);
+        assert!(r.grid_conf > 0.8, "grid_conf {:.2}", r.grid_conf);
+        assert!(r.steadiness > 0.95, "steadiness {:.2}", r.steadiness);
+        assert!(r.offset_ms.abs() < 15.0, "{:+.0} ms off", r.offset_ms);
+    }
+
+    /// Sound with no pulse must not be reported as a locked grid.
+    #[test]
+    fn noise_does_not_lock() {
+        // hiss with bursts at irregular, unrelated intervals
+        let n = 40 * SR;
+        let mut audio = vec![0.0f32; n];
+        let (mut next, mut k) = (0usize, 0usize);
+        let mut env = 0.0f32;
+        for (i, s) in audio.iter_mut().enumerate() {
+            if i >= next {
+                env = 1.0;
+                k += 1;
+                let r = (noise(k * 7919) * 0.5 + 0.5).abs();
+                next = i + ((0.13 + r * 0.6) * SR as f32) as usize;
+            }
+            env *= 0.9995;
+            *s = noise(i) * (0.05 + 0.5 * env);
+        }
+        let r = measure(&audio, 120.0, 12.0);
+        assert!(r.grid_conf < 0.5, "noise locked: grid_conf {:.2}", r.grid_conf);
+    }
+
+    /// Not an assertion — the end-to-end scoreboard. Run with
+    /// `cargo test --lib -- --nocapture scoreboard`.
+    #[test]
+    fn scoreboard() {
+        println!("groove      bpm    -> est    bconf gconf steady  ms   slipped");
+        for groove in [Groove::FourFloor, Groove::Syncopated, Groove::Break] {
+            for bpm in [85.0f32, 92.0, 100.0, 110.0, 120.0, 128.0, 137.0, 150.0, 160.0, 174.0] {
+                let audio = synth(bpm, 60.0, groove);
+                let r = measure(&audio, bpm, 15.0);
+                println!(
+                    "{:<11} {:>5.1} -> {:>6.1}  {:.2}  {:.2}  {:.2}  {:+4.0}  {:+.1}",
+                    format!("{groove:?}"),
+                    bpm,
+                    r.bpm,
+                    r.bpm_conf,
+                    r.grid_conf,
+                    r.steadiness,
+                    r.offset_ms,
+                    r.slipped
+                );
+            }
         }
     }
 }
