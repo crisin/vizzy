@@ -9,6 +9,7 @@ export type SceneName =
   | "critters"
   | "surf"
   | "flora"
+  | "parallax"
   | "model";
 
 export const SCENE_NAMES: SceneName[] = [
@@ -22,5 +23,6 @@ export const SCENE_NAMES: SceneName[] = [
   "critters",
   "surf",
   "flora",
+  "parallax",
   "model",
 ];

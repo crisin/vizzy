@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { params } from "./params";
 import { FloraScene } from "./flora";
+import { ParallaxScene, type ParallaxAsset } from "./parallax";
 import type { SceneName } from "./sceneCatalog";
 
 export interface AudioFrame3D {
@@ -24,6 +25,9 @@ interface Scene3D {
   /** orbit-controls pivot; origin if unset */
   cameraTarget?: THREE.Vector3;
   update(frame: AudioFrame3D): void;
+  /** scenes that frame a fixed subject need the new aspect, not just a new
+   *  projection matrix */
+  resize?(aspect: number): void;
   dispose(): void;
 }
 
@@ -1276,6 +1280,7 @@ export class Viz3D {
   private dpr: number;
   private log: (msg: string) => void;
   private pendingModel: { data: ArrayBuffer; name: string } | null = null;
+  private pendingImage: ParallaxAsset | null = null;
   private controls: OrbitControls | null = null;
   private homePos = new THREE.Vector3();
   private homeTarget = new THREE.Vector3();
@@ -1358,6 +1363,11 @@ export class Viz3D {
         return new SurfScene(aspect);
       case "flora":
         return new FloraScene(aspect);
+      case "parallax": {
+        const scene = new ParallaxScene(aspect, this.log);
+        if (this.pendingImage) scene.loadAsset(this.pendingImage);
+        return scene;
+      }
       case "model": {
         const scene = new ModelScene(aspect, this.log);
         if (this.pendingModel) {
@@ -1373,6 +1383,25 @@ export class Viz3D {
     this.pendingModel = { data, name };
     if (this.active instanceof ModelScene) {
       this.active.loadModel(data, name);
+    }
+  }
+
+  /** Load an image + depth-map pair into the parallax scene (kept for scene
+   *  switches, like the model). */
+  loadImage(asset: ParallaxAsset) {
+    this.pendingImage = asset;
+    if (this.active instanceof ParallaxScene) {
+      this.active.loadAsset(asset);
+    }
+  }
+
+  /** Back to the placeholder picture. */
+  clearImage() {
+    this.pendingImage = null;
+    if (this.active instanceof ParallaxScene) {
+      this.active.dispose();
+      this.active = this.create("parallax");
+      this.setupControls();
     }
   }
 
@@ -1396,8 +1425,14 @@ export class Viz3D {
 
   resize(width: number, height: number) {
     this.renderer.setSize(width, height, false);
-    this.active.camera.aspect = width / Math.max(1, height);
+    const aspect = width / Math.max(1, height);
+    this.active.camera.aspect = aspect;
     this.active.camera.updateProjectionMatrix();
+    this.active.resize?.(aspect);
+    // the scene may have moved its camera home — keep double-click honest
+    if (this.active.resize && !this.userCam) {
+      this.homePos.copy(this.active.camera.position);
+    }
   }
 
   render(frame: Omit<AudioFrame3D, "cameraAuto">) {

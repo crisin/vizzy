@@ -13,10 +13,18 @@ See [PLAN.md](PLAN.md) for the roadmap.
 - **Analysis** in Rust: FFT (64 log bands), beat detection
   (bass-weighted spectral flux, adaptive threshold), BPM estimation.
 - **Modes**: bars, radial, scope, Milkdrop (107 Butterchurn presets with
-  blend + beat-driven auto-switching) and nine 3D scenes (three.js):
+  blend + beat-driven auto-switching) and twelve 3D scenes (three.js):
   orb, terrain, tunnel, bars3d, gyro, procedural noise blob, nested
-  cubes, blocky critters, and your own glTF/GLB/ZIP models with a
-  thumbnail library (IndexedDB) and a bass/beat-driven explode effect.
+  cubes, blocky critters, surf, flora, parallax, and your own
+  glTF/GLB/ZIP models with a thumbnail library (IndexedDB) and a
+  bass/beat-driven explode effect.
+- **Parallax**: a still image unfolded into 2.5D by a depth map and then
+  moved by the audio — bass breathes the relief open, the beat kicks the
+  camera, the spectrum ripples bottom (bass) to top (treble) through the
+  picture. Bake the depth map offline (ComfyUI → Depth Anything V2) and
+  load it next to the image; without one the scene falls back to a crude
+  depth guessed from the picture itself, which is usable but visibly
+  flatter. Images and depth maps persist in the same IndexedDB library.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.
@@ -118,7 +126,7 @@ Windows feature set is complete through the editor phase: parameter
 editor, frequency listeners with a modulation matrix (route any Hz
 range onto any effect parameter, ◎ button), Milkdrop preset tweaking
 with saveable user presets (🎛 button), background layer compositing,
-and ten 3D scenes. The macOS capture backend (Core Audio process taps
+and twelve 3D scenes. The macOS capture backend (Core Audio process taps
 via `objc2-core-audio`, `src-tauri/src/audio/mac.rs`) covers all three
 source kinds. Next up: custom shader visualizations with a live code
 editor.

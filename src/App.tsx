@@ -26,6 +26,18 @@ import {
   type ModelMeta,
 } from "./modelStore";
 import { LibraryModal } from "./LibraryModal";
+import {
+  addImage,
+  clearAllImages,
+  deleteImage,
+  getImage,
+  listImages,
+  setImageDepth,
+  updateImageThumb,
+  type ImageMeta,
+  type ImageRecord,
+} from "./imageStore";
+import type { ParallaxAsset } from "./parallax";
 import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
 import { MdTweakPanel } from "./MdTweakPanel";
@@ -53,6 +65,10 @@ function mergeBaseVals(
 
 type ModelAction =
   | { action: "load"; data: ArrayBuffer; name: string; seq: number }
+  | { action: "clear"; seq: number };
+
+type ImageAction =
+  | { action: "load"; asset: ParallaxAsset; seq: number }
   | { action: "clear"; seq: number };
 import "./App.css";
 
@@ -220,6 +236,7 @@ type Persisted = {
   showBpm?: boolean;
   sourceValue?: string;
   modelId?: number;
+  imageId?: number;
   bgLayer?: BgLayer;
   blendMode?: BlendMode;
   debug?: boolean;
@@ -307,6 +324,11 @@ function App() {
   const camResetRef = useRef(0);
   const [models, setModels] = useState<ModelMeta[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const depthInputRef = useRef<HTMLInputElement | null>(null);
+  const imageFileRef = useRef<ImageAction | null>(null);
+  const [images, setImages] = useState<ImageMeta[]>([]);
+  const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
   const [tweakOpen, setTweakOpen] = useState(false);
@@ -562,6 +584,7 @@ function App() {
       showBpm,
       sourceValue: selected,
       modelId: selectedModelId ?? undefined,
+      imageId: selectedImageId ?? undefined,
       bgLayer,
       blendMode,
       debug: debugOpen,
@@ -582,6 +605,7 @@ function App() {
     showBpm,
     selected,
     selectedModelId,
+    selectedImageId,
     bgLayer,
     blendMode,
     debugOpen,
@@ -717,6 +741,132 @@ function App() {
     [selectedModelId, nextModelSeq, refreshModels],
   );
 
+  /* ---- parallax: image + depth-map pairs for the 2.5D scene ---- */
+
+  const nextImageSeq = useCallback(
+    () => (imageFileRef.current?.seq ?? 0) + 1,
+    [],
+  );
+
+  const refreshImages = useCallback(() => {
+    listImages().then(setImages).catch(console.error);
+  }, []);
+
+  const queueImage = useCallback(
+    (record: ImageRecord) => {
+      imageFileRef.current = {
+        action: "load",
+        asset: {
+          name: record.name,
+          image: record.image,
+          imageType: record.imageType,
+          depth: record.depth,
+          depthType: record.depthType,
+        },
+        seq: nextImageSeq(),
+      };
+    },
+    [nextImageSeq],
+  );
+
+  const onImageFile = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-picking the same file
+      if (!file) return;
+      const data = await file.arrayBuffer();
+      const imageType = file.type || "image/png";
+      // show it immediately; the pseudo depth map carries it until a bake exists
+      queueImage({
+        name: file.name,
+        image: data,
+        imageType,
+        size: data.byteLength,
+        addedAt: Date.now(),
+      });
+      setScene3d("parallax");
+      try {
+        const id = await addImage(file.name, data, imageType);
+        setSelectedImageId(id);
+        refreshImages();
+        flog(`[cfg] image saved: ${file.name} (#${id})`);
+        try {
+          const { imageThumb } = await import("./parallax");
+          const bitmap = await createImageBitmap(
+            new Blob([data], { type: imageType }),
+            { imageOrientation: "flipY" },
+          );
+          await updateImageThumb(id, imageThumb(bitmap));
+          refreshImages();
+        } catch {
+          // preview is optional
+        }
+      } catch (err) {
+        flog(`[cfg] image save FAILED: ${err}`);
+      }
+    },
+    [queueImage, refreshImages],
+  );
+
+  /** Attach a baked depth map (ComfyUI → Depth Anything) to the current image. */
+  const onDepthFile = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file || selectedImageId == null) return;
+      const data = await file.arrayBuffer();
+      try {
+        const record = await setImageDepth(
+          selectedImageId,
+          data,
+          file.type || "image/png",
+        );
+        if (!record) return;
+        queueImage(record);
+        refreshImages();
+        flog(`[cfg] depth map attached: ${file.name}`);
+      } catch (err) {
+        flog(`[cfg] depth attach FAILED: ${err}`);
+      }
+    },
+    [selectedImageId, queueImage, refreshImages],
+  );
+
+  const pickImage = useCallback(
+    async (id: number | null) => {
+      if (id == null) {
+        setSelectedImageId(null);
+        imageFileRef.current = { action: "clear", seq: nextImageSeq() };
+        return;
+      }
+      try {
+        const record = await getImage(id);
+        if (!record) return;
+        setSelectedImageId(id);
+        queueImage(record);
+      } catch (err) {
+        flog(`[cfg] image pick FAILED: ${err}`);
+      }
+    },
+    [nextImageSeq, queueImage],
+  );
+
+  const removeImage = useCallback(
+    async (id: number) => {
+      try {
+        await deleteImage(id);
+      } catch (err) {
+        flog(`[cfg] image delete FAILED: ${err}`);
+      }
+      if (selectedImageId === id) {
+        setSelectedImageId(null);
+        imageFileRef.current = { action: "clear", seq: nextImageSeq() };
+      }
+      refreshImages();
+    },
+    [selectedImageId, nextImageSeq, refreshImages],
+  );
+
   // Restore the model library + last selection (also in browser demo mode).
   const modelRestoredRef = useRef(false);
   useEffect(() => {
@@ -746,6 +896,30 @@ function App() {
     })();
   }, [nextModelSeq]);
 
+  // Same for the parallax image library.
+  const imageRestoredRef = useRef(false);
+  useEffect(() => {
+    if (imageRestoredRef.current) return;
+    imageRestoredRef.current = true;
+    void (async () => {
+      try {
+        const list = await listImages();
+        setImages(list);
+        const id = saved.imageId;
+        if (id != null && list.some((i) => i.id === id)) {
+          const record = await getImage(id);
+          if (record) {
+            setSelectedImageId(id);
+            queueImage(record);
+            flog(`[cfg] restored image: ${record.name}`);
+          }
+        }
+      } catch {
+        // library unavailable — placeholder stays
+      }
+    })();
+  }, [queueImage]);
+
   // Emergency exit: wipe settings, parameters and the model library.
   const resetAll = useCallback(() => {
     try {
@@ -754,9 +928,10 @@ function App() {
     } catch {
       // ignore — reload restores defaults either way
     }
-    void clearAllModels()
-      .catch(() => {})
-      .finally(() => window.location.reload());
+    void Promise.all([
+      clearAllModels().catch(() => {}),
+      clearAllImages().catch(() => {}),
+    ]).finally(() => window.location.reload());
   }, []);
 
   useEffect(() => {
@@ -775,6 +950,7 @@ function App() {
       randomPreset,
       bpmElRef,
       modelFileRef,
+      imageFileRef,
       camResetRef,
       bgLayerRef,
       blendRef,
@@ -1257,12 +1433,77 @@ function App() {
                   : "Library"}
               </button>
             )}
+            {scene3d === "parallax" && (
+              <>
+                {images.length > 0 && (
+                  <select
+                    className="mode-btn"
+                    value={selectedImageId ?? ""}
+                    onChange={(e) =>
+                      void pickImage(
+                        e.target.value === "" ? null : Number(e.target.value),
+                      )
+                    }
+                    title="Gespeichertes Bild wählen (◆ = mit gebackener Tiefenkarte)"
+                  >
+                    <option value="">— Platzhalter —</option>
+                    {images.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.hasDepth ? "◆ " : "◇ "}
+                        {i.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className="mode-btn"
+                  onClick={() => imageInputRef.current?.click()}
+                  title="Bild laden (PNG/JPG/WebP)"
+                >
+                  Bild +
+                </button>
+                <button
+                  type="button"
+                  className="mode-btn"
+                  disabled={selectedImageId == null}
+                  onClick={() => depthInputRef.current?.click()}
+                  title="Tiefenkarte zum aktuellen Bild laden (ComfyUI → Depth Anything). Ohne sie läuft die Szene auf einer grob geschätzten Tiefe."
+                >
+                  Tiefenkarte +
+                </button>
+                {selectedImageId != null && (
+                  <button
+                    type="button"
+                    className="mode-btn danger"
+                    onClick={() => void removeImage(selectedImageId)}
+                    title="Bild aus der Library löschen"
+                  >
+                    ✕
+                  </button>
+                )}
+              </>
+            )}
             <input
               ref={fileInputRef}
               type="file"
               accept=".glb,.gltf,.zip"
               style={{ display: "none" }}
               onChange={onModelFile}
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={onImageFile}
+            />
+            <input
+              ref={depthInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={onDepthFile}
             />
           </div>
         )}
@@ -1365,6 +1606,7 @@ function startVisualizer(
   onAutoSwitch: () => void,
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: ModelAction | null },
+  imageRef: { current: ImageAction | null },
   camResetRef: { current: number },
   bgLayerRef: { current: BgLayer },
   blendRef: { current: BlendMode },
@@ -1411,6 +1653,7 @@ function startVisualizer(
   let viz3dLoading: Promise<void> | null = null;
   let viz3dFailed = false;
   let loadedModelSeq = 0;
+  let loadedImageSeq = 0;
   let lastCamReset = 0;
 
   function ensure3D(): boolean {
@@ -1446,6 +1689,12 @@ function startVisualizer(
         loadedModelSeq = m.seq;
         if (m.action === "load") viz3d.loadModel(m.data, m.name);
         else viz3d.clearModel();
+      }
+      const img = imageRef.current;
+      if (img && img.seq !== loadedImageSeq) {
+        loadedImageSeq = img.seq;
+        if (img.action === "load") viz3d.loadImage(img.asset);
+        else viz3d.clearImage();
       }
       if (camResetRef.current !== lastCamReset) {
         lastCamReset = camResetRef.current;
