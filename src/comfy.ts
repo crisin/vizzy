@@ -239,6 +239,242 @@ export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
   2,
 );
 
+/** The four files the Qwen-Image-Edit template loads. */
+export const QWEN_MODELS = {
+  unet: "qwen_image_edit_2511_fp8mixed.safetensors",
+  clip: "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+  vae: "qwen_image_vae.safetensors",
+  lora: "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+} as const;
+
+/** One corner of the grid, as an instruction. Kept to one shape and roughly
+ *  one length: `ConditioningAverage` truncates the shorter conditioning and
+ *  zero-pads the rest, so wildly different prompt lengths blend badly. */
+const qwenCorner = (light: string, weather: string) =>
+  `Relight this scene with ${light} under ${weather}. ` +
+  `Keep every shape exactly where it is.`;
+
+/**
+ * Variant bake through Qwen-Image-Edit 2511 — an instruction-following image
+ * editor rather than a denoiser.
+ *
+ * Why it beats the SDXL template at this particular job: img2img destroys the
+ * picture and rebuilds it from a prompt, so composition survives only because
+ * `denoise` is held low, and "low enough to keep the frame" fights "high
+ * enough to change the mood". An edit model takes the picture as a condition
+ * (the reference latents inside the conditioning, which is why `denoise` is
+ * 1.0 here and the encoded latent only supplies the shape) and performs an
+ * instruction on it. Structure holds by construction, and measured on the
+ * same test scene it holds *far* tighter — individual rocks in a river stay
+ * put while the light changes completely.
+ *
+ * The two axes are a **bilinear blend of four corner instructions**: X mixes
+ * each row's two lighting poles, then Y mixes the two rows. That mirrors what
+ * the morph shader does with the baked frames, one stage earlier. It also
+ * avoids `ConditioningCombine`, which would append a second condition and
+ * with it a second copy of the reference latents.
+ *
+ * Costs four text encodes of a 7B VL model, plus one for the empty negative
+ * — but only once per bake, not once per cell: their inputs never change, so
+ * ComfyUI serves them from its cache and only the blend weights differ. On
+ * an RTX 5070 with 12 GB that shows as 68 s, 97 s, 272 s for the first three
+ * cells while the models settle, then a steady 26 s. The Lightning LoRA
+ * keeps sampling to four steps at cfg 1.
+ *
+ * The blend is not perceptually linear: at `x = 0.5` the result already sits
+ * close to the warm pole, so the cold end occupies roughly the first third
+ * of the axis. A larger grid samples that better than a wider range would.
+ */
+export const QWEN_VARIANT_WORKFLOW = JSON.stringify(
+  {
+    "1": {
+      class_type: "LoadImage",
+      inputs: { image: IMAGE_TOKEN, upload: "image" },
+    },
+    // snaps to a resolution the model was trained on, keeping the aspect
+    "2": { class_type: "FluxKontextImageScale", inputs: { image: ["1", 0] } },
+
+    "3": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: QWEN_MODELS.unet, weight_dtype: "default" },
+    },
+    "4": {
+      class_type: "ModelSamplingAuraFlow",
+      inputs: { model: ["3", 0], shift: 3.1 },
+    },
+    "5": {
+      class_type: "CFGNorm",
+      inputs: { model: ["4", 0], strength: 1.0, pre_cfg: false },
+    },
+    "6": {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        model: ["5", 0],
+        lora_name: QWEN_MODELS.lora,
+        strength_model: 1.0,
+      },
+    },
+    "7": {
+      class_type: "CLIPLoader",
+      inputs: {
+        clip_name: QWEN_MODELS.clip,
+        type: "qwen_image",
+        device: "default",
+      },
+    },
+    "8": { class_type: "VAELoader", inputs: { vae_name: QWEN_MODELS.vae } },
+
+    // the four corners: 9/10 the calm row, 11/12 the storm row
+    "9": {
+      class_type: "TextEncodeQwenImageEditPlus",
+      inputs: {
+        clip: ["7", 0],
+        vae: ["8", 0],
+        image1: ["2", 0],
+        prompt: qwenCorner("cold blue moonlight", "a calm clear sky"),
+      },
+    },
+    "10": {
+      class_type: "TextEncodeQwenImageEditPlus",
+      inputs: {
+        clip: ["7", 0],
+        vae: ["8", 0],
+        image1: ["2", 0],
+        prompt: qwenCorner("warm golden sunset light", "a calm clear sky"),
+      },
+    },
+    "11": {
+      class_type: "TextEncodeQwenImageEditPlus",
+      inputs: {
+        clip: ["7", 0],
+        vae: ["8", 0],
+        image1: ["2", 0],
+        prompt: qwenCorner("cold blue storm light", "a violent thunderstorm"),
+      },
+    },
+    "12": {
+      class_type: "TextEncodeQwenImageEditPlus",
+      inputs: {
+        clip: ["7", 0],
+        vae: ["8", 0],
+        image1: ["2", 0],
+        prompt: qwenCorner("warm golden light", "a violent thunderstorm"),
+      },
+    },
+
+    // X across the calm row, X across the storm row, then Y between them
+    "13": {
+      class_type: "ConditioningAverage",
+      inputs: {
+        conditioning_to: ["10", 0],
+        conditioning_from: ["9", 0],
+        conditioning_to_strength: X_TOKEN,
+      },
+    },
+    "14": {
+      class_type: "ConditioningAverage",
+      inputs: {
+        conditioning_to: ["12", 0],
+        conditioning_from: ["11", 0],
+        conditioning_to_strength: X_TOKEN,
+      },
+    },
+    "15": {
+      class_type: "ConditioningAverage",
+      inputs: {
+        conditioning_to: ["14", 0],
+        conditioning_from: ["13", 0],
+        conditioning_to_strength: Y_TOKEN,
+      },
+    },
+    "16": {
+      class_type: "FluxKontextMultiReferenceLatentMethod",
+      inputs: {
+        conditioning: ["15", 0],
+        reference_latents_method: "index_timestep_zero",
+      },
+    },
+
+    "17": {
+      class_type: "TextEncodeQwenImageEditPlus",
+      inputs: { clip: ["7", 0], vae: ["8", 0], image1: ["2", 0], prompt: "" },
+    },
+    "18": {
+      class_type: "FluxKontextMultiReferenceLatentMethod",
+      inputs: {
+        conditioning: ["17", 0],
+        reference_latents_method: "index_timestep_zero",
+      },
+    },
+
+    "19": {
+      class_type: "VAEEncode",
+      inputs: { pixels: ["2", 0], vae: ["8", 0] },
+    },
+    "20": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["6", 0],
+        positive: ["16", 0],
+        negative: ["18", 0],
+        latent_image: ["19", 0],
+        // same seed in every cell, as in the SDXL template
+        seed: 1234,
+        // four steps at cfg 1 is the Lightning LoRA's bargain; drop the LoRA
+        // (node 6) and this wants roughly 40 steps at cfg 4
+        steps: 4,
+        cfg: 1.0,
+        sampler_name: "euler",
+        scheduler: "simple",
+        // the picture enters through the conditioning, not the latent
+        denoise: 1.0,
+      },
+    },
+    "21": {
+      class_type: "VAEDecode",
+      inputs: { samples: ["20", 0], vae: ["8", 0] },
+    },
+    "22": {
+      class_type: "SaveImage",
+      inputs: { images: ["21", 0], filename_prefix: `vizzy_cell_${INDEX_TOKEN}` },
+    },
+  },
+  null,
+  2,
+);
+
+/**
+ * The variant templates the panel offers. Both are a starting point for the
+ * workflow editor, not a menu of modes — whatever ends up in the text area is
+ * what runs.
+ */
+export type VariantPreset = {
+  id: string;
+  label: string;
+  note: string;
+  workflow: string;
+};
+
+export const VARIANT_PRESETS: VariantPreset[] = [
+  {
+    id: "qwen",
+    label: "Qwen-Image-Edit",
+    note:
+      "Ein Bild-Editor: die Komposition bleibt von selbst stehen, nicht weil " +
+      "eine Stärke gedrosselt wurde. Braucht UNET, CLIP, VAE und die " +
+      "Lightning-LoRA von Qwen-Image-Edit 2511.",
+    workflow: QWEN_VARIANT_WORKFLOW,
+  },
+  {
+    id: "sdxl",
+    label: "SDXL img2img",
+    note:
+      "Genügsamer: ein einzelnes SDXL-Checkpoint reicht. Hält die Komposition " +
+      "über ein niedriges denoise, verändert die Stimmung dafür weniger weit.",
+    workflow: DEFAULT_VARIANT_WORKFLOW,
+  },
+];
+
 /** Grid sizes offered for a variant bake; each is `n × n` cells. */
 export const GRID_SIZES = [2, 3, 4] as const;
 
@@ -316,7 +552,9 @@ const WORKFLOW_KEY: Record<BakeKind, string> = {
 
 export const DEFAULT_WORKFLOW: Record<BakeKind, string> = {
   depth: DEFAULT_DEPTH_WORKFLOW,
-  variants: DEFAULT_VARIANT_WORKFLOW,
+  // the first preset wins: quality over speed, which for a bake that runs
+  // once and is then played forever is the easy call
+  variants: VARIANT_PRESETS[0].workflow,
 };
 
 const AXES_KEY = "vizzy.comfy.axes";

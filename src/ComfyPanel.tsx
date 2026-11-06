@@ -4,6 +4,7 @@ import {
   DEFAULT_WORKFLOW,
   GRID_SIZES,
   IMAGE_TOKEN,
+  VARIANT_PRESETS,
   X_TOKEN,
   Y_TOKEN,
   comfyPing,
@@ -38,9 +39,9 @@ const COPY: Record<
       "Der Workflow läuft einmal pro Rasterzelle. Setz den Seed im Workflow auf " +
       "einen festen Wert — nur dann teilen sich die Varianten die Komposition, " +
       "und nur dann wirkt die Mischung wie ein Bild, das sich verändert. " +
-      "Der Standard kommt mit Core Nodes aus und blendet pro Achse zwischen " +
-      "zwei Gegenpolen über (kalt ↔ warm, ruhig ↔ Sturm); passe ckpt_name an " +
-      "ein Checkpoint an, das du hast.",
+      "Beide Vorlagen blenden pro Achse zwischen zwei Gegenpolen über " +
+      "(kalt ↔ warm, ruhig ↔ Sturm) und kommen mit Core Nodes aus; sie " +
+      "unterscheiden sich darin, welche Modelldateien sie brauchen.",
     button: "Varianten backen",
   },
 };
@@ -247,6 +248,34 @@ export function ComfyPanel({
             rows={12}
             onChange={(e) => onWorkflowChange(e.target.value)}
           />
+          {kind === "variants" && (
+            <div className="comfy-row">
+              <span className="set-hint">Vorlage:</span>
+              {VARIANT_PRESETS.map((preset) => {
+                const active = workflow.trim() === preset.workflow.trim();
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`mode-btn ${active ? "active" : ""}`}
+                    onClick={() => onWorkflowChange(preset.workflow)}
+                    aria-pressed={active}
+                    disabled={busy || active}
+                    title={preset.note}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {kind === "variants" && (
+            <p className="set-hint">
+              {VARIANT_PRESETS.find(
+                (p) => p.workflow.trim() === workflow.trim(),
+              )?.note ?? "Eigener Workflow — keine der Vorlagen unverändert."}
+            </p>
+          )}
           <div className="comfy-row">
             <button
               type="button"

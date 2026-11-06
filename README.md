@@ -53,13 +53,36 @@ See [PLAN.md](PLAN.md) for the roadmap.
   order does. Keep the seed in the workflow fixed so the variants share a
   composition.
 
-  Each axis of the variant default crossfades between two opposed prompts
-  (`ConditioningAverage`) instead of scaling a weight inside one sentence.
-  Measured against a real ComfyUI: a weight on a sub-phrase, at a denoise
-  low enough to keep the composition, baked nine near-identical pictures —
-  interpolating whole conditionings moves the mood and still holds the
-  frame. On an RTX 5070 a 3×3 grid of 1 MP SDXL cells takes about two
-  minutes, a depth map about a second.
+  Both axes are crossfades between opposed prompts (`ConditioningAverage`),
+  never a weight scaled inside one sentence: measured against a real
+  ComfyUI, a weight on a sub-phrase at a denoise low enough to keep the
+  composition baked nine near-identical pictures.
+
+  Two variant templates, switchable in the panel:
+
+  | | Needs | Holds the frame | Per cell (RTX 5070) |
+  |---|---|---|---|
+  | **Qwen-Image-Edit 2511** (default) | UNET + CLIP + VAE + the 4-step Lightning LoRA | by construction | ~26 s |
+  | **SDXL img2img** | one SDXL checkpoint | via a low `denoise` | ~12 s |
+
+  The default is the heavier one on purpose: a bake runs once and is then
+  played forever. img2img destroys the picture and rebuilds it from a
+  prompt, so "low enough to keep the frame" fights "high enough to change
+  the mood"; an edit model takes the picture as a *condition* and performs
+  an instruction on it, so individual rocks in a river stay put while the
+  light changes completely. Its two axes are a bilinear blend of four
+  corner *instructions* — X across each row, then Y between the rows, which
+  is what the morph shader does with the finished frames, one stage
+  earlier. A depth map takes about a second either way.
+
+  Two things to expect from the Qwen template. Its first two or three cells
+  are much slower than the rest (68 s, 97 s, 272 s, then a steady 26 s on a
+  12 GB card): the models load, and the four corner conditionings are
+  computed once and then served from ComfyUI's cache, since only the blend
+  weights change from cell to cell. And the blend is not perceptually
+  linear — at `x = 0.5` the picture already sits close to the warm pole, so
+  the cold end lives in roughly the first third of the axis. Widening the
+  grid helps more than widening the range.
 
   Both defaults use core nodes only (ComfyUI 0.44+): depth is Depth
   Anything 3 and wants
