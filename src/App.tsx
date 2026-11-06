@@ -54,10 +54,15 @@ import {
 import { ComfyPanel, type BakeState } from "./ComfyPanel";
 import {
   comfyBake,
+  fillAxes,
+  gridCells,
+  loadAxes,
   loadComfyUrl,
   loadWorkflow,
+  saveAxes,
   saveComfyUrl,
   saveWorkflow,
+  type AxisRanges,
   type BakeKind,
 } from "./comfy";
 import { routing } from "./listeners";
@@ -367,6 +372,7 @@ function App() {
     depth: loadWorkflow("depth"),
     variants: loadWorkflow("variants"),
   }));
+  const [axes, setAxes] = useState<AxisRanges>(loadAxes);
   const [bakeState, setBakeState] = useState<BakeState>({ kind: "idle" });
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
@@ -1022,8 +1028,9 @@ function App() {
   );
 
   /**
-   * Push the selected image through ComfyUI and keep the result as its depth
-   * map. Runs once per picture — the scene itself never touches ComfyUI.
+   * Push the selected image through ComfyUI: either once, for a depth map,
+   * or once per grid cell, for a morph set. Either way it runs offline, long
+   * before playback — the scenes themselves never touch ComfyUI.
    */
   const runBake = useCallback(async () => {
     if (selectedImageId == null) return;
@@ -1039,21 +1046,17 @@ function App() {
     try {
       const record = await getImage(selectedImageId);
       if (!record) throw new Error("Bild ist nicht mehr in der Library");
-      const out = await comfyBake(
-        comfyUrl,
-        workflows[bakeKind],
-        record.image,
-        record.name,
-      );
-      if (out.length === 0 || out[0].byteLength === 0) {
-        throw new Error("ComfyUI lieferte kein Bild zurück");
-      }
-      const secs = ((performance.now() - started) / 1000).toFixed(1);
-      const kb = Math.round(
-        out.reduce((n, b) => n + b.byteLength, 0) / 1024,
-      );
 
       if (bakeKind === "depth") {
+        const out = await comfyBake(
+          comfyUrl,
+          workflows.depth,
+          record.image,
+          record.name,
+        );
+        if (out.length === 0 || out[0].byteLength === 0) {
+          throw new Error("ComfyUI lieferte kein Bild zurück");
+        }
         const updated = await setImageDepth(
           selectedImageId,
           out[0],
@@ -1062,16 +1065,44 @@ function App() {
         if (!updated) throw new Error("Tiefenkarte ließ sich nicht speichern");
         queueImage(updated); // the scene picks it up on the next frame
         refreshImages();
+        const secs = ((performance.now() - started) / 1000).toFixed(1);
         setBakeState({
           kind: "ok",
-          msg: `${kb} KB in ${secs}s — die Parallax-Szene läuft schon darauf.`,
+          msg: `${Math.round(out[0].byteLength / 1024)} KB in ${secs}s — die Parallax-Szene läuft schon darauf.`,
         });
         flog(`[comfy] depth baked for ${record.name} in ${secs}s`);
         return;
       }
 
-      // variants: the run's output order becomes the morph control surface
-      const frames = out.slice(0, MAX_FRAMES);
+      // Variants: one run per cell, because a batched run shares its
+      // conditioning and would differ only by noise — coherent but unordered,
+      // and the grid's axes only mean something if the order does.
+      const cells = gridCells(axes);
+      const frames: ArrayBuffer[] = [];
+      for (const cell of cells) {
+        setBakeState({
+          kind: "running",
+          msg: `Zelle ${cell.index + 1} von ${cells.length} (x ${cell.x.toFixed(2)}, y ${cell.y.toFixed(2)})`,
+        });
+        const out = await comfyBake(
+          comfyUrl,
+          fillAxes(workflows.variants, cell),
+          record.image,
+          record.name,
+        );
+        if (out.length === 0 || out[0].byteLength === 0) {
+          throw new Error(
+            `Zelle ${cell.index + 1} lieferte kein Bild — ${frames.length} von ${cells.length} fertig`,
+          );
+        }
+        // one cell is one picture; a workflow saving more keeps its first
+        frames.push(out[0]);
+      }
+
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      const kb = Math.round(
+        frames.reduce((n, b) => n + b.byteLength, 0) / 1024,
+      );
       const name = `${record.name} ×${frames.length}`;
       const id = await addMorphSet(name, frames, "image/png");
       setSelectedMorphId(id);
@@ -1087,11 +1118,7 @@ function App() {
       const { cols, rows } = gridFor(frames.length);
       setBakeState({
         kind: "ok",
-        msg:
-          `${frames.length} Varianten in ${secs}s → ${cols}×${rows}-Raster.` +
-          (out.length > MAX_FRAMES
-            ? ` (${out.length - MAX_FRAMES} verworfen, Maximum ${MAX_FRAMES})`
-            : ""),
+        msg: `${frames.length} Varianten in ${secs}s → ${cols}×${rows}-Raster, ${kb} KB. Die Morph-Szene läuft schon darauf.`,
       });
       flog(
         `[comfy] ${frames.length} variants baked from ${record.name} in ${secs}s`,
@@ -1116,6 +1143,7 @@ function App() {
     comfyUrl,
     workflows,
     bakeKind,
+    axes,
     queueImage,
     refreshImages,
     queueMorph,
@@ -1950,6 +1978,11 @@ function App() {
           onUrlChange={(u) => {
             setComfyUrl(u);
             saveComfyUrl(u);
+          }}
+          axes={axes}
+          onAxesChange={(a) => {
+            setAxes(a);
+            saveAxes(a);
           }}
           workflow={workflows[bakeKind]}
           onWorkflowChange={(json) => {

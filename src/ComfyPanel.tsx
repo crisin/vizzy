@@ -1,10 +1,19 @@
 import { useState } from "react";
 import { useDialogFocus } from "./useDialogFocus";
-import { DEFAULT_WORKFLOW, IMAGE_TOKEN, comfyPing, type BakeKind } from "./comfy";
+import {
+  DEFAULT_WORKFLOW,
+  GRID_SIZES,
+  IMAGE_TOKEN,
+  X_TOKEN,
+  Y_TOKEN,
+  comfyPing,
+  type AxisRanges,
+  type BakeKind,
+} from "./comfy";
 
 export type BakeState =
   | { kind: "idle" }
-  | { kind: "running" }
+  | { kind: "running"; msg?: string }
   | { kind: "ok"; msg: string }
   | { kind: "error"; msg: string };
 
@@ -23,14 +32,13 @@ const COPY: Record<
   },
   variants: {
     title: "Varianten backen",
-    label: "Workflow — Varianten",
+    label: "Workflow — eine Zelle",
     hint:
-      "Alle gespeicherten Ausgaben werden in ihrer Reihenfolge zu einem Morph-Satz. " +
-      "Der Standard kommt mit Core Nodes aus (RepeatLatentBatch + img2img bei " +
-      "denoise 0.45): neun Varianten, die sich die Komposition teilen. Die " +
-      "Reihenfolge ist dabei allerdings beliebig — für Achsen, die wirklich " +
-      "etwas bedeuten, muss pro Ausgabe ein Prompt- oder IP-Adapter-Gewicht " +
-      "variieren. Passe ckpt_name an ein Checkpoint an, das du hast.",
+      "Der Workflow läuft einmal pro Rasterzelle. Setz den Seed im Workflow auf " +
+      "einen festen Wert — nur dann teilen sich die Varianten die Komposition, " +
+      "und nur dann wirkt die Mischung wie ein Bild, das sich verändert. " +
+      "Der Standard kommt mit Core Nodes aus; passe ckpt_name an ein " +
+      "Checkpoint an, das du hast.",
     button: "Varianten backen",
   },
 };
@@ -42,6 +50,8 @@ export function ComfyPanel({
   onUrlChange,
   workflow,
   onWorkflowChange,
+  axes,
+  onAxesChange,
   imageName,
   bake,
   onBake,
@@ -51,6 +61,8 @@ export function ComfyPanel({
   onKindChange: (kind: BakeKind) => void;
   url: string;
   onUrlChange: (url: string) => void;
+  axes: AxisRanges;
+  onAxesChange: (axes: AxisRanges) => void;
   workflow: string;
   onWorkflowChange: (json: string) => void;
   /** currently selected parallax image — the source for both bakes */
@@ -73,6 +85,10 @@ export function ComfyPanel({
     }
   })();
   const hasToken = workflow.includes(IMAGE_TOKEN);
+  // a variant bake with neither axis in the template renders the same cell
+  // N times — worth catching before it burns N runs
+  const hasAxis =
+    workflow.includes(X_TOKEN) || workflow.includes(Y_TOKEN);
 
   const testConnection = async () => {
     setPing({ kind: "running" });
@@ -156,6 +172,62 @@ export function ComfyPanel({
           )}
         </div>
 
+        {kind === "variants" && (
+          <div className="comfy-field">
+            <span className="set-field-label">Raster und Achsen</span>
+            <p className="set-hint">
+              Jede Zelle ist ein eigener Lauf. <code>{X_TOKEN}</code> und{" "}
+              <code>{Y_TOKEN}</code> im Workflow werden durch die Koordinaten
+              der Zelle ersetzt — als blanke Zahl, also sowohl im Prompt
+              (<code>(golden hour:{X_TOKEN})</code>) als auch direkt als
+              Node-Eingang brauchbar. X ist im Morph-Grid die Klangfarbe,
+              Y die Energie; Zeile 1 ist das untere Ende der Energieachse.
+            </p>
+            <div className="comfy-row">
+              <label className="comfy-num">
+                Raster
+                <select
+                  className="src-select"
+                  value={axes.side}
+                  onChange={(e) =>
+                    onAxesChange({ ...axes, side: Number(e.target.value) })
+                  }
+                >
+                  {GRID_SIZES.map((n) => (
+                    <option key={n} value={n}>
+                      {n}×{n} = {n * n} Läufe
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(
+                [
+                  ["X von", "xFrom"],
+                  ["X bis", "xTo"],
+                  ["Y von", "yFrom"],
+                  ["Y bis", "yTo"],
+                ] as const
+              ).map(([label, key]) => (
+                <label key={key} className="comfy-num">
+                  {label}
+                  <input
+                    className="src-select"
+                    type="number"
+                    step="0.1"
+                    value={axes[key]}
+                    onChange={(e) =>
+                      onAxesChange({
+                        ...axes,
+                        [key]: Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="comfy-field">
           <label className="set-field-label" htmlFor="comfy-workflow">
             {copy.label} (ComfyUI-API-Format)
@@ -189,6 +261,12 @@ export function ComfyPanel({
                 Platzhalter {IMAGE_TOKEN} fehlt
               </span>
             )}
+            {workflowValid && hasToken && kind === "variants" && !hasAxis && (
+              <span className="set-hint comfy-err">
+                Weder {X_TOKEN} noch {Y_TOKEN} im Workflow — alle Zellen
+                würden gleich aussehen
+              </span>
+            )}
           </div>
         </div>
 
@@ -198,7 +276,13 @@ export function ComfyPanel({
               type="button"
               className="mode-btn active"
               onClick={onBake}
-              disabled={busy || !imageName || !workflowValid || !hasToken}
+              disabled={
+                busy ||
+                !imageName ||
+                !workflowValid ||
+                !hasToken ||
+                (kind === "variants" && !hasAxis)
+              }
               title={
                 imageName
                   ? `${copy.button} — Quelle: ${imageName}`
@@ -215,8 +299,8 @@ export function ComfyPanel({
           </div>
           {bake.kind === "running" && (
             <p className="set-hint">
-              Läuft. Der erste Durchlauf lädt das Modell von der Platte und
-              kann eine Minute dauern.
+              {bake.msg ? `${bake.msg} · ` : ""}Der erste Durchlauf lädt das
+              Modell von der Platte und kann eine Minute dauern.
             </p>
           )}
           {bake.kind === "ok" && (

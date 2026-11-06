@@ -1150,3 +1150,22 @@ kbd {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.comfy-num {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.85em;
+  color: #94a3b8;
+}
+
+.comfy-num .src-select {
+  /* .src-select carries flex-basis 320px, which inside this column would be
+     a 320px *height* — the basis is on the main axis, and here that is Y. */
+  flex: 0 0 auto;
+  width: 11ch;
+}
+
+.comfy-num select.src-select {
+  width: auto;
+}

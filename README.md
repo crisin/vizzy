@@ -40,11 +40,19 @@ See [PLAN.md](PLAN.md) for the roadmap.
   output order. Address and workflows are editable in the panel; a
   workflow is ComfyUI's own API-format JSON with the placeholder
   `__VIZZY_INPUT_IMAGE__` where the input image goes, so whatever nodes
-  you have can be swapped in. Defaults: depth wants the
-  `comfyui_controlnet_aux` custom nodes (`DepthAnythingV2Preprocessor`);
-  variants use core nodes only (`RepeatLatentBatch` + img2img at denoise
-  0.45) and need a `ckpt_name` you actually have. The HTTP work runs in
-  Rust because ComfyUI serves no CORS headers unless started with
+  you have can be swapped in. A variant bake runs the workflow once per
+  grid cell with `__VIZZY_X__` and `__VIZZY_Y__` replaced by that cell's
+  coordinates — as bare numbers, so they work inside a prompt
+  (`(golden hour:__VIZZY_X__)`) or as a node input (`"denoise": __VIZZY_Y__`).
+  Grid size and the range of each axis are set in the panel. One run per
+  cell rather than one batched run, because a batch shares its
+  conditioning: its outputs differ only by noise, which gives a coherent
+  but *unordered* set — and the grid's axes only mean something if the
+  order does. Keep the seed in the workflow fixed so the variants share a
+  composition. Defaults: depth wants the `comfyui_controlnet_aux` custom
+  nodes (`DepthAnythingV2Preprocessor`); variants use core nodes only and
+  need a `ckpt_name` you actually have. The HTTP work runs in Rust
+  because ComfyUI serves no CORS headers unless started with
   `--enable-cors-header`.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —

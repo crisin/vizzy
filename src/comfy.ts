@@ -7,6 +7,21 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const IMAGE_TOKEN = "__VIZZY_INPUT_IMAGE__";
 
+/**
+ * Axis placeholders for a variant bake. One ComfyUI run per grid cell, with
+ * these replaced by that cell's coordinates — which is the only way the morph
+ * grid's axes come to mean anything. A single batched run shares its
+ * conditioning across the batch, so every output differs only by noise: the
+ * set is coherent but unordered, and an unordered set makes "right is
+ * brighter" a lie.
+ *
+ * They substitute as bare numbers, so they work both inside a prompt string
+ * (`"(golden hour:__VIZZY_X__)"`) and as a node input (`"denoise": __VIZZY_Y__`).
+ */
+export const X_TOKEN = "__VIZZY_X__";
+export const Y_TOKEN = "__VIZZY_Y__";
+export const INDEX_TOKEN = "__VIZZY_INDEX__";
+
 export const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
 
 /**
@@ -44,18 +59,17 @@ export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
 );
 
 /**
- * Variant bake for the morph grid: N takes on the same picture.
+ * Variant bake for the morph grid: one cell of the grid per run.
  *
- * Core nodes only — `RepeatLatentBatch` copies the encoded image N times and
- * the sampler gives each batch index its own noise, so one run yields N
- * images that share the composition and differ in detail. That is the part
- * the morph grid needs, and it works on a bare ComfyUI with no custom nodes.
+ * Core nodes only, so it works on a bare ComfyUI. The two axes ride on prompt
+ * weights, which is where a 0..1 number is idiomatic anyway — `__VIZZY_X__`
+ * is brightness/warmth (the grid's timbre axis) and `__VIZZY_Y__` is
+ * intensity (its energy axis).
  *
- * What it does *not* give you is a meaningful order. The grid's axes read
- * left-to-right as timbre and top-to-bottom as energy, and batch noise is
- * unordered — so the surface will be coherent but arbitrary. For axes that
- * mean something, vary a prompt weight or an IP-Adapter weight per output
- * instead; that is install-specific, which is why it is not the default.
+ * The seed is a literal, so every cell shares it: that shared structure is
+ * what makes the blends read as one picture changing rather than as several
+ * pictures stacked. `denoise` is the other half of that bargain — high enough
+ * for the prompt to bite, low enough for the composition to survive.
  *
  * `ckpt_name` has to match a checkpoint you actually have.
  */
@@ -71,7 +85,10 @@ export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
     },
     "3": {
       class_type: "CLIPTextEncode",
-      inputs: { clip: ["2", 1], text: "same scene, shifting mood and light" },
+      inputs: {
+        clip: ["2", 1],
+        text: `the same scene, (bright warm daylight:${X_TOKEN}), (dark intense storm:${Y_TOKEN})`,
+      },
     },
     "4": {
       class_type: "CLIPTextEncode",
@@ -82,34 +99,91 @@ export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
       inputs: { pixels: ["1", 0], vae: ["2", 2] },
     },
     "6": {
-      class_type: "RepeatLatentBatch",
-      inputs: { samples: ["5", 0], amount: 9 },
-    },
-    "7": {
       class_type: "KSampler",
       inputs: {
         model: ["2", 0],
         positive: ["3", 0],
         negative: ["4", 0],
-        latent_image: ["6", 0],
+        latent_image: ["5", 0],
+        // same seed in every cell — the variants must share structure
         seed: 1234,
         steps: 20,
         cfg: 6,
         sampler_name: "dpmpp_2m",
         scheduler: "karras",
-        // low enough that the composition survives, high enough to differ
         denoise: 0.45,
       },
     },
-    "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["2", 2] } },
-    "9": {
+    "7": { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["2", 2] } },
+    "8": {
       class_type: "SaveImage",
-      inputs: { images: ["8", 0], filename_prefix: "vizzy_variant" },
+      inputs: { images: ["7", 0], filename_prefix: `vizzy_cell_${INDEX_TOKEN}` },
     },
   },
   null,
   2,
 );
+
+/** Grid sizes offered for a variant bake; each is `n × n` cells. */
+export const GRID_SIZES = [2, 3, 4] as const;
+
+export type AxisRanges = {
+  side: number;
+  xFrom: number;
+  xTo: number;
+  yFrom: number;
+  yTo: number;
+};
+
+export const DEFAULT_AXES: AxisRanges = {
+  side: 3,
+  // prompt-weight range: 0 would delete the term, so start above it
+  xFrom: 0.3,
+  xTo: 1.4,
+  yFrom: 0.3,
+  yTo: 1.4,
+};
+
+/**
+ * Cell coordinates in the order the morph grid reads them: row-major, row 0
+ * the low end of the energy axis. Must stay in step with `gridFor` in
+ * morph.ts, or the picture will not match the sound.
+ */
+export function gridCells(
+  axes: AxisRanges,
+): { index: number; x: number; y: number }[] {
+  const n = Math.max(1, Math.round(axes.side));
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const cells = [];
+  for (let i = 0; i < n * n; i++) {
+    const col = i % n;
+    const row = Math.floor(i / n);
+    cells.push({
+      index: i,
+      x: lerp(axes.xFrom, axes.xTo, n === 1 ? 0.5 : col / (n - 1)),
+      y: lerp(axes.yFrom, axes.yTo, n === 1 ? 0.5 : row / (n - 1)),
+    });
+  }
+  return cells;
+}
+
+/**
+ * Substitute one cell's coordinates into the template. Numbers are written
+ * fixed-point: a bare `__VIZZY_X__` as a node input has to survive as JSON,
+ * and exponent notation (`1e-7`) would not round-trip through every consumer.
+ */
+export function fillAxes(
+  workflow: string,
+  cell: { index: number; x: number; y: number },
+): string {
+  return workflow
+    .split(X_TOKEN)
+    .join(cell.x.toFixed(3))
+    .split(Y_TOKEN)
+    .join(cell.y.toFixed(3))
+    .split(INDEX_TOKEN)
+    .join(String(cell.index + 1));
+}
 
 export type BakeKind = "depth" | "variants";
 
@@ -123,6 +197,37 @@ export const DEFAULT_WORKFLOW: Record<BakeKind, string> = {
   depth: DEFAULT_DEPTH_WORKFLOW,
   variants: DEFAULT_VARIANT_WORKFLOW,
 };
+
+const AXES_KEY = "vizzy.comfy.axes";
+
+export function loadAxes(): AxisRanges {
+  try {
+    const raw = localStorage.getItem(AXES_KEY);
+    if (!raw) return DEFAULT_AXES;
+    const parsed = JSON.parse(raw) as Partial<AxisRanges>;
+    const num = (v: unknown, fallback: number) =>
+      typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    return {
+      side: GRID_SIZES.includes(parsed.side as (typeof GRID_SIZES)[number])
+        ? (parsed.side as number)
+        : DEFAULT_AXES.side,
+      xFrom: num(parsed.xFrom, DEFAULT_AXES.xFrom),
+      xTo: num(parsed.xTo, DEFAULT_AXES.xTo),
+      yFrom: num(parsed.yFrom, DEFAULT_AXES.yFrom),
+      yTo: num(parsed.yTo, DEFAULT_AXES.yTo),
+    };
+  } catch {
+    return DEFAULT_AXES;
+  }
+}
+
+export function saveAxes(axes: AxisRanges) {
+  try {
+    localStorage.setItem(AXES_KEY, JSON.stringify(axes));
+  } catch {
+    // storage unavailable — the values still apply for this session
+  }
+}
 
 export function loadComfyUrl(): string {
   try {
