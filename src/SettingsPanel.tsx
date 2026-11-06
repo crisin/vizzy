@@ -13,6 +13,19 @@ import type { UserPreset } from "./mdTweaks";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
+/** One line that tells every build apart: version, build number (commit
+ *  count), commit, bundle time — and whether this is a dev server rather
+ *  than a bundle. The values are baked in by vite.config.ts. */
+const BUILD_ID = (() => {
+  const b = __VIZZY_BUILD__;
+  const when = new Date(b.builtAt).toLocaleString("de-DE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const mode = import.meta.env.DEV ? " · dev" : "";
+  return `vizzy ${b.version} · Build ${b.build} · ${b.commit} · ${when}${mode}`;
+})();
+
 /** Parameters with side effects beyond the render loop. */
 function applySideEffects(group: string, key: string, value: number) {
   if (group === "audio" && key === "beatSigma" && inTauri) {
@@ -542,6 +555,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <p className="set-note">
                 Vizzy läuft komplett lokal — Audio-Analyse in Rust, Rendering im
                 Fenster. Es verlässt nichts deinen Rechner.
+              </p>
+              <p className="set-note build-id" title={BUILD_ID}>
+                {BUILD_ID}
               </p>
             </Field>
           </>

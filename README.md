@@ -143,6 +143,14 @@ Handy scripts:
 npm run release
 ```
 
+Every build identifies itself under *Einstellungen → System → Über*:
+`vizzy 0.1.0 · Build 37 · 97c3d7a · 06.11.2026, 21:41`. The build number is
+the commit count, the hash gets `+dirty` when uncommitted changes went in,
+and the dev server adds `· dev`. Vite bakes this in at build time, so commit
+before `npm run release` if the line should name a clean commit. The version
+lives in `package.json` **and** `src-tauri/tauri.conf.json`; the build
+refuses to run if the two disagree.
+
 ### Windows
 
 Produces two artifacts:

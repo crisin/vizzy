@@ -555,6 +555,16 @@ body {
   margin: 0;
 }
 
+/* Build identity line — monospace so hashes and numbers line up, selectable
+   so it can be pasted into a bug report. */
+.set-note.build-id {
+  margin-top: 6px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: calc(var(--ui-font-sub) * 0.92);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .set-wide {
   width: 100%;
   flex: none;
