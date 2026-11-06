@@ -2146,7 +2146,43 @@ function startVisualizer(
   let bcLoadedOvVersion = -1;
   let bcEverLoaded = false;
   let lastTweakApply = 0;
+  let lastMdRender = 0;
   const timeByte = new Uint8Array(1024).fill(128);
+
+  // --- recovery from a preset that traps --------------------------------
+  // Butterchurn runs preset equations as WASM, where turning NaN or a huge
+  // float into an integer (`%`, `megabuf(i)`, `loop(n, …)`) is a hard trap
+  // rather than a silent 0. A preset whose state has gone bad — a physics
+  // sim that blew up, say — then traps on every frame, forever, because the
+  // bad numbers sit in its memory. Reloading the preset runs its init code
+  // again and clears them; one that keeps doing it gets skipped.
+  const TRAP_WINDOW_MS = 30_000;
+  const TRAPS_BEFORE_SKIP = 3;
+  let bcHeld = false; // rendering paused until a clean preset is loaded
+  let bcHardLoad = false; // next load must not blend from the broken preset
+  let bcTrapKey = "";
+  let bcTrapAt = 0;
+  let bcTraps = 0;
+  let bcSkipDeadline = 0;
+
+  function onMilkdropTrap(e: unknown) {
+    const now = performance.now();
+    const again = bcLoadedPreset === bcTrapKey && now - bcTrapAt < TRAP_WINDOW_MS;
+    bcTraps = again ? bcTraps + 1 : 1;
+    bcTrapKey = bcLoadedPreset;
+    bcTrapAt = now;
+    bcHeld = true;
+    bcHardLoad = true;
+    if (bcTraps < TRAPS_BEFORE_SKIP) {
+      flog(`[md] render FAILED (${bcTrapKey}): ${e} — reloading preset`);
+      bcLoadedPreset = ""; // same key, fresh state
+    } else {
+      flog(`[md] render FAILED (${bcTrapKey}): ${e} — keeps failing, skipping`);
+      lastAutoSwitch = now;
+      bcSkipDeadline = now + 1500;
+      onAutoSwitch();
+    }
+  }
 
   function ensureButterchurn(): boolean {
     if (bc) return true;
@@ -2236,6 +2272,16 @@ function startVisualizer(
 
     const want = presetKeyRef.current;
     const ov = overridesRef.current;
+    if (bcSkipDeadline && performance.now() > bcSkipDeadline) {
+      // Asked for another preset after repeated traps and none arrived
+      // (a favourites list of one, say) — start this one over instead of
+      // standing still.
+      bcSkipDeadline = 0;
+      if (bcHeld && want === bcLoadedPreset) {
+        bcLoadedPreset = "";
+        bcTraps = 0;
+      }
+    }
     if (want !== bcLoadedPreset || ov.version !== bcLoadedOvVersion) {
       const keyChanged = want !== bcLoadedPreset;
       const nowMs = performance.now();
@@ -2251,15 +2297,30 @@ function startVisualizer(
             const preset = Object.keys(ov.map).length
               ? mergeBaseVals(base, ov.map)
               : base;
-            bc.loadPreset(
+            // Blending keeps the outgoing preset's equations running, so
+            // after a trap the switch has to be a hard cut.
+            const loading: unknown = bc.loadPreset(
               preset,
-              keyChanged && bcEverLoaded
+              keyChanged && bcEverLoaded && !bcHardLoad
                 ? params.get("milkdrop", "blend")
                 : 0,
             );
             bcEverLoaded = true;
             if (keyChanged) flog(`[md] preset: ${want}`);
+            if (bcHardLoad) {
+              // WASM presets compile asynchronously; until that is done the
+              // broken one is still the one that would render.
+              bcHardLoad = false;
+              bcSkipDeadline = 0;
+              void Promise.resolve(loading)
+                .catch((e) => flog(`[md] loadPreset FAILED (${want}): ${e}`))
+                .then(() => {
+                  bcHeld = false;
+                });
+            }
           } catch (e) {
+            bcHeld = false;
+            bcHardLoad = false;
             flog(`[md] loadPreset FAILED (${want}): ${e}`);
           }
         }
@@ -2284,6 +2345,15 @@ function startVisualizer(
       const v = Math.max(-1, Math.min(1, wave[j] * gain));
       timeByte[j] = (v * 127 + 128) | 0;
     }
+    if (bcHeld) return; // the last good frame stays up while a reload lands
+
+    // Butterchurn's own clock accepts frame times up to a full second. One
+    // stall that long (a bake, a preset compiling, the window coming back)
+    // is enough to send a preset's physics off to infinity, so it gets the
+    // same 100 ms ceiling the rest of the app uses.
+    const nowMs = performance.now();
+    const elapsedTime = Math.min(Math.max((nowMs - lastMdRender) / 1000, 0.001), 0.1);
+    lastMdRender = nowMs;
     try {
       bc.render({
         audioLevels: {
@@ -2291,10 +2361,10 @@ function startVisualizer(
           timeByteArrayL: timeByte,
           timeByteArrayR: timeByte,
         },
+        elapsedTime,
       });
     } catch (e) {
-      bcFailed = true;
-      flog(`[md] render FAILED: ${e}`);
+      onMilkdropTrap(e);
     }
   }
 
