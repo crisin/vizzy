@@ -16,7 +16,11 @@ export const IMAGE_TOKEN = "__VIZZY_INPUT_IMAGE__";
  * brighter" a lie.
  *
  * They substitute as bare numbers, so they work both inside a prompt string
- * (`"(golden hour:__VIZZY_X__)"`) and as a node input (`"denoise": __VIZZY_Y__`).
+ * (`"(golden hour:__VIZZY_X__)"`) and as a node input, where a token standing
+ * alone as a value — `"denoise": "__VIZZY_Y__"` — loses its quotes along with
+ * the token and arrives as a real JSON number. Writing the quotes keeps the
+ * template parseable as it sits in the editor, which is what the panel
+ * validates.
  */
 export const X_TOKEN = "__VIZZY_X__";
 export const Y_TOKEN = "__VIZZY_Y__";
@@ -24,16 +28,30 @@ export const INDEX_TOKEN = "__VIZZY_INDEX__";
 
 export const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
 
+/** Weights `DEFAULT_DEPTH_WORKFLOW` expects in `models/geometry_estimation/`. */
+export const DA3_MODEL_FILE = "depth_anything_3_mono_large.safetensors";
+export const DA3_MODEL_URL =
+  "https://huggingface.co/Comfy-Org/Depth-Anything-3/resolve/main/geometry_estimation/" +
+  DA3_MODEL_FILE;
+
 /**
  * Depth bake in ComfyUI's API format (the "Export (API)" flavour, not the
  * editor's own save format).
  *
- * Needs the `comfyui_controlnet_aux` custom nodes for
- * `DepthAnythingV2Preprocessor` — that is the one assumption here that may
- * not hold on a given install, which is exactly why this is an editable
- * template and not hardcoded. Swap the middle node for whatever depth
- * estimator you have; only the `__VIZZY_INPUT_IMAGE__` placeholder and a
- * single image-saving node at the end are required.
+ * Core nodes only: ComfyUI 0.44 ships Depth Anything 3 itself, so no custom
+ * node pack is needed — only the weights above, dropped into
+ * `models/geometry_estimation/`. The *mono* variant is the one that predicts
+ * a sky mask, and the sky is what decides whether a landscape unfolds or
+ * tears: `v2_style` pins sky pixels to black (far) instead of letting a
+ * single bright cloud define the near end of the range.
+ *
+ * `DA3Render` renders near = white, which is the polarity the parallax shader
+ * already assumes — so "Tiefenkarte invertieren" stays off.
+ *
+ * Only the `__VIZZY_INPUT_IMAGE__` placeholder and a single image-saving node
+ * at the end are required; swap the middle nodes for any depth estimator you
+ * prefer. Measured on an RTX 5070: ~1 s for a 1216×832 image at resolution
+ * 1008, once the weights are resident — the first run pays the load.
  */
 export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
   {
@@ -42,16 +60,38 @@ export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
       inputs: { image: IMAGE_TOKEN, upload: "image" },
     },
     "2": {
-      class_type: "DepthAnythingV2Preprocessor",
-      inputs: {
-        image: ["1", 0],
-        ckpt_name: "depth_anything_v2_vitl.pth",
-        resolution: 1024,
-      },
+      class_type: "LoadDA3Model",
+      inputs: { model_name: DA3_MODEL_FILE, weight_dtype: "default" },
     },
     "3": {
+      class_type: "DA3Inference",
+      inputs: {
+        da3_model: ["2", 0],
+        image: ["1", 0],
+        // longest side the model runs at, must be a multiple of 14;
+        // the result is upsampled back to the picture's own size
+        resolution: 1008,
+        resize_method: "upper_bound_resize",
+        mode: "mono",
+      },
+    },
+    "4": {
+      class_type: "DA3Render",
+      inputs: {
+        da3_geometry: ["3", 0],
+        output: "depth",
+        // ComfyUI namespaces a dynamic combo's dependent inputs under the
+        // combo's own name; written flat, the server rejects the prompt with
+        // "Required input is missing: normalization".
+        "output.normalization": "v2_style",
+        // a no-op next to v2_style, which already keeps the sky out of its
+        // quantiles and then pins it to black
+        "output.apply_sky_clip": false,
+      },
+    },
+    "5": {
       class_type: "SaveImage",
-      inputs: { images: ["2", 0], filename_prefix: "vizzy_depth" },
+      inputs: { images: ["4", 0], filename_prefix: "vizzy_depth" },
     },
   },
   null,
@@ -61,15 +101,28 @@ export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
 /**
  * Variant bake for the morph grid: one cell of the grid per run.
  *
- * Core nodes only, so it works on a bare ComfyUI. The two axes ride on prompt
- * weights, which is where a 0..1 number is idiomatic anyway — `__VIZZY_X__`
- * is brightness/warmth (the grid's timbre axis) and `__VIZZY_Y__` is
- * intensity (its energy axis).
+ * Core nodes only, so it works on a bare ComfyUI. Each axis is a crossfade
+ * between two opposed prompts via `ConditioningAverage`, with the axis value
+ * as the mix: `__VIZZY_X__` goes cold moonlight → warm gold (the grid's
+ * timbre axis), `__VIZZY_Y__` goes calm → thunderstorm (its energy axis).
+ *
+ * The first version of this put both axes on prompt *weights* inside one
+ * sentence. It baked nine near-identical pictures: a weight on a sub-phrase,
+ * under a denoise low enough to keep the composition, barely moves SDXL at
+ * all. Interpolating whole conditionings is the lever that actually pulls —
+ * and because the two endpoints are encoded once and only mixed per cell,
+ * neighbouring cells stay close, which is what the blending needs.
  *
  * The seed is a literal, so every cell shares it: that shared structure is
  * what makes the blends read as one picture changing rather than as several
  * pictures stacked. `denoise` is the other half of that bargain — high enough
- * for the prompt to bite, low enough for the composition to survive.
+ * for the prompt to bite, low enough for the composition to survive. 0.45
+ * holds a landscape; faces are another matter, and img2img will rearrange
+ * them at any strength worth using.
+ *
+ * The picture is scaled to one megapixel first. Not a nicety: a photo
+ * straight off a camera is 24 MP, and SDXL's VAE would run out of VRAM long
+ * before the sampler ever started.
  *
  * `ckpt_name` has to match a checkpoint you actually have.
  */
@@ -80,44 +133,92 @@ export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
       inputs: { image: IMAGE_TOKEN, upload: "image" },
     },
     "2": {
+      class_type: "ImageScaleToTotalPixels",
+      inputs: {
+        image: ["1", 0],
+        upscale_method: "lanczos",
+        megapixels: 1.0,
+        resolution_steps: 8,
+      },
+    },
+    "3": {
       class_type: "CheckpointLoaderSimple",
       inputs: { ckpt_name: "sd_xl_base_1.0.safetensors" },
     },
-    "3": {
-      class_type: "CLIPTextEncode",
-      inputs: {
-        clip: ["2", 1],
-        text: `the same scene, (bright warm daylight:${X_TOKEN}), (dark intense storm:${Y_TOKEN})`,
-      },
-    },
+    // the four poles: X runs 4 → 5, Y runs 6 → 7
     "4": {
       class_type: "CLIPTextEncode",
-      inputs: { clip: ["2", 1], text: "text, watermark, blurry" },
-    },
-    "5": {
-      class_type: "VAEEncode",
-      inputs: { pixels: ["1", 0], vae: ["2", 2] },
-    },
-    "6": {
-      class_type: "KSampler",
       inputs: {
-        model: ["2", 0],
-        positive: ["3", 0],
-        negative: ["4", 0],
-        latent_image: ["5", 0],
-        // same seed in every cell — the variants must share structure
-        seed: 1234,
-        steps: 20,
-        cfg: 6,
-        sampler_name: "dpmpp_2m",
-        scheduler: "karras",
-        denoise: 0.45,
+        clip: ["3", 1],
+        text: "cold blue moonlight, deep shadows, desaturated, night",
       },
     },
-    "7": { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["2", 2] } },
+    "5": {
+      class_type: "CLIPTextEncode",
+      inputs: {
+        clip: ["3", 1],
+        text: "warm golden sunlight, long shadows, glowing amber light, sunset",
+      },
+    },
+    "6": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: ["3", 1], text: "calm still air, clear sky, serene" },
+    },
+    "7": {
+      class_type: "CLIPTextEncode",
+      inputs: {
+        clip: ["3", 1],
+        text: "violent thunderstorm, black churning clouds, heavy rain, dramatic",
+      },
+    },
     "8": {
+      class_type: "ConditioningAverage",
+      inputs: {
+        conditioning_to: ["5", 0],
+        conditioning_from: ["4", 0],
+        conditioning_to_strength: X_TOKEN,
+      },
+    },
+    "9": {
+      class_type: "ConditioningAverage",
+      inputs: {
+        conditioning_to: ["7", 0],
+        conditioning_from: ["6", 0],
+        conditioning_to_strength: Y_TOKEN,
+      },
+    },
+    "10": {
+      class_type: "ConditioningCombine",
+      inputs: { conditioning_1: ["8", 0], conditioning_2: ["9", 0] },
+    },
+    "11": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: ["3", 1], text: "text, watermark, blurry, deformed" },
+    },
+    "12": {
+      class_type: "VAEEncode",
+      inputs: { pixels: ["2", 0], vae: ["3", 2] },
+    },
+    "13": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["3", 0],
+        positive: ["10", 0],
+        negative: ["11", 0],
+        latent_image: ["12", 0],
+        // same seed in every cell — the variants must share structure
+        seed: 1234,
+        steps: 24,
+        cfg: 6.5,
+        sampler_name: "dpmpp_2m",
+        scheduler: "karras",
+        denoise: 0.55,
+      },
+    },
+    "14": { class_type: "VAEDecode", inputs: { samples: ["13", 0], vae: ["3", 2] } },
+    "15": {
       class_type: "SaveImage",
-      inputs: { images: ["7", 0], filename_prefix: `vizzy_cell_${INDEX_TOKEN}` },
+      inputs: { images: ["14", 0], filename_prefix: `vizzy_cell_${INDEX_TOKEN}` },
     },
   },
   null,
@@ -137,11 +238,14 @@ export type AxisRanges = {
 
 export const DEFAULT_AXES: AxisRanges = {
   side: 3,
-  // prompt-weight range: 0 would delete the term, so start above it
-  xFrom: 0.3,
-  xTo: 1.4,
-  yFrom: 0.3,
-  yTo: 1.4,
+  // the default workflow spends these as crossfades between two prompts, so
+  // the full 0..1 is meaningful: 0 is one pole, 1 the other. A template that
+  // spends them as prompt weights instead wants to start above 0, since a
+  // weight of 0 deletes its term.
+  xFrom: 0,
+  xTo: 1,
+  yFrom: 0,
+  yTo: 1,
 };
 
 /**
@@ -171,18 +275,21 @@ export function gridCells(
  * Substitute one cell's coordinates into the template. Numbers are written
  * fixed-point: a bare `__VIZZY_X__` as a node input has to survive as JSON,
  * and exponent notation (`1e-7`) would not round-trip through every consumer.
+ *
+ * A token that is a value all by itself (`"strength": "__VIZZY_X__"`) is
+ * replaced together with its quotes, so the node receives a number rather
+ * than a string. Tokens sitting inside a longer string — a prompt weight —
+ * are replaced in place and the string stays a string.
  */
 export function fillAxes(
   workflow: string,
   cell: { index: number; x: number; y: number },
 ): string {
-  return workflow
-    .split(X_TOKEN)
-    .join(cell.x.toFixed(3))
-    .split(Y_TOKEN)
-    .join(cell.y.toFixed(3))
-    .split(INDEX_TOKEN)
-    .join(String(cell.index + 1));
+  const subst = (text: string, token: string, value: string) =>
+    text.split(`"${token}"`).join(value).split(token).join(value);
+  let out = subst(workflow, X_TOKEN, cell.x.toFixed(3));
+  out = subst(out, Y_TOKEN, cell.y.toFixed(3));
+  return subst(out, INDEX_TOKEN, String(cell.index + 1));
 }
 
 export type BakeKind = "depth" | "variants";

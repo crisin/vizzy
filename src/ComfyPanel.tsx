@@ -26,8 +26,9 @@ const COPY: Record<
     label: "Workflow — Tiefenkarte",
     hint:
       "Die erste gespeicherte Ausgabe wird als Tiefenkarte des Bildes übernommen. " +
-      "Der Standard braucht die Custom Nodes comfyui_controlnet_aux — fehlen sie, " +
-      "tausch den mittleren Knoten gegen deinen eigenen Tiefen-Schätzer.",
+      "Der Standard kommt mit Core Nodes aus (Depth Anything 3, ab ComfyUI 0.44) " +
+      "und braucht nur die Gewichtsdatei in models/geometry_estimation/ — " +
+      "sonst tausch die mittleren Knoten gegen deinen eigenen Tiefen-Schätzer.",
     button: "Tiefenkarte backen",
   },
   variants: {
@@ -37,8 +38,9 @@ const COPY: Record<
       "Der Workflow läuft einmal pro Rasterzelle. Setz den Seed im Workflow auf " +
       "einen festen Wert — nur dann teilen sich die Varianten die Komposition, " +
       "und nur dann wirkt die Mischung wie ein Bild, das sich verändert. " +
-      "Der Standard kommt mit Core Nodes aus; passe ckpt_name an ein " +
-      "Checkpoint an, das du hast.",
+      "Der Standard kommt mit Core Nodes aus und blendet pro Achse zwischen " +
+      "zwei Gegenpolen über (kalt ↔ warm, ruhig ↔ Sturm); passe ckpt_name an " +
+      "ein Checkpoint an, das du hast.",
     button: "Varianten backen",
   },
 };
@@ -179,9 +181,10 @@ export function ComfyPanel({
               Jede Zelle ist ein eigener Lauf. <code>{X_TOKEN}</code> und{" "}
               <code>{Y_TOKEN}</code> im Workflow werden durch die Koordinaten
               der Zelle ersetzt — als blanke Zahl, also sowohl im Prompt
-              (<code>(golden hour:{X_TOKEN})</code>) als auch direkt als
-              Node-Eingang brauchbar. X ist im Morph-Grid die Klangfarbe,
-              Y die Energie; Zeile 1 ist das untere Ende der Energieachse.
+              (<code>(golden hour:{X_TOKEN})</code>) als auch als Node-Eingang
+              (<code>"denoise": "{X_TOKEN}"</code>, die Anführungszeichen
+              fallen mit weg). X ist im Morph-Grid die Klangfarbe, Y die
+              Energie; Zeile 1 ist das untere Ende der Energieachse.
             </p>
             <div className="comfy-row">
               <label className="comfy-num">

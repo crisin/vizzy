@@ -31,7 +31,7 @@ See [PLAN.md](PLAN.md) for the roadmap.
   it. Nothing loops, because there is no sequence to loop. Load the
   variants as a multi-selection (ordered by filename, so a ComfyUI batch
   lands in order) — bake them with the same seed and a varying
-  prompt/IP-Adapter weight, so they share composition and differ in mood.
+  prompt mix, so they share composition and differ in mood.
   Three blend modes: weighted mean, per-pixel dissolve, and brightest
   channel wins; both axes have their own gain and can be switched off.
 - **ComfyUI bake** ("Backen ✨", in both scenes): vizzy hands the selected
@@ -43,17 +43,33 @@ See [PLAN.md](PLAN.md) for the roadmap.
   you have can be swapped in. A variant bake runs the workflow once per
   grid cell with `__VIZZY_X__` and `__VIZZY_Y__` replaced by that cell's
   coordinates — as bare numbers, so they work inside a prompt
-  (`(golden hour:__VIZZY_X__)`) or as a node input (`"denoise": __VIZZY_Y__`).
+  (`(golden hour:__VIZZY_X__)`) or as a node input (`"denoise":
+  "__VIZZY_Y__"`, quotes and all: they fall away with the token, so the
+  node gets a number and the template still parses while you edit it).
   Grid size and the range of each axis are set in the panel. One run per
   cell rather than one batched run, because a batch shares its
   conditioning: its outputs differ only by noise, which gives a coherent
   but *unordered* set — and the grid's axes only mean something if the
   order does. Keep the seed in the workflow fixed so the variants share a
-  composition. Defaults: depth wants the `comfyui_controlnet_aux` custom
-  nodes (`DepthAnythingV2Preprocessor`); variants use core nodes only and
-  need a `ckpt_name` you actually have. The HTTP work runs in Rust
-  because ComfyUI serves no CORS headers unless started with
-  `--enable-cors-header`.
+  composition.
+
+  Each axis of the variant default crossfades between two opposed prompts
+  (`ConditioningAverage`) instead of scaling a weight inside one sentence.
+  Measured against a real ComfyUI: a weight on a sub-phrase, at a denoise
+  low enough to keep the composition, baked nine near-identical pictures —
+  interpolating whole conditionings moves the mood and still holds the
+  frame. On an RTX 5070 a 3×3 grid of 1 MP SDXL cells takes about two
+  minutes, a depth map about a second.
+
+  Both defaults use core nodes only (ComfyUI 0.44+): depth is Depth
+  Anything 3 and wants
+  [its weights](https://huggingface.co/Comfy-Org/Depth-Anything-3) in
+  `models/geometry_estimation/`; variants want a `ckpt_name` you actually
+  have. The HTTP work runs in Rust because ComfyUI serves no CORS headers
+  unless started with `--enable-cors-header`. The client has an opt-in test
+  suite against a real server:
+  `VIZZY_COMFY_URL=http://127.0.0.1:8188 cargo test --test comfy_live --
+  --ignored` — it skips without the variable.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.
