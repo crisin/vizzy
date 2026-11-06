@@ -28,6 +28,19 @@ export const INDEX_TOKEN = "__VIZZY_INDEX__";
 
 export const DEFAULT_COMFY_URL = "http://127.0.0.1:8188";
 
+/**
+ * Checkpoint `DEFAULT_VARIANT_WORKFLOW` loads.
+ *
+ * A name, not a capability: ComfyUI only offers what is on that machine, and
+ * nothing here can conjure a missing file. This one is an SDXL photo model,
+ * which is what the variant workflow is tuned for — a different base wants
+ * different steps and cfg. If your install does not have it, the panel's
+ * workflow field is the place to change it; `/object_info` on the server
+ * lists what it does have.
+ */
+export const DEFAULT_CHECKPOINT =
+  "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors";
+
 /** Weights `DEFAULT_DEPTH_WORKFLOW` expects in `models/geometry_estimation/`. */
 export const DA3_MODEL_FILE = "depth_anything_3_mono_large.safetensors";
 export const DA3_MODEL_URL =
@@ -124,7 +137,8 @@ export const DEFAULT_DEPTH_WORKFLOW = JSON.stringify(
  * straight off a camera is 24 MP, and SDXL's VAE would run out of VRAM long
  * before the sampler ever started.
  *
- * `ckpt_name` has to match a checkpoint you actually have.
+ * `ckpt_name` has to match a checkpoint the ComfyUI you point at actually
+ * has — see `DEFAULT_CHECKPOINT`.
  */
 export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
   {
@@ -143,7 +157,7 @@ export const DEFAULT_VARIANT_WORKFLOW = JSON.stringify(
     },
     "3": {
       class_type: "CheckpointLoaderSimple",
-      inputs: { ckpt_name: "sd_xl_base_1.0.safetensors" },
+      inputs: { ckpt_name: DEFAULT_CHECKPOINT },
     },
     // the four poles: X runs 4 → 5, Y runs 6 → 7
     "4": {

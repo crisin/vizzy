@@ -64,8 +64,11 @@ See [PLAN.md](PLAN.md) for the roadmap.
   Both defaults use core nodes only (ComfyUI 0.44+): depth is Depth
   Anything 3 and wants
   [its weights](https://huggingface.co/Comfy-Org/Depth-Anything-3) in
-  `models/geometry_estimation/`; variants want a `ckpt_name` you actually
-  have. The HTTP work runs in Rust because ComfyUI serves no CORS headers
+  `models/geometry_estimation/`; variants load an SDXL photo checkpoint by
+  name (`DEFAULT_CHECKPOINT` in `src/comfy.ts`), and a name is all it is —
+  point vizzy at a ComfyUI that has a different one and the workflow field
+  in the panel is where you say so. `/object_info` on the server lists what
+  it has. The HTTP work runs in Rust because ComfyUI serves no CORS headers
   unless started with `--enable-cors-header`. The client has an opt-in test
   suite against a real server:
   `VIZZY_COMFY_URL=http://127.0.0.1:8188 cargo test --test comfy_live --
