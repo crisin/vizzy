@@ -38,6 +38,14 @@ import {
   type ImageRecord,
 } from "./imageStore";
 import type { ParallaxAsset } from "./parallax";
+import { ComfyPanel, type BakeState } from "./ComfyPanel";
+import {
+  comfyBake,
+  loadComfyUrl,
+  loadDepthWorkflow,
+  saveComfyUrl,
+  saveDepthWorkflow,
+} from "./comfy";
 import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
 import { MdTweakPanel } from "./MdTweakPanel";
@@ -329,6 +337,10 @@ function App() {
   const imageFileRef = useRef<ImageAction | null>(null);
   const [images, setImages] = useState<ImageMeta[]>([]);
   const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
+  const [comfyOpen, setComfyOpen] = useState(false);
+  const [comfyUrl, setComfyUrl] = useState(loadComfyUrl);
+  const [depthWorkflow, setDepthWorkflow] = useState(loadDepthWorkflow);
+  const [bakeState, setBakeState] = useState<BakeState>({ kind: "idle" });
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
   const [tweakOpen, setTweakOpen] = useState(false);
@@ -867,6 +879,49 @@ function App() {
     [selectedImageId, nextImageSeq, refreshImages],
   );
 
+  /**
+   * Push the selected image through ComfyUI and keep the result as its depth
+   * map. Runs once per picture — the scene itself never touches ComfyUI.
+   */
+  const bakeDepth = useCallback(async () => {
+    if (selectedImageId == null) return;
+    if (!inTauri) {
+      setBakeState({
+        kind: "error",
+        msg: "Backen geht nur in der Desktop-App: der Browser darf ComfyUI nicht direkt ansprechen (keine CORS-Header).",
+      });
+      return;
+    }
+    setBakeState({ kind: "running" });
+    const started = performance.now();
+    try {
+      const record = await getImage(selectedImageId);
+      if (!record) throw new Error("Bild ist nicht mehr in der Library");
+      const depth = await comfyBake(
+        comfyUrl,
+        depthWorkflow,
+        record.image,
+        record.name,
+      );
+      if (depth.byteLength === 0) {
+        throw new Error("ComfyUI lieferte ein leeres Bild zurück");
+      }
+      const updated = await setImageDepth(selectedImageId, depth, "image/png");
+      if (!updated) throw new Error("Tiefenkarte ließ sich nicht speichern");
+      queueImage(updated); // the scene picks it up on the next frame
+      refreshImages();
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      setBakeState({
+        kind: "ok",
+        msg: `${Math.round(depth.byteLength / 1024)} KB in ${secs}s — die Szene läuft schon darauf.`,
+      });
+      flog(`[comfy] depth baked for ${record.name} in ${secs}s`);
+    } catch (err) {
+      setBakeState({ kind: "error", msg: String(err) });
+      flog(`[comfy] bake FAILED: ${err}`);
+    }
+  }, [selectedImageId, comfyUrl, depthWorkflow, queueImage, refreshImages]);
+
   // Restore the model library + last selection (also in browser demo mode).
   const modelRestoredRef = useRef(false);
   useEffect(() => {
@@ -1004,6 +1059,7 @@ function App() {
 
       if (e.key === "Escape") {
         if (libraryOpen) setLibraryOpen(false);
+        else if (comfyOpen) setComfyOpen(false);
         else if (routingOpen) setRoutingOpen(false);
         else if (tweakOpen) setTweakOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
@@ -1014,7 +1070,7 @@ function App() {
 
       // Modal dialogs own the keyboard until they are dismissed. Prevent
       // shortcuts from changing the app behind their backdrop.
-      if (libraryOpen || routingOpen) return;
+      if (libraryOpen || routingOpen || comfyOpen) return;
 
       // Global shortcuts must never fire while somebody is typing or using a
       // native select/range control.
@@ -1063,6 +1119,7 @@ function App() {
     randomPreset,
     toggleFavorite,
     libraryOpen,
+    comfyOpen,
     routingOpen,
     tweakOpen,
     settingsOpen,
@@ -1468,9 +1525,21 @@ function App() {
                   className="mode-btn"
                   disabled={selectedImageId == null}
                   onClick={() => depthInputRef.current?.click()}
-                  title="Tiefenkarte zum aktuellen Bild laden (ComfyUI → Depth Anything). Ohne sie läuft die Szene auf einer grob geschätzten Tiefe."
+                  title="Fertige Tiefenkarte als Datei zum aktuellen Bild laden. Ohne sie läuft die Szene auf einer grob geschätzten Tiefe."
                 >
                   Tiefenkarte +
+                </button>
+                <button
+                  type="button"
+                  className="mode-btn"
+                  disabled={selectedImageId == null}
+                  onClick={() => {
+                    setBakeState({ kind: "idle" });
+                    setComfyOpen(true);
+                  }}
+                  title="Tiefenkarte in ComfyUI backen"
+                >
+                  {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
                 </button>
                 {selectedImageId != null && (
                   <button
@@ -1577,6 +1646,26 @@ function App() {
         />
       )}
       {routingOpen && <RoutingModal onClose={() => setRoutingOpen(false)} />}
+      {comfyOpen && (
+        <ComfyPanel
+          url={comfyUrl}
+          onUrlChange={(u) => {
+            setComfyUrl(u);
+            saveComfyUrl(u);
+          }}
+          workflow={depthWorkflow}
+          onWorkflowChange={(json) => {
+            setDepthWorkflow(json);
+            saveDepthWorkflow(json);
+          }}
+          imageName={
+            images.find((i) => i.id === selectedImageId)?.name ?? null
+          }
+          bake={bakeState}
+          onBake={() => void bakeDepth()}
+          onClose={() => setComfyOpen(false)}
+        />
+      )}
       {tweakOpen && mode === "milkdrop" && (
         <MdTweakPanel
           presetKey={presetKey}

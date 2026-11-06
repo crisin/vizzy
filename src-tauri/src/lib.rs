@@ -1,4 +1,6 @@
 mod audio;
+/// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
+pub mod comfy;
 mod phrasing;
 
 use std::sync::{mpsc, Arc, Mutex};
@@ -84,7 +86,9 @@ pub fn run() {
             list_apps,
             set_source,
             set_beat_sensitivity,
-            frontend_log
+            frontend_log,
+            comfy::comfy_ping,
+            comfy::comfy_bake
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

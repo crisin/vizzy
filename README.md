@@ -21,10 +21,19 @@ See [PLAN.md](PLAN.md) for the roadmap.
 - **Parallax**: a still image unfolded into 2.5D by a depth map and then
   moved by the audio — bass breathes the relief open, the beat kicks the
   camera, the spectrum ripples bottom (bass) to top (treble) through the
-  picture. Bake the depth map offline (ComfyUI → Depth Anything V2) and
-  load it next to the image; without one the scene falls back to a crude
-  depth guessed from the picture itself, which is usable but visibly
-  flatter. Images and depth maps persist in the same IndexedDB library.
+  picture. Without a depth map the scene falls back to a crude depth
+  guessed from the picture itself — usable, but visibly flatter. Images
+  and depth maps persist in the same IndexedDB library.
+- **ComfyUI bake** ("Backen ✨" in the parallax scene): vizzy hands the
+  image to a locally running ComfyUI and keeps the result as the depth
+  map. The ComfyUI address and the workflow are editable in the panel —
+  the workflow is ComfyUI's own API-format JSON with the placeholder
+  `__VIZZY_INPUT_IMAGE__` where the input image goes, so any depth
+  estimator you have installed can be swapped in. The shipped default
+  wants the `comfyui_controlnet_aux` custom nodes
+  (`DepthAnythingV2Preprocessor`). The HTTP work runs in Rust because
+  ComfyUI serves no CORS headers unless started with
+  `--enable-cors-header`.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.

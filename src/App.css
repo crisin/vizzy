@@ -1099,3 +1099,54 @@ kbd {
     animation: none;
   }
 }
+
+/* ComfyUI bake panel */
+.comfy-field {
+  margin-bottom: 14px;
+}
+
+.comfy-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.comfy-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.comfy-textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  background: rgba(2, 6, 16, 0.75);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.comfy-textarea:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.7);
+  outline-offset: 1px;
+}
+
+.comfy-ok {
+  color: #4ade80;
+}
+
+.comfy-err {
+  color: #f87171;
+}
+
+.comfy-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
