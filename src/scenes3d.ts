@@ -3,6 +3,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { params } from "./params";
 import { FloraScene } from "./flora";
 import { ParallaxScene, type ParallaxAsset } from "./parallax";
+import { MorphScene, type MorphAsset } from "./morph";
 import type { SceneName } from "./sceneCatalog";
 
 export interface AudioFrame3D {
@@ -1281,6 +1282,7 @@ export class Viz3D {
   private log: (msg: string) => void;
   private pendingModel: { data: ArrayBuffer; name: string } | null = null;
   private pendingImage: ParallaxAsset | null = null;
+  private pendingMorph: MorphAsset | null = null;
   private controls: OrbitControls | null = null;
   private homePos = new THREE.Vector3();
   private homeTarget = new THREE.Vector3();
@@ -1368,6 +1370,11 @@ export class Viz3D {
         if (this.pendingImage) scene.loadAsset(this.pendingImage);
         return scene;
       }
+      case "morph": {
+        const scene = new MorphScene(aspect, this.log);
+        if (this.pendingMorph) scene.loadAsset(this.pendingMorph);
+        return scene;
+      }
       case "model": {
         const scene = new ModelScene(aspect, this.log);
         if (this.pendingModel) {
@@ -1401,6 +1408,24 @@ export class Viz3D {
     if (this.active instanceof ParallaxScene) {
       this.active.dispose();
       this.active = this.create("parallax");
+      this.setupControls();
+    }
+  }
+
+  /** Load a set of variants into the morph scene. */
+  loadMorph(asset: MorphAsset) {
+    this.pendingMorph = asset;
+    if (this.active instanceof MorphScene) {
+      this.active.loadAsset(asset);
+    }
+  }
+
+  /** Back to the built-in placeholder variants. */
+  clearMorph() {
+    this.pendingMorph = null;
+    if (this.active instanceof MorphScene) {
+      this.active.dispose();
+      this.active = this.create("morph");
       this.setupControls();
     }
   }

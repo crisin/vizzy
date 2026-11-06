@@ -38,6 +38,18 @@ import {
   type ImageRecord,
 } from "./imageStore";
 import type { ParallaxAsset } from "./parallax";
+import type { MorphAsset } from "./morph";
+import {
+  MAX_FRAMES,
+  addMorphSet,
+  clearAllMorphSets,
+  deleteMorphSet,
+  getMorphSet,
+  listMorphSets,
+  updateMorphThumb,
+  type MorphMeta,
+  type MorphRecord,
+} from "./morphStore";
 import { ComfyPanel, type BakeState } from "./ComfyPanel";
 import {
   comfyBake,
@@ -77,6 +89,10 @@ type ModelAction =
 
 type ImageAction =
   | { action: "load"; asset: ParallaxAsset; seq: number }
+  | { action: "clear"; seq: number };
+
+type MorphAction =
+  | { action: "load"; asset: MorphAsset; seq: number }
   | { action: "clear"; seq: number };
 import "./App.css";
 
@@ -245,6 +261,7 @@ type Persisted = {
   sourceValue?: string;
   modelId?: number;
   imageId?: number;
+  morphId?: number;
   bgLayer?: BgLayer;
   blendMode?: BlendMode;
   debug?: boolean;
@@ -337,6 +354,10 @@ function App() {
   const imageFileRef = useRef<ImageAction | null>(null);
   const [images, setImages] = useState<ImageMeta[]>([]);
   const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
+  const morphInputRef = useRef<HTMLInputElement | null>(null);
+  const morphFileRef = useRef<MorphAction | null>(null);
+  const [morphSets, setMorphSets] = useState<MorphMeta[]>([]);
+  const [selectedMorphId, setSelectedMorphId] = useState<number | null>(null);
   const [comfyOpen, setComfyOpen] = useState(false);
   const [comfyUrl, setComfyUrl] = useState(loadComfyUrl);
   const [depthWorkflow, setDepthWorkflow] = useState(loadDepthWorkflow);
@@ -597,6 +618,7 @@ function App() {
       sourceValue: selected,
       modelId: selectedModelId ?? undefined,
       imageId: selectedImageId ?? undefined,
+      morphId: selectedMorphId ?? undefined,
       bgLayer,
       blendMode,
       debug: debugOpen,
@@ -618,6 +640,7 @@ function App() {
     selected,
     selectedModelId,
     selectedImageId,
+    selectedMorphId,
     bgLayer,
     blendMode,
     debugOpen,
@@ -879,6 +902,119 @@ function App() {
     [selectedImageId, nextImageSeq, refreshImages],
   );
 
+  /* ---- morph: sets of variants for the 2D control surface ---- */
+
+  const nextMorphSeq = useCallback(
+    () => (morphFileRef.current?.seq ?? 0) + 1,
+    [],
+  );
+
+  const refreshMorphSets = useCallback(() => {
+    listMorphSets().then(setMorphSets).catch(console.error);
+  }, []);
+
+  const queueMorph = useCallback(
+    (record: MorphRecord) => {
+      morphFileRef.current = {
+        action: "load",
+        asset: {
+          name: record.name,
+          frames: record.frames,
+          frameType: record.frameType,
+        },
+        seq: nextMorphSeq(),
+      };
+    },
+    [nextMorphSeq],
+  );
+
+  /**
+   * Frames arrive as a multi-selection and are ordered by filename: a ComfyUI
+   * batch writes `..._00001_.png`, `..._00002_.png`, … so the output order is
+   * the control-surface order without anyone having to arrange anything.
+   */
+  const onMorphFiles = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const picked = Array.from(e.target.files ?? []);
+      e.target.value = "";
+      if (picked.length === 0) return;
+      const files = picked
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+        .slice(0, MAX_FRAMES);
+      if (picked.length > MAX_FRAMES) {
+        flog(
+          `[cfg] morph set truncated to ${MAX_FRAMES} of ${picked.length} frames`,
+        );
+      }
+      const frames = await Promise.all(files.map((f) => f.arrayBuffer()));
+      const frameType = files[0].type || "image/png";
+      const name = `${files[0].name} +${files.length - 1}`;
+      queueMorph({
+        name,
+        frames,
+        frameType,
+        size: frames.reduce((n, f) => n + f.byteLength, 0),
+        addedAt: Date.now(),
+      });
+      setScene3d("morph");
+      try {
+        const id = await addMorphSet(name, frames, frameType);
+        setSelectedMorphId(id);
+        refreshMorphSets();
+        flog(`[cfg] morph set saved: ${name} (#${id}, ${frames.length} frames)`);
+        try {
+          const { morphThumb } = await import("./morph");
+          const bitmap = await createImageBitmap(
+            new Blob([frames[0]], { type: frameType }),
+          );
+          await updateMorphThumb(id, morphThumb(bitmap));
+          bitmap.close();
+          refreshMorphSets();
+        } catch {
+          // preview is optional
+        }
+      } catch (err) {
+        flog(`[cfg] morph save FAILED: ${err}`);
+      }
+    },
+    [queueMorph, refreshMorphSets],
+  );
+
+  const pickMorphSet = useCallback(
+    async (id: number | null) => {
+      if (id == null) {
+        setSelectedMorphId(null);
+        morphFileRef.current = { action: "clear", seq: nextMorphSeq() };
+        return;
+      }
+      try {
+        const record = await getMorphSet(id);
+        if (!record) return;
+        setSelectedMorphId(id);
+        queueMorph(record);
+      } catch (err) {
+        flog(`[cfg] morph pick FAILED: ${err}`);
+      }
+    },
+    [nextMorphSeq, queueMorph],
+  );
+
+  const removeMorphSet = useCallback(
+    async (id: number) => {
+      try {
+        await deleteMorphSet(id);
+      } catch (err) {
+        flog(`[cfg] morph delete FAILED: ${err}`);
+      }
+      if (selectedMorphId === id) {
+        setSelectedMorphId(null);
+        morphFileRef.current = { action: "clear", seq: nextMorphSeq() };
+      }
+      refreshMorphSets();
+    },
+    [selectedMorphId, nextMorphSeq, refreshMorphSets],
+  );
+
   /**
    * Push the selected image through ComfyUI and keep the result as its depth
    * map. Runs once per picture — the scene itself never touches ComfyUI.
@@ -975,6 +1111,30 @@ function App() {
     })();
   }, [queueImage]);
 
+  // Same for the morph-set library.
+  const morphRestoredRef = useRef(false);
+  useEffect(() => {
+    if (morphRestoredRef.current) return;
+    morphRestoredRef.current = true;
+    void (async () => {
+      try {
+        const list = await listMorphSets();
+        setMorphSets(list);
+        const id = saved.morphId;
+        if (id != null && list.some((m) => m.id === id)) {
+          const record = await getMorphSet(id);
+          if (record) {
+            setSelectedMorphId(id);
+            queueMorph(record);
+            flog(`[cfg] restored morph set: ${record.name}`);
+          }
+        }
+      } catch {
+        // library unavailable — placeholder stays
+      }
+    })();
+  }, [queueMorph]);
+
   // Emergency exit: wipe settings, parameters and the model library.
   const resetAll = useCallback(() => {
     try {
@@ -986,6 +1146,7 @@ function App() {
     void Promise.all([
       clearAllModels().catch(() => {}),
       clearAllImages().catch(() => {}),
+      clearAllMorphSets().catch(() => {}),
     ]).finally(() => window.location.reload());
   }, []);
 
@@ -1006,6 +1167,7 @@ function App() {
       bpmElRef,
       modelFileRef,
       imageFileRef,
+      morphFileRef,
       camResetRef,
       bgLayerRef,
       blendRef,
@@ -1553,6 +1715,55 @@ function App() {
                 )}
               </>
             )}
+            {scene3d === "morph" && (
+              <>
+                {morphSets.length > 0 && (
+                  <select
+                    className="mode-btn"
+                    value={selectedMorphId ?? ""}
+                    onChange={(e) =>
+                      void pickMorphSet(
+                        e.target.value === "" ? null : Number(e.target.value),
+                      )
+                    }
+                    title="Gespeicherten Varianten-Satz wählen"
+                  >
+                    <option value="">— Platzhalter —</option>
+                    {morphSets.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.frameCount}× {m.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className="mode-btn"
+                  onClick={() => morphInputRef.current?.click()}
+                  title={`Varianten laden — mehrere Bilder auf einmal, nach Dateiname sortiert (max. ${MAX_FRAMES}). Gleicher Seed, variierende Stimmung.`}
+                >
+                  Varianten +
+                </button>
+                {selectedMorphId != null && (
+                  <button
+                    type="button"
+                    className="mode-btn danger"
+                    onClick={() => void removeMorphSet(selectedMorphId)}
+                    title="Satz aus der Library löschen"
+                  >
+                    ✕
+                  </button>
+                )}
+              </>
+            )}
+            <input
+              ref={morphInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={onMorphFiles}
+            />
             <input
               ref={fileInputRef}
               type="file"
@@ -1696,6 +1907,7 @@ function startVisualizer(
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: ModelAction | null },
   imageRef: { current: ImageAction | null },
+  morphRef: { current: MorphAction | null },
   camResetRef: { current: number },
   bgLayerRef: { current: BgLayer },
   blendRef: { current: BlendMode },
@@ -1743,6 +1955,7 @@ function startVisualizer(
   let viz3dFailed = false;
   let loadedModelSeq = 0;
   let loadedImageSeq = 0;
+  let loadedMorphSeq = 0;
   let lastCamReset = 0;
 
   function ensure3D(): boolean {
@@ -1784,6 +1997,12 @@ function startVisualizer(
         loadedImageSeq = img.seq;
         if (img.action === "load") viz3d.loadImage(img.asset);
         else viz3d.clearImage();
+      }
+      const set = morphRef.current;
+      if (set && set.seq !== loadedMorphSeq) {
+        loadedMorphSeq = set.seq;
+        if (set.action === "load") viz3d.loadMorph(set.asset);
+        else viz3d.clearMorph();
       }
       if (camResetRef.current !== lastCamReset) {
         lastCamReset = camResetRef.current;

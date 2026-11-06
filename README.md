@@ -13,9 +13,9 @@ See [PLAN.md](PLAN.md) for the roadmap.
 - **Analysis** in Rust: FFT (64 log bands), beat detection
   (bass-weighted spectral flux, adaptive threshold), BPM estimation.
 - **Modes**: bars, radial, scope, Milkdrop (107 Butterchurn presets with
-  blend + beat-driven auto-switching) and twelve 3D scenes (three.js):
+  blend + beat-driven auto-switching) and thirteen 3D scenes (three.js):
   orb, terrain, tunnel, bars3d, gyro, procedural noise blob, nested
-  cubes, blocky critters, surf, flora, parallax, and your own
+  cubes, blocky critters, surf, flora, parallax, morph, and your own
   glTF/GLB/ZIP models with a thumbnail library (IndexedDB) and a
   bass/beat-driven explode effect.
 - **Parallax**: a still image unfolded into 2.5D by a depth map and then
@@ -24,6 +24,16 @@ See [PLAN.md](PLAN.md) for the roadmap.
   picture. Without a depth map the scene falls back to a crude depth
   guessed from the picture itself — usable, but visibly flatter. Images
   and depth maps persist in the same IndexedDB library.
+- **Morph grid**: N variants of the *same* picture, treated as coordinates
+  rather than as a sequence. The horizontal axis is timbre (spectral
+  centroid), the vertical one is energy; the music moves a cursor across
+  that surface and the picture is the blend of the four variants around
+  it. Nothing loops, because there is no sequence to loop. Load the
+  variants as a multi-selection (ordered by filename, so a ComfyUI batch
+  lands in order) — bake them with the same seed and a varying
+  prompt/IP-Adapter weight, so they share composition and differ in mood.
+  Three blend modes: weighted mean, per-pixel dissolve, and brightest
+  channel wins; both axes have their own gain and can be switched off.
 - **ComfyUI bake** ("Backen ✨" in the parallax scene): vizzy hands the
   image to a locally running ComfyUI and keeps the result as the depth
   map. The ComfyUI address and the workflow are editable in the panel —
@@ -135,7 +145,7 @@ Windows feature set is complete through the editor phase: parameter
 editor, frequency listeners with a modulation matrix (route any Hz
 range onto any effect parameter, ◎ button), Milkdrop preset tweaking
 with saveable user presets (🎛 button), background layer compositing,
-and twelve 3D scenes. The macOS capture backend (Core Audio process taps
+and thirteen 3D scenes. The macOS capture backend (Core Audio process taps
 via `objc2-core-audio`, `src-tauri/src/audio/mac.rs`) covers all three
 source kinds. Next up: custom shader visualizations with a live code
 editor.

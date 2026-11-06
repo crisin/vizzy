@@ -3,12 +3,13 @@
 // shared: opening one database at two different versions throws.
 
 const DB_NAME = "vizzy";
-const VERSION = 3;
+const VERSION = 4;
 
 export const MODEL_STORE = "models";
 export const IMAGE_STORE = "images";
+export const MORPH_STORE = "morphs";
 
-const STORES = [MODEL_STORE, IMAGE_STORE];
+const STORES = [MODEL_STORE, IMAGE_STORE, MORPH_STORE];
 
 export function withStore<T>(
   store: string,
