@@ -59,6 +59,7 @@ export function ComfyPanel({
   bake,
   onBake,
   onClose,
+  embedded = false,
 }: {
   kind: BakeKind;
   onKindChange: (kind: BakeKind) => void;
@@ -73,6 +74,7 @@ export function ComfyPanel({
   bake: BakeState;
   onBake: () => void;
   onClose: () => void;
+  embedded?: boolean;
 }) {
   const copy = COPY[kind];
   const dialogRef = useDialogFocus<HTMLDivElement>();
@@ -102,16 +104,8 @@ export function ComfyPanel({
     }
   };
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="comfy-title"
-        onClick={(e) => e.stopPropagation()}
-      >
+  const body = (
+    <>
         <div className="modal-head">
           <h2 id="comfy-title">{copy.title}</h2>
           <button
@@ -342,6 +336,20 @@ export function ComfyPanel({
             <p className="set-hint comfy-err comfy-pre">{bake.msg}</p>
           )}
         </div>
+    </>
+  );
+  if (embedded) return body;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="comfy-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {body}
       </div>
     </div>
   );

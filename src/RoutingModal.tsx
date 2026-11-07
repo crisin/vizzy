@@ -12,7 +12,13 @@ const TARGETS: { value: string; label: string }[] = Object.entries(
   })),
 );
 
-export function RoutingModal({ onClose }: { onClose: () => void }) {
+export function RoutingModal({
+  onClose,
+  embedded = false,
+}: {
+  onClose: () => void;
+  embedded?: boolean;
+}) {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [meters, setMeters] = useState<Map<number, number>>(new Map());
   const dialogRef = useDialogFocus<HTMLDivElement>();
@@ -24,17 +30,8 @@ export function RoutingModal({ onClose }: { onClose: () => void }) {
     return () => window.clearInterval(t);
   }, []);
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        id="routing-dialog"
-        className="modal routing-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="routing-title"
-        onClick={(e) => e.stopPropagation()}
-      >
+  const body = (
+    <>
         <div className="modal-head">
           <h2 id="routing-title">Frequenz-Listener & Routing</h2>
           <button
@@ -243,6 +240,21 @@ export function RoutingModal({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         ))}
+    </>
+  );
+  if (embedded) return body;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        id="routing-dialog"
+        className="modal routing-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="routing-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {body}
       </div>
     </div>
   );

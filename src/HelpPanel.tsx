@@ -20,21 +20,16 @@ const SHORTCUTS = [
 export function HelpPanel({
   onClose,
   returnFocusRef,
+  embedded = false,
 }: {
   onClose: () => void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
+  embedded?: boolean;
 }) {
   const panelRef = useDialogFocus<HTMLElement>(false, returnFocusRef);
 
-  return (
-    <aside
-      ref={panelRef}
-      id="help-panel"
-      className="editor-panel help-panel"
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="help-title"
-    >
+  const body = (
+    <>
       <div className="editor-head">
         <h2 id="help-title">Schnellstart</h2>
         <button
@@ -72,6 +67,19 @@ export function HelpPanel({
         Tipp: Bewege die Maus oder drücke eine Taste, um die Steuerung wieder
         einzublenden.
       </p>
+    </>
+  );
+  if (embedded) return body;
+  return (
+    <aside
+      ref={panelRef}
+      id="help-panel"
+      className="editor-panel help-panel"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="help-title"
+    >
+      {body}
     </aside>
   );
 }

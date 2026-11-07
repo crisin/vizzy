@@ -355,8 +355,36 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const uiTier = resolveUiTier(uiScale, viewportW);
+  // One drawer holds settings, tweaks, routing, ComfyUI and help; the old
+  // per-panel flags are now "drawer open on that tab".
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<string>("audio");
+  const tabFlag = (
+    id: string,
+  ): [boolean, (v: boolean | ((prev: boolean) => boolean)) => void] => {
+    const open = settingsOpen && drawerTab === id;
+    return [
+      open,
+      (v) => {
+        const next = typeof v === "function" ? v(open) : v;
+        if (next) {
+          setDrawerTab(id);
+          setSettingsOpen(true);
+        } else if (open) {
+          setSettingsOpen(false);
+        }
+      },
+    ];
+  };
+  const [helpOpen, setHelpOpen] = tabFlag("help");
+  const toggleDrawer = () => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return;
+    }
+    if (drawerTab === "help") setDrawerTab("audio");
+    setSettingsOpen(true);
+  };
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const helpButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -389,7 +417,7 @@ function App() {
   const morphFileRef = useRef<MorphAction | null>(null);
   const [morphSets, setMorphSets] = useState<MorphMeta[]>([]);
   const [selectedMorphId, setSelectedMorphId] = useState<number | null>(null);
-  const [comfyOpen, setComfyOpen] = useState(false);
+  const [comfyOpen, setComfyOpen] = tabFlag("comfy");
   const [bakeKind, setBakeKind] = useState<BakeKind>("depth");
   const [comfyUrl, setComfyUrl] = useState(loadComfyUrl);
   const [workflows, setWorkflows] = useState<Record<BakeKind, string>>(() => ({
@@ -399,8 +427,8 @@ function App() {
   const [axes, setAxes] = useState<AxisRanges>(loadAxes);
   const [bakeState, setBakeState] = useState<BakeState>({ kind: "idle" });
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [routingOpen, setRoutingOpen] = useState(false);
-  const [tweakOpen, setTweakOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = tabFlag("routing");
+  const [tweakOpen, setTweakOpen] = tabFlag("tweaks");
   const [mdOverrides, setMdOverrides] = useState<Record<string, number>>({});
   const overridesRef = useRef({
     version: 0,
@@ -459,8 +487,9 @@ function App() {
   }, [presetKey]);
 
   useEffect(() => {
-    if (mode !== "milkdrop" && tweakOpen) setTweakOpen(false);
-  }, [mode, tweakOpen]);
+    // the tweaks tab only exists in Milkdrop mode
+    if (mode !== "milkdrop" && drawerTab === "tweaks") setDrawerTab("milkdrop");
+  }, [mode, drawerTab]);
 
   const requestMilkdropRuntime = useCallback(async () => {
     if (milkdropRuntime) {
@@ -1429,17 +1458,13 @@ function App() {
         e.preventDefault();
         void toggleFullscreen();
       } else if (key === "e" || e.key === ",") {
-        setSettingsOpen((v) => !v);
-        setRoutingOpen(false);
-        setHelpOpen(false);
+        toggleDrawer();
       } else if (key === "b") {
         setShowBpm((v) => !v);
       } else if (key === "d") {
         setDebugOpen((v) => !v);
       } else if (key === "?") {
         setHelpOpen((v) => !v);
-        setSettingsOpen(false);
-        setRoutingOpen(false);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
         setMode(VIZ_MODES[Number(e.key) - 1]);
       } else if (modeRef.current === "milkdrop") {
@@ -1483,6 +1508,7 @@ function App() {
     presetLibOpen,
     tagFilterOpen,
     tagBarOpen,
+    drawerTab,
   ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
@@ -1593,11 +1619,7 @@ function App() {
             ref={settingsButtonRef}
             type="button"
             className={`icon-btn ${settingsOpen ? "active" : ""}`}
-            onClick={() => {
-              setSettingsOpen((v) => !v);
-              setRoutingOpen(false);
-              setHelpOpen(false);
-            }}
+            onClick={toggleDrawer}
             title="Einstellungen (E)"
             aria-label="Einstellungen öffnen"
             aria-pressed={settingsOpen}
@@ -1610,11 +1632,7 @@ function App() {
             ref={helpButtonRef}
             type="button"
             className={`icon-btn ${helpOpen ? "active" : ""}`}
-            onClick={() => {
-              setHelpOpen((v) => !v);
-              setSettingsOpen(false);
-              setRoutingOpen(false);
-            }}
+            onClick={() => setHelpOpen((v) => !v)}
             title="Hilfe & Tastenkürzel (?)"
             aria-label="Hilfe und Tastenkürzel öffnen"
             aria-pressed={helpOpen}
@@ -2069,23 +2087,102 @@ function App() {
           onUnfavorite={toggleFavorite}
           userPresets={userPresets}
           onDeleteUserPreset={removeUserPreset}
-          onOpenRouting={() => {
-            setRoutingOpen(true);
-            setSettingsOpen(false);
-          }}
-          onOpenTweaks={() => {
-            setTweakOpen(true);
-            setSettingsOpen(false);
-          }}
+          onOpenRouting={() => setDrawerTab("routing")}
+          onOpenTweaks={() => setDrawerTab("tweaks")}
           onResetAll={resetAll}
           onClose={() => setSettingsOpen(false)}
           returnFocusRef={settingsButtonRef}
-        />
-      )}
-      {helpOpen && (
-        <HelpPanel
-          onClose={() => setHelpOpen(false)}
-          returnFocusRef={helpButtonRef}
+          tab={drawerTab}
+          onTab={setDrawerTab}
+          extraTabs={[
+            ...(mode === "milkdrop"
+              ? [
+                  {
+                    id: "tweaks",
+                    label: "Tweaks",
+                    after: "milkdrop" as const,
+                    content: (
+                      <MdTweakPanel
+                        key={presetKey}
+                        presetKey={presetKey}
+                        baseVals={currentBaseVals}
+                        overrides={mdOverrides}
+                        onChange={(key, value) =>
+                          setMdOverrides((prev) => ({ ...prev, [key]: value }))
+                        }
+                        onReset={() => setMdOverrides({})}
+                        onResetKey={(key) =>
+                          setMdOverrides((prev) => {
+                            const next = { ...prev };
+                            delete next[key];
+                            return next;
+                          })
+                        }
+                        onSave={saveTweaks}
+                        onDeleteUser={removeUserPreset}
+                      />
+                    ),
+                  },
+                ]
+              : []),
+            {
+              id: "routing",
+              label: "Routing",
+              after: "audio" as const,
+              content: <RoutingModal embedded onClose={() => setSettingsOpen(false)} />,
+            },
+            ...(comfyOpen || (mode === "3d" && (scene3d === "parallax" || scene3d === "morph"))
+              ? [
+                  {
+                    id: "comfy",
+                    label: "ComfyUI",
+                    after: "bild" as const,
+                    content: (
+                      <ComfyPanel
+                              kind={bakeKind}
+                              onKindChange={(k) => {
+                                setBakeKind(k);
+                                setBakeState({ kind: "idle" });
+                              }}
+                              url={comfyUrl}
+                              onUrlChange={(u) => {
+                                setComfyUrl(u);
+                                saveComfyUrl(u);
+                              }}
+                              axes={axes}
+                              onAxesChange={(a) => {
+                                setAxes(a);
+                                saveAxes(a);
+                              }}
+                              workflow={workflows[bakeKind]}
+                              onWorkflowChange={(json) => {
+                                setWorkflows((prev) => ({ ...prev, [bakeKind]: json }));
+                                saveWorkflow(bakeKind, json);
+                              }}
+                              imageName={
+                                images.find((i) => i.id === selectedImageId)?.name ?? null
+                              }
+                              bake={bakeState}
+                              onBake={() => void runBake()}
+                              onClose={() => setSettingsOpen(false)}
+                              embedded
+                            />
+                    ),
+                  },
+                ]
+              : []),
+            {
+              id: "help",
+              label: "Hilfe",
+              content: (
+                <HelpPanel
+                  embedded
+                  onClose={() => setSettingsOpen(false)}
+                  returnFocusRef={helpButtonRef}
+                />
+              ),
+            },
+          ]}
         />
       )}
       {libraryOpen && (
@@ -2096,37 +2193,6 @@ function App() {
           onDelete={(id) => void removeModel(id)}
           onAdd={() => fileInputRef.current?.click()}
           onClose={() => setLibraryOpen(false)}
-        />
-      )}
-      {routingOpen && <RoutingModal onClose={() => setRoutingOpen(false)} />}
-      {comfyOpen && (
-        <ComfyPanel
-          kind={bakeKind}
-          onKindChange={(k) => {
-            setBakeKind(k);
-            setBakeState({ kind: "idle" });
-          }}
-          url={comfyUrl}
-          onUrlChange={(u) => {
-            setComfyUrl(u);
-            saveComfyUrl(u);
-          }}
-          axes={axes}
-          onAxesChange={(a) => {
-            setAxes(a);
-            saveAxes(a);
-          }}
-          workflow={workflows[bakeKind]}
-          onWorkflowChange={(json) => {
-            setWorkflows((prev) => ({ ...prev, [bakeKind]: json }));
-            saveWorkflow(bakeKind, json);
-          }}
-          imageName={
-            images.find((i) => i.id === selectedImageId)?.name ?? null
-          }
-          bake={bakeState}
-          onBake={() => void runBake()}
-          onClose={() => setComfyOpen(false)}
         />
       )}
       {tagFilterOpen && mode === "milkdrop" && (
@@ -2181,20 +2247,6 @@ function App() {
           }}
           onToggleFavorite={toggleFavorite}
           onClose={() => setPresetLibOpen(false)}
-        />
-      )}
-      {tweakOpen && mode === "milkdrop" && (
-        <MdTweakPanel
-          presetKey={presetKey}
-          baseVals={currentBaseVals}
-          overrides={mdOverrides}
-          onChange={(key, value) =>
-            setMdOverrides((prev) => ({ ...prev, [key]: value }))
-          }
-          onReset={() => setMdOverrides({})}
-          onSave={saveTweaks}
-          onDeleteUser={removeUserPreset}
-          onClose={() => setTweakOpen(false)}
         />
       )}
     </div>

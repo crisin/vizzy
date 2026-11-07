@@ -9,6 +9,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { GROUP_LABELS, PARAM_SCHEMAS, params, type ParamDef } from "./params";
 import { useDialogFocus } from "./useDialogFocus";
+import { ParamRow, Section } from "./ui/ParamRow";
 import type { UserPreset } from "./mdTweaks";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -43,10 +44,6 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-function formatValue(d: ParamDef, value: number): string {
-  const text = value.toFixed(d.step < 1 ? 2 : 0);
-  return d.unit ? `${text} ${d.unit}` : text;
-}
 
 /** One parameter group rendered from its schema — sliders, checkboxes and
  *  dropdowns all come out of the same declaration. */
@@ -68,24 +65,22 @@ function ParamGroup({
     onChanged();
   };
 
+  const name = title ?? GROUP_LABELS[group] ?? group;
+  const changedCount = defs.filter(
+    (d) => Math.abs(params.getBase(group, d.key) - d.default) > d.step / 2,
+  ).length;
   return (
-    <section className="set-group">
-      <div className="set-group-head">
-        <span>{title ?? GROUP_LABELS[group] ?? group}</span>
-        <button
-          type="button"
-          className="mode-btn set-reset"
-          disabled={params.isDefault(group)}
-          aria-label={`${GROUP_LABELS[group] ?? group} zurücksetzen`}
-          onClick={() => {
-            params.reset(group);
-            for (const d of defs) applySideEffects(group, d.key, d.default);
-            onChanged();
-          }}
-        >
-          Reset
-        </button>
-      </div>
+    <Section
+      id={`param.${group}`}
+      title={name}
+      badge={changedCount ? `${changedCount} geändert` : undefined}
+      resetDisabled={params.isDefault(group)}
+      onReset={() => {
+        params.reset(group);
+        for (const d of defs) applySideEffects(group, d.key, d.default);
+        onChanged();
+      }}
+    >
       {defs.map((d) => {
         const value = params.getBase(group, d.key);
 
@@ -128,24 +123,22 @@ function ParamGroup({
         }
 
         return (
-          <label key={d.key} className="set-row">
-            <span className="set-label">
-              {d.label}
-              {d.hint && <small className="set-hint">{d.hint}</small>}
-            </span>
-            <input
-              type="range"
-              min={d.min}
-              max={d.max}
-              step={d.step}
-              value={value}
-              onChange={(e) => commit(d, Number(e.target.value))}
-            />
-            <output className="set-value">{formatValue(d, value)}</output>
-          </label>
+          <ParamRow
+            key={d.key}
+            label={d.label}
+            hint={d.hint}
+            value={value}
+            min={d.min}
+            max={d.max}
+            step={d.step}
+            unit={d.unit}
+            defaultValue={d.default}
+            onChange={(v) => commit(d, v)}
+            onReset={() => commit(d, d.default)}
+          />
         );
       })}
-    </section>
+    </Section>
   );
 }
 
@@ -202,10 +195,68 @@ export type SettingsPanelProps = {
   onResetAll: () => void;
   onClose: () => void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
+
+  /** controlled tab — the drawer is opened on a specific tab from outside */
+  tab: string;
+  onTab: (tab: string) => void;
+  /** tabs whose content lives elsewhere (tweaks, routing, ComfyUI, help) */
+  extraTabs: DrawerTab[];
 };
 
+export type DrawerTab = {
+  id: string;
+  label: string;
+  content: ReactNode;
+  /** placed after this built-in tab; default: at the end */
+  after?: TabId;
+};
+
+const WIDTH_KEY = "vizzy.drawer.width";
+const MIN_W = 340;
+
+function loadWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(WIDTH_KEY));
+    return Number.isFinite(v) && v >= MIN_W ? v : 440;
+  } catch {
+    return 440;
+  }
+}
+
 export function SettingsPanel(props: SettingsPanelProps) {
-  const [tab, setTab] = useState<TabId>("audio");
+  const tab = props.tab;
+  const setTab = props.onTab;
+  const [width, setWidth] = useState(loadWidth);
+  const startDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = width;
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(MIN_W, Math.min(window.innerWidth - 40, w0 + (x0 - ev.clientX)));
+      setWidth(w);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setWidth((w) => {
+        try {
+          localStorage.setItem(WIDTH_KEY, String(Math.round(w)));
+        } catch {
+          // ignore
+        }
+        return w;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const allTabs: { id: string; label: string }[] = [];
+  for (const t of TABS) {
+    allTabs.push(t);
+    for (const x of props.extraTabs) if (x.after === t.id) allTabs.push(x);
+  }
+  for (const x of props.extraTabs) if (!x.after) allTabs.push(x);
+  const extra = props.extraTabs.find((x) => x.id === tab);
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [armed, setArmed] = useState(false);
   const armTimer = useRef<number | undefined>(undefined);
@@ -219,13 +270,21 @@ export function SettingsPanel(props: SettingsPanelProps) {
     <aside
       ref={panelRef}
       id="settings-panel"
-      className="settings-panel"
+      className="settings-panel drawer"
+      style={{ ["--drawer-w" as string]: `${width}px` }}
       role="dialog"
       aria-modal="false"
       aria-labelledby="settings-title"
     >
+      <div
+        className="drawer-grip"
+        onPointerDown={startDrag}
+        onDoubleClick={() => setWidth(440)}
+        title="Breite ziehen · Doppelklick: Standard"
+        aria-hidden="true"
+      />
       <div className="settings-head">
-        <h2 id="settings-title">Einstellungen</h2>
+        <h2 id="settings-title">{allTabs.find((t) => t.id === tab)?.label ?? "Einstellungen"}</h2>
         <button
           type="button"
           className="icon-btn"
@@ -238,7 +297,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
       </div>
 
       <div className="settings-tabs" role="tablist" aria-label="Bereiche">
-        {TABS.map((t) => (
+        {allTabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -260,6 +319,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
         role="tabpanel"
         aria-labelledby={`settings-tab-${tab}`}
       >
+        {extra && <div className="drawer-embed">{extra.content}</div>}
+
         {tab === "audio" && (
           <>
             {inTauri ? (

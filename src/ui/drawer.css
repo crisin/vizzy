@@ -1,0 +1,196 @@
+/* The settings drawer and its building blocks (ParamRow, Section). */
+
+.settings-panel.drawer {
+  width: min(var(--drawer-w, 440px), calc(100vw - 28px));
+}
+
+.drawer-grip {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.drawer-grip:hover,
+.drawer-grip:active {
+  background: linear-gradient(90deg, transparent 3px, rgba(56, 189, 248, 0.6) 3px, rgba(56, 189, 248, 0.6) 5px, transparent 5px);
+}
+
+/* embedded panels bring their own title row — the drawer already has one */
+.drawer-embed > .modal-head,
+.drawer-embed > .editor-head {
+  display: none;
+}
+
+.drawer-embed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ------------------------------------------------------------- Section */
+
+.psec {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.psec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+}
+
+.psec-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  color: #94a3b8;
+  font: inherit;
+  font-size: var(--ui-font-sub);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.psec-toggle:hover {
+  color: #e2e8f0;
+}
+
+.psec-caret {
+  width: 1em;
+  color: #64748b;
+}
+
+.psec-badge {
+  font-size: 10px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #7dd3fc;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.psec-body {
+  padding: 2px 10px 10px;
+}
+
+/* ------------------------------------------------------------ ParamRow */
+
+.prow {
+  display: grid;
+  grid-template-columns: minmax(7.5em, 1fr) minmax(7em, 1.4fr) 4.6em 1.6em 1.6em;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.prow-label {
+  line-height: 1.2;
+  color: #cbd5e1;
+  cursor: default;
+  user-select: none;
+}
+
+.prow.changed .prow-label {
+  color: #7dd3fc;
+}
+
+.prow-hint {
+  display: block;
+  color: #64748b;
+  font-size: 0.82em;
+  margin-top: 2px;
+}
+
+.prow input[type="range"] {
+  width: 100%;
+  accent-color: #38bdf8;
+  min-height: calc(var(--ui-btn-h) * 0.6);
+}
+
+.prow-num {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  color: #e2e8f0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 3px 6px;
+}
+
+.prow-num:focus {
+  border-color: #38bdf8;
+  outline: none;
+}
+
+.prow-unit {
+  color: #64748b;
+  font-size: 0.85em;
+}
+
+.prow-reset {
+  background: none;
+  border: 0;
+  color: #7dd3fc;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 4px;
+}
+
+.prow-reset:disabled {
+  color: transparent;
+  cursor: default;
+}
+
+.prow-reset:not(:disabled):hover {
+  background: rgba(56, 189, 248, 0.18);
+}
+
+@media (max-width: 520px) {
+  .prow {
+    grid-template-columns: 1fr 4.6em 1.6em 1.6em;
+  }
+
+  .prow-label {
+    grid-column: 1 / -1;
+  }
+}
+
+/* -------------------------------------------------------------- Tweaks */
+
+.tweaks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tweaks .tweak-footer {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  padding-top: 10px;
+}
+
+/* routing and ComfyUI were sized as modals; inside the drawer they flow */
+.drawer-embed .routing-row {
+  flex-wrap: wrap;
+}
