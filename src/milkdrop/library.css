@@ -538,8 +538,11 @@
   position: fixed;
   z-index: 30;
   left: 50%;
-  top: calc(var(--ui-btn-h) * 2 + 44px);
+  /* bottom centre: readable in fullscreen and presentation mode, where the
+     toolbar is gone and a toast at the top would float in the picture */
+  bottom: calc(28px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
   background: rgba(10, 12, 20, 0.92);
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 999px;
@@ -552,8 +555,7 @@
 
 /* deletion with undo: clickable, bottom centre, above drawers and modals */
 .toast.toast-undo {
-  top: auto;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(28px + 2 * var(--ui-btn-h) + env(safe-area-inset-bottom, 0px));
   z-index: 60;
   display: flex;
   align-items: center;
@@ -565,7 +567,7 @@
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -6px);
+    transform: translate(-50%, 6px);
   }
 }
 

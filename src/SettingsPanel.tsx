@@ -190,6 +190,8 @@ export type SettingsPanelProps = {
   onShowBpm: (value: boolean) => void;
   debugOpen: boolean;
   onDebug: (value: boolean) => void;
+  presentation: boolean;
+  onPresentation: (value: boolean) => void;
 
   bgLayer: string;
   bgLayers: readonly string[];
@@ -246,6 +248,15 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const tab = props.tab;
   const setTab = props.onTab;
   const [width, setWidth] = useState(loadWidth);
+  // Publish the width so the toolbar rows can move out of the drawer's way
+  // instead of disappearing under it (App.css, .hud-sub).
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--drawer-open-w", `${width}px`);
+    return () => {
+      root.style.removeProperty("--drawer-open-w");
+    };
+  }, [width]);
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
     const x0 = e.clientX;
@@ -581,6 +592,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
               </p>
             </Field>
             <ParamGroup group="ui" onChanged={bump} />
+            <Field label="Live">
+              <label className="set-row set-row-toggle">
+                <input
+                  type="checkbox"
+                  checked={props.presentation}
+                  onChange={(e) => props.onPresentation(e.target.checked)}
+                />
+                <span className="set-label">
+                  Präsentationsmodus
+                  <small className="set-hint">
+                    Leiste und Mauszeiger bleiben weg, Tasten wirken weiter. Taste H
+                    schaltet zurück, ebenso jede Taste, die ein Panel öffnet.
+                  </small>
+                </span>
+              </label>
+            </Field>
             <Field label="Anzeigen">
               <label className="set-row set-row-toggle">
                 <input
@@ -590,7 +617,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 />
                 <span className="set-label">
                   Tempo-Anzeige (BPM)
-                  <small className="set-hint">Taste B</small>
+                  <small className="set-hint">Dauerhaft oben in der Leiste · Taste I blendet das Tempo kurz ein</small>
                 </span>
               </label>
               <label className="set-row set-row-toggle">

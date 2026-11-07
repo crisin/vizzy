@@ -44,8 +44,9 @@ const TAB_LABEL: Record<Tab, string> = { rules: "Regeln", pools: "Pools", songs:
 export function RegieModal(props: Props) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
   const [tab, setTab] = useState<Tab>("rules");
+  // workshop: a click beside it does not close it — Esc or Schließen does
   return (
-    <div className="modal-backdrop" onClick={props.onClose}>
+    <div className="modal-backdrop">
       <div
         ref={dialogRef}
         className="modal regie-modal"

@@ -4,11 +4,12 @@
 .cockpit {
   position: fixed;
   z-index: 15;
-  /* below both toolbar rows — the second one holds library and preset picker */
-  top: calc(2 * var(--ui-btn-h) + 40px);
+  /* a side panel like the settings drawer: below the first toolbar row,
+     full height; the rows under that make room (App.css, .hud-sub) */
+  top: calc(var(--ui-btn-h) + 30px);
   left: 14px;
+  bottom: 14px;
   width: min(var(--ui-panel-w), calc(100vw - 28px));
-  max-height: calc(100vh - 2 * var(--ui-btn-h) - 68px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -969,4 +970,21 @@
   border-radius: 4px;
   padding: 0 4px;
   cursor: copy;
+}
+
+/* presentation mode: the queue stays reachable by key (Q, N), not on screen */
+.stage.presenting .queue-bar {
+  display: none;
+}
+
+/* narrow windows: a bottom sheet, like the settings panel */
+@media (max-width: 800px), (max-height: 560px) {
+  .cockpit {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 55vh;
+  }
 }

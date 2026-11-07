@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { BCVisualizer } from "butterchurn";
 import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
+import { matchKey, withKey } from "./keys";
+import { InfoOverlay } from "./ui/InfoOverlay";
 import { SCENE_NAMES, type SceneName } from "./sceneCatalog";
 import type { Viz3D } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
@@ -485,6 +487,29 @@ function App() {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [selected, setSelected] = useState("");
   const [hudVisible, setHudVisible] = useState(true);
+  // Presentation mode: the controls stay away on mouse movement; keys keep
+  // working. Survives a restart, so a party machine comes up clean.
+  const [presentation, setPresentation] = useState(() => {
+    try {
+      return localStorage.getItem("vizzy.presentation") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    // a toolbar button keeping focus would hold the hidden toolbar "in use"
+    if (presentation) {
+      const a = document.activeElement;
+      if (a instanceof HTMLElement && a.closest(".hud")) a.blur();
+    }
+    try {
+      localStorage.setItem("vizzy.presentation", presentation ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [presentation]);
+  /** bumped by I — the info overlay shows itself for a few seconds */
+  const [infoNonce, setInfoNonce] = useState(0);
   const [milkdropStatus, setMilkdropStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >(milkdropRuntime ? "ready" : "idle");
@@ -1685,27 +1710,40 @@ function App() {
   // read in render scope so a change in the settings panel re-arms the timer
   const hideDelay = params.get("ui", "hideDelay");
   const pokeHud = useCallback(() => {
-    setHudVisible(true);
     window.clearTimeout(hideTimer.current);
+    if (presentation) {
+      setHudVisible(false);
+      return;
+    }
+    setHudVisible(true);
     if (hudPinned || hideDelay <= 0) return; // 0 = stay visible
     hideTimer.current = window.setTimeout(() => {
       if (!document.querySelector(".hud:focus-within")) {
         setHudVisible(false);
       }
     }, hideDelay * 1000);
-  }, [hudPinned, hideDelay]);
+  }, [hudPinned, hideDelay, presentation]);
 
   useEffect(() => {
     pokeHud();
     return () => window.clearTimeout(hideTimer.current);
   }, [pokeHud]);
 
+  // Key-triggered preset changes announce the new name (OSD) — the
+  // auto-switch does not, it would chatter.
+  const announcePresetRef = useRef(false);
+  useEffect(() => {
+    if (!announcePresetRef.current) return;
+    announcePresetRef.current = false;
+    showToast(presetLabel(presetKey));
+  }, [presetKey, showToast]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      pokeHud();
-      const key = e.key.toLowerCase();
-
       if (e.key === "Escape") {
+        pokeHud();
+        // Esc only ever closes panels — leaving fullscreen is F's job, so a
+        // stray Esc at a party never drops the picture out of fullscreen.
         if (regieOpen) setRegieOpen(false);
         // the studio handles its own Esc (it may ask about unsaved work)
         else if (studioKey !== null) return;
@@ -1719,7 +1757,6 @@ function App() {
         else if (tweakOpen) setTweakOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
         else if (helpOpen) setHelpOpen(false);
-        else if (inTauri) void getCurrentWindow().setFullscreen(false);
         return;
       }
 
@@ -1731,64 +1768,127 @@ function App() {
       // native select/range control.
       if (isEditableTarget(e.target)) return;
 
-      if (key === "f" || e.key === "F11") {
-        e.preventDefault();
-        void toggleFullscreen();
-      } else if (key === "e" || e.key === ",") {
-        toggleDrawer();
-      } else if (key === "b" && e.shiftKey && modeRef.current === "milkdrop") {
-        setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
-      } else if (key === "b") {
-        setShowBpm((v) => !v);
-      } else if (key === "d") {
-        setDebugOpen((v) => !v);
-      } else if (key === "c") {
-        setCockpitOpen((v) => !v);
-      } else if (key === "g") {
-        e.preventDefault();
-        setRegieOpen(true);
-      } else if (key === "?") {
-        setHelpOpen((v) => !v);
-      } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
-        setMode(VIZ_MODES[Number(e.key) - 1]);
-      } else if (modeRef.current === "milkdrop") {
-        if (e.key === "ArrowRight") stepPreset(1);
-        else if (e.key === "ArrowLeft") stepPreset(-1);
-        else if (key === "r") randomPreset();
-        else if (key === "a") setAutoSwitch((v) => !v);
-        else if (key === "s") toggleFavorite(presetKeyRef.current);
-        else if (key === "l") {
-          // otherwise the keystroke lands in the library's search box
-          e.preventDefault();
-          setPresetLibOpen(true);
+      const m = modeRef.current;
+      const b = matchKey(e, m);
+      if (!b) {
+        pokeHud();
+        return;
+      }
+      if (b.preventDefault) e.preventDefault();
+      // anything that opens a panel brings the controls back first
+      if (b.opensUi && presentation) setPresentation(false);
+      if (b.id !== "presentation") pokeHud();
+
+      switch (b.id) {
+        case "mode": {
+          const next = VIZ_MODES[Number(e.key) - 1];
+          setMode(next);
+          showToast(VIZ_MODE_LABELS[next]);
+          break;
         }
-        else if (key === "t") setTagBarOpen((v) => !v);
-        else if (key === "q" && e.shiftKey) {
+        case "fullscreen":
+          void toggleFullscreen();
+          break;
+        case "presentation":
+          if (presentation) {
+            setPresentation(false);
+            showToast("Bedienung wieder da");
+          } else {
+            setPresentation(true);
+            setSettingsOpen(false);
+            setCockpitOpen(false);
+            setTagBarOpen(false);
+            setTagFilterOpen(false);
+            showToast("Präsentationsmodus · H holt die Bedienung zurück");
+          }
+          break;
+        case "info":
+          setInfoNonce((n) => n + 1);
+          break;
+        case "settings":
+          toggleDrawer();
+          break;
+        case "cockpit":
+          setCockpitOpen((v) => !v);
+          break;
+        case "regie":
+          setRegieOpen(true);
+          break;
+        case "debug":
+          setDebugOpen((v) => !v);
+          break;
+        case "help":
+          setHelpOpen((v) => !v);
+          break;
+        case "prev":
+        case "next": {
+          const dir = b.id === "next" ? 1 : -1;
+          if (m === "milkdrop") {
+            announcePresetRef.current = true;
+            stepPreset(dir);
+          } else if (m === "3d") {
+            const i = SCENE_NAMES.indexOf(sceneRef.current);
+            const next = SCENE_NAMES[(i + dir + SCENE_NAMES.length) % SCENE_NAMES.length];
+            setScene3d(next);
+            showToast(next);
+          }
+          break;
+        }
+        case "random":
+          announcePresetRef.current = true;
+          randomPreset();
+          break;
+        case "auto":
+          setAutoSwitch(!autoRef.current);
+          showToast(autoRef.current ? "Auto-Wechsel aus" : "Auto-Wechsel an");
+          break;
+        case "fav": {
+          const k = presetKeyRef.current;
+          toggleFavorite(k);
+          showToast(favorites.includes(k) ? `☆ ${presetLabel(k)}` : `★ ${presetLabel(k)}`);
+          break;
+        }
+        case "library":
+          setPresetLibOpen(true);
+          break;
+        case "studio":
+          setStudioKey(presetKeyRef.current);
+          break;
+        case "tagbar":
+          setTagBarOpen((v) => !v);
+          break;
+        case "layerB":
+          if (!layerB.key) {
+            if (presentation) setPresentation(false);
+            setDrawerTab("layer");
+            setSettingsOpen(true);
+            showToast("Layer B: erst ein Preset wählen");
+          } else {
+            setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
+            showToast(layerB.enabled ? "Layer B aus" : `Layer B: ${presetLabel(layerB.key)}`);
+          }
+          break;
+        case "layerBSettings":
+          setDrawerTab("layer");
+          setSettingsOpen(true);
+          break;
+        case "queueClear":
           queue.clear();
           showToast("Queue geleert");
-        } else if (key === "q") {
+          break;
+        case "queueAdd":
           queue.add(presetKeyRef.current);
           showToast(`+ Queue: ${presetLabel(presetKeyRef.current)}`);
-        } else if (key === "n") {
+          break;
+        case "queueNext":
           if (!director.playNextQueued()) showToast("Queue ist leer");
-        }
-        else if (key === "p") {
-          // otherwise the keystroke lands in the studio's name field
-          e.preventDefault();
-          setStudioKey(presetKeyRef.current);
-        }
-        else if (e.key === "+" || e.key === "=") ratePreset(1);
-        else if (e.key === "-") ratePreset(-1);
-      } else if (modeRef.current === "3d") {
-        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-          setScene3d((s) => {
-            const i = SCENE_NAMES.indexOf(s);
-            const dir = e.key === "ArrowRight" ? 1 : -1;
-            return SCENE_NAMES[
-              (i + dir + SCENE_NAMES.length) % SCENE_NAMES.length
-            ];
-          });
-        }
+          break;
+        case "rateUp":
+          ratePreset(1);
+          break;
+        case "rateDown":
+          ratePreset(-1);
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1814,19 +1914,22 @@ function App() {
     drawerTab,
     studioKey,
     ratePreset,
+    presentation,
+    favorites,
+    layerB,
   ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
   const inputs = sources.filter((s) => s.kind === "input");
-  const controlsVisible = hudVisible || hudPinned;
+  const controlsVisible = !presentation && (hudVisible || hudPinned);
 
   return (
     <div
       className={`stage mode-${mode} ${
         supportsBgLayer(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
       } ${controlsVisible ? "" : "idle"} ${
-        params.get("ui", "hideCursor") >= 0.5 ? "hide-cursor" : ""
-      }`}
+        presentation || params.get("ui", "hideCursor") >= 0.5 ? "hide-cursor" : ""
+      } ${presentation ? "presenting" : ""}`}
       data-ui={uiTier}
       onPointerMove={pokeHud}
       onPointerDown={pokeHud}
@@ -1934,7 +2037,7 @@ function App() {
             type="button"
             className={`icon-btn ${cockpitOpen ? "active" : ""}`}
             onClick={() => setCockpitOpen((v) => !v)}
-            title="Cockpit: laufender Song (C)"
+            title={withKey("Cockpit: laufender Song", "cockpit")}
             aria-label="Cockpit öffnen"
             aria-pressed={cockpitOpen}
             aria-keyshortcuts="C"
@@ -1946,7 +2049,7 @@ function App() {
             type="button"
             className={`icon-btn ${settingsOpen ? "active" : ""}`}
             onClick={toggleDrawer}
-            title="Einstellungen (E)"
+            title={withKey("Einstellungen", "settings")}
             aria-label="Einstellungen öffnen"
             aria-pressed={settingsOpen}
             aria-controls="settings-panel"
@@ -1959,7 +2062,7 @@ function App() {
             type="button"
             className={`icon-btn ${helpOpen ? "active" : ""}`}
             onClick={() => setHelpOpen((v) => !v)}
-            title="Hilfe & Tastenkürzel (?)"
+            title={withKey("Hilfe & Tastenkürzel", "help")}
             aria-label="Hilfe und Tastenkürzel öffnen"
             aria-pressed={helpOpen}
             aria-controls="help-panel"
@@ -1971,7 +2074,7 @@ function App() {
             type="button"
             className="icon-btn"
             onClick={() => void toggleFullscreen()}
-            title="Vollbild (F)"
+            title={withKey("Vollbild", "fullscreen")}
             aria-label="Vollbild umschalten"
             aria-keyshortcuts="F"
           >
@@ -2024,7 +2127,7 @@ function App() {
               type="button"
               className="mode-btn"
               onClick={() => setPresetLibOpen(true)}
-              title="Preset-Library mit Vorschauen (L)"
+              title={withKey("Preset-Library mit Vorschauen", "library")}
               aria-keyshortcuts="L"
             >
               Library
@@ -2078,8 +2181,8 @@ function App() {
               onClick={() => toggleFavorite(presetKey)}
               title={
                 isFavorite
-                  ? "Aus Favoriten entfernen (S)"
-                  : "Zu Favoriten hinzufügen (S)"
+                  ? withKey("Aus Favoriten entfernen", "fav")
+                  : withKey("Zu Favoriten hinzufügen", "fav")
               }
               aria-label={
                 isFavorite
@@ -2104,7 +2207,7 @@ function App() {
               type="button"
               className="mode-btn"
               onClick={randomPreset}
-              title="Zufälliges Preset (R)"
+              title={withKey("Zufälliges Preset", "random")}
               aria-label="Zufälliges Preset"
               aria-keyshortcuts="R"
             >
@@ -2114,7 +2217,7 @@ function App() {
               type="button"
               className={`mode-btn ${autoSwitch ? "active" : ""}`}
               onClick={() => setAutoSwitch((v) => !v)}
-              title="Auto-Wechsel bei Beats (A)"
+              title={withKey("Auto-Wechsel bei Beats", "auto")}
               aria-label="Automatischen Preset-Wechsel umschalten"
               aria-pressed={autoSwitch}
               aria-keyshortcuts="A"
@@ -2145,7 +2248,7 @@ function App() {
               type="button"
               className={`mode-btn ${tagBarOpen ? "active" : ""}`}
               onClick={() => setTagBarOpen((v) => !v)}
-              title="Laufendes Preset taggen (T)"
+              title={withKey("Laufendes Preset taggen", "tagbar")}
               aria-pressed={tagBarOpen}
               aria-keyshortcuts="T"
             >
@@ -2169,7 +2272,7 @@ function App() {
               }}
               title={
                 layerB.key
-                  ? `Layer B: ${presetLabel(layerB.key)} — Klick an/aus, Rechtsklick Einstellungen (Shift+B)`
+                  ? `Layer B: ${presetLabel(layerB.key)} — Klick an/aus (B), Rechtsklick Einstellungen (Shift+B)`
                   : "Zweites Preset darüberlegen"
               }
               aria-pressed={layerB.enabled}
@@ -2191,7 +2294,7 @@ function App() {
               type="button"
               className="mode-btn"
               onClick={() => setStudioKey(presetKey)}
-              title="Preset-Studio: Bausteine mischen, Code bearbeiten, Remix (P)"
+              title={withKey("Preset-Studio: Bausteine mischen, Code bearbeiten, Remix", "studio")}
               aria-keyshortcuts="P"
             >
               Studio
@@ -2429,6 +2532,15 @@ function App() {
           onShowBpm={setShowBpm}
           debugOpen={debugOpen}
           onDebug={setDebugOpen}
+          presentation={presentation}
+          onPresentation={(on) => {
+            setPresentation(on);
+            if (on) {
+              setSettingsOpen(false);
+              setCockpitOpen(false);
+              showToast("Präsentationsmodus · H holt die Bedienung zurück");
+            }
+          }}
           bgLayer={bgLayer}
           bgLayers={BG_LAYERS}
           onBgLayer={(v) => setBgLayer(v as BgLayer)}
@@ -2661,6 +2773,16 @@ function App() {
           </button>
         </div>
       )}
+      <InfoOverlay
+        nonce={infoNonce}
+        picture={
+          mode === "milkdrop"
+            ? presetLabel(presetKey)
+            : mode === "3d"
+              ? `3D · ${scene3d}`
+              : VIZ_MODE_LABELS[mode]
+        }
+      />
       {undo && (
         <div className="toast toast-undo" role="status">
           <span>{undo.msg}</span>

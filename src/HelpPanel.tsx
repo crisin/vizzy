@@ -1,28 +1,11 @@
 import type { RefObject } from "react";
 import { useDialogFocus } from "./useDialogFocus";
+import { KEYS, type KeyScope } from "./keys";
 
-const SHORTCUTS = [
-  ["1–6", "Visualisierung wechseln"],
-  ["← / →", "Preset oder 3D-Szene wechseln"],
-  ["R", "Zufälliges Milkdrop-Preset"],
-  ["S", "Preset als Favorit markieren (★)"],
-  ["L", "Preset-Library mit Vorschauen"],
-  ["T", "Tag-Leiste: laufendes Preset taggen (dort 1–9)"],
-  ["P", "Preset-Studio: mischen, Code, Remix"],
-  ["Shift+B", "Layer B an/aus"],
-  ["+ / −", "Preset bewerten; − wechselt sofort weiter, + behält ein Zucht-Kind"],
-  ["A", "Automatischen Preset-Wechsel umschalten"],
-  ["B", "Tempoanzeige ein- oder ausblenden"],
-  ["D", "Diagnoseanzeige ein- oder ausblenden"],
-  ["C", "Cockpit: laufender Song, aktive Regel, schnell zuordnen"],
-  ["G", "Regie: Regeln (Song/Artist/Playlist → Bild) und Pools"],
-  ["Q", "Laufendes Preset in die Queue (Shift+Q: Queue leeren)"],
-  ["N", "Nächsten Queue-Eintrag sofort"],
-  ["E", "Einstellungen öffnen"],
-  ["F", "Vollbild umschalten"],
-  ["?", "Diese Hilfe öffnen"],
-  ["Esc", "Offenes Panel schließen"],
-] as const;
+const GROUPS: { title: string; scope: KeyScope }[] = [
+  { title: "Überall", scope: "global" },
+  { title: "Milkdrop", scope: "milkdrop" },
+];
 
 export function HelpPanel({
   onClose,
@@ -52,17 +35,29 @@ export function HelpPanel({
         Wähle oben eine Visualisierung. In der Desktop-App reagiert sie auf die
         gewählte Audioquelle; im Browser läuft ein animiertes Demosignal.
       </p>
-      <h3>Tastenkürzel</h3>
-      <dl className="shortcut-grid">
-        {SHORTCUTS.map(([key, description]) => (
-          <div key={key}>
-            <dt>
-              <kbd>{key}</kbd>
-            </dt>
-            <dd>{description}</dd>
-          </div>
-        ))}
-      </dl>
+      {GROUPS.map((g) => (
+        <section key={g.scope}>
+          <h3>Tasten · {g.title}</h3>
+          <dl className="shortcut-grid">
+            {KEYS.filter((k) => k.scope === g.scope).map((k) => (
+              <div key={k.id}>
+                <dt>
+                  <kbd>{k.label}</kbd>
+                </dt>
+                <dd>{k.does}</dd>
+              </div>
+            ))}
+            {g.scope === "global" && (
+              <div>
+                <dt>
+                  <kbd>Esc</kbd>
+                </dt>
+                <dd>Offenes Panel schließen (das Vollbild bleibt)</dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      ))}
       <h3>Auto-Wechsel im Takt</h3>
       <p className="help-intro">
         Vizzy hört das Tempo mit und zählt Takte und 32er-Phrasen mit. Steht der
@@ -72,7 +67,8 @@ export function HelpPanel({
       </p>
       <p className="help-tip">
         Tipp: Bewege die Maus oder drücke eine Taste, um die Steuerung wieder
-        einzublenden.
+        einzublenden. Im Präsentationsmodus (H) bleibt sie weg — dann holt H
+        oder jede Taste, die ein Panel öffnet, sie zurück.
       </p>
     </>
   );

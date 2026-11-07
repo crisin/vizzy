@@ -256,6 +256,24 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Side panels sit below the first toolbar row. The rows under it move out
+   of their way — the drawer on the right, the cockpit on the left — instead
+   of disappearing beneath them. Narrow windows turn both into bottom
+   sheets, so nothing moves there. */
+@media (min-width: 801px) and (min-height: 561px) {
+  .hud-sub {
+    transition: margin 0.18s ease-out;
+  }
+
+  .stage:has(.settings-panel) .hud-sub {
+    margin-right: calc(min(var(--drawer-open-w, 440px), 100vw - 28px) + 14px);
+  }
+
+  .stage:has(.cockpit) .hud-sub {
+    margin-left: calc(min(var(--ui-panel-w), 100vw - 28px) + 14px);
+  }
+}
+
 .hud-sub .preset-select {
   flex: 1 1 220px;
   max-width: 560px;
@@ -754,7 +772,7 @@ body {
 .scene-empty {
   position: fixed;
   left: 50%;
-  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(40px + 4 * var(--ui-btn-h) + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 9;
   display: flex;
@@ -771,11 +789,80 @@ body {
   font-size: var(--ui-font);
 }
 
+/* I: song, picture, tempo — big and bottom-left, readable from the couch */
+.info-overlay {
+  position: fixed;
+  left: calc(32px + env(safe-area-inset-left, 0px));
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  z-index: 12;
+  max-width: min(70vw, 900px);
+  padding: 14px 22px;
+  border-radius: 14px;
+  background: rgba(7, 8, 14, 0.72);
+  backdrop-filter: blur(10px);
+  color: #f1f5f9;
+  pointer-events: none;
+  animation: info-in 0.25s ease-out;
+}
+
+.info-song {
+  font-size: calc(var(--ui-font) * 2);
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-artist {
+  font-weight: 400;
+  color: #cbd5e1;
+}
+
+.info-muted {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.info-line {
+  display: flex;
+  gap: 18px;
+  margin-top: 4px;
+  font-size: calc(var(--ui-font) * 1.25);
+  color: #cbd5e1;
+}
+
+.info-bpm {
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes info-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* presentation mode: nothing but the picture (and what a key asked for).
+   Beats .hud:focus-within, which would otherwise keep the toolbar up while
+   a button in it still has focus. */
+.stage.presenting .hud,
+.stage.presenting .hud:focus-within {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.stage.presenting .scene-empty {
+  display: none;
+}
+
 /* settings drawer open on the right: keep clear of it */
 .stage:has(.settings-panel) .scene-empty {
   left: 16px;
   transform: none;
-  max-width: calc(100vw - 500px);
+  max-width: calc(100vw - min(var(--drawer-open-w, 440px), 100vw - 28px) - 60px);
   justify-content: flex-start;
 }
 

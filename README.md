@@ -168,11 +168,17 @@ See [PLAN.md](PLAN.md) for the roadmap.
 
 ### Keys
 
-`1`–`6` modes · `←`/`→` preset/scene · `R` random preset · `L` preset
-library · `P` preset studio · `T` tag bar · `S` favourite · `+`/`-` rate ·
-`A` preset auto-switch · `Shift+B` layer B · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
-latency, audio stats, recent errors) · `E` parameter editor ·
-`F` fullscreen · `Esc` close/leave
+The full list lives in `src/keys.ts`; the in-app help (`?`) and the
+tooltips are generated from it.
+
+`1`–`6` modes · `←`/`→` preset/scene · `F` fullscreen · `H` presentation
+mode (toolbar and cursor stay away, keys keep working; persists) · `I` info
+overlay (song, picture, tempo) · `E` settings · `C` cockpit · `G` Regie ·
+`D` debug HUD · `?` help · `Esc` closes panels only, never fullscreen.
+Milkdrop: `R` random · `A` auto-switch · `S` favourite · `L` library · `P`
+studio · `T` tag bar · `B` layer B on/off · `Shift+B` layer B settings ·
+`Q` / `Shift+Q` / `N` queue add / clear / next · `+`/`-` rate.
+Keys that open a panel also leave presentation mode.
 
 ## Dev
 

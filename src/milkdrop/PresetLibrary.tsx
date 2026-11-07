@@ -335,8 +335,9 @@ export function PresetLibrary({
     (e) => suggestions.has(e.key) && !tagStore.get(e.key).some(isEnergy),
   );
 
+  // workshop: a click beside it does not close it — Esc or Schließen does
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop">
       <div
         ref={dialogRef}
         className="modal mdlib"

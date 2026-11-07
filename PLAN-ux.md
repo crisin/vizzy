@@ -262,6 +262,11 @@ auf einer Party. Daraus folgen Regeln, die über das Aufräumen hinausgehen:
 Jede Phase endet wie gewohnt: Typecheck grün, Sichtprüfung im Tauri-Dev,
 README angepasst, Commit.
 
+**Stand 2026-11-07:** U0 erledigt (994c42c). U1 erledigt bis auf zwei
+Punkte, die in U3 wandern: Vollbild-Monitor merken und die Einblendung
+„Quelle gewechselt“. Die Info-Einblendung `I` ist da (Auto-Einblendung bei
+Songwechsel noch nicht).
+
 | Phase | Inhalt | Umfang |
 |---|---|---|
 | **U0 Bugfixes** | `P` leakt ins Studio; Studio-Dirty-Check; doppelte Milkdrop-Gruppe; Löschen mit Rückgängig; Morph-Leerzustand; Library-Ladezustand; README 1–6 | klein |
