@@ -1,0 +1,261 @@
+/* Preset studio */
+
+.modal.studio {
+  width: min(1500px, 96vw);
+  height: 92vh;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 14px;
+}
+
+.studio-head {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.studio-name {
+  flex: 1 1 220px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--ui-radius);
+  color: #f1f5f9;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: normal;
+  min-height: var(--ui-btn-h);
+  padding: 0 var(--ui-pad-x);
+}
+
+.studio-tabs {
+  display: flex;
+  gap: 4px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+.studio-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+}
+
+.studio-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.studio-side {
+  flex: 0 0 min(460px, 38vw);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.studio-side h4,
+.studio-slots h4 {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.studio-row {
+  display: grid;
+  grid-template-columns: 11em 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 5px 0;
+}
+
+.studio-row .src-select {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.studio-row small {
+  color: #64748b;
+}
+
+.studio-row small.on {
+  color: #4ade80;
+}
+
+.studio-row input[type="range"] {
+  width: 100%;
+  accent-color: #38bdf8;
+}
+
+.studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.studio-actions.small {
+  margin: 0;
+}
+
+.studio-err {
+  color: #fda4af;
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow: auto;
+  margin: 0;
+  background: rgba(127, 29, 29, 0.25);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.studio-code {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.studio-codetabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.studio-codehint {
+  color: #94a3b8;
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.codearea {
+  flex: 1;
+  min-height: 300px;
+  display: flex;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.85);
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.codearea-gutter {
+  flex: 0 0 auto;
+  min-width: 3em;
+  padding: 8px 6px;
+  text-align: right;
+  color: #475569;
+  overflow: hidden;
+  user-select: none;
+  border-right: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.codearea textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  padding: 8px 10px;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.studio-ref {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.studio-ref dl {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  margin: 6px 0 0;
+}
+
+.studio-ref dl > div {
+  display: grid;
+  grid-template-columns: 16em 1fr;
+  gap: 8px;
+}
+
+.studio-ref dt {
+  color: #7dd3fc;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.studio-ref dd {
+  margin: 0;
+}
+
+.studio-children {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.studio-child {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  padding: 4px;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.studio-child img,
+.studio-child-ph {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  background: #000;
+  object-fit: cover;
+}
+
+.studio-child.bad {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.studio-child.on {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 2px #a78bfa;
+}
+
+.studio-busy {
+  color: #64748b;
+  align-self: center;
+  padding: 20px;
+}
+
+@media (max-width: 900px) {
+  .studio-body {
+    flex-direction: column-reverse;
+  }
+
+  .studio-side {
+    flex: 0 0 auto;
+    max-height: 50vh;
+  }
+}

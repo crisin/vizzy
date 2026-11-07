@@ -10,7 +10,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { GROUP_LABELS, PARAM_SCHEMAS, params, type ParamDef } from "./params";
 import { useDialogFocus } from "./useDialogFocus";
 import { ParamRow, Section } from "./ui/ParamRow";
-import type { UserPreset } from "./mdTweaks";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -187,7 +186,7 @@ export type SettingsPanelProps = {
   favorites: string[];
   onPickPreset: (key: string) => void;
   onUnfavorite: (key: string) => void;
-  userPresets: UserPreset[];
+  userPresets: { name: string; base: string }[];
   onDeleteUserPreset: (name: string) => void;
 
   onOpenRouting: () => void;

@@ -93,7 +93,10 @@ pub fn run() {
             comfy::comfy_bake,
             store::data_read,
             store::data_write,
-            store::data_dir
+            store::data_dir,
+            store::data_list,
+            store::data_delete,
+            store::data_open_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

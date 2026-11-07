@@ -8,6 +8,8 @@ const SHORTCUTS = [
   ["S", "Preset als Favorit markieren (★)"],
   ["L", "Preset-Library mit Vorschauen"],
   ["T", "Tag-Leiste: laufendes Preset taggen (dort 1–9)"],
+  ["P", "Preset-Studio: mischen, Code, Remix"],
+  ["Shift+B", "Layer B an/aus"],
   ["A", "Automatischen Preset-Wechsel umschalten"],
   ["B", "Tempoanzeige ein- oder ausblenden"],
   ["D", "Diagnoseanzeige ein- oder ausblenden"],

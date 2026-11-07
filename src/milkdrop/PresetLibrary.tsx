@@ -58,6 +58,7 @@ export function PresetLibrary({
   resolvePreset,
   onApply,
   onApplyLayerB,
+  onOpenStudio,
   target = "a",
   onToggleFavorite,
   onClose,
@@ -71,6 +72,8 @@ export function PresetLibrary({
   onApply: (key: string, overrides?: Record<string, number>) => void;
   /** puts the preset on layer B (shown when given) */
   onApplyLayerB?: (key: string) => void;
+  /** opens the preset studio on this preset */
+  onOpenStudio?: (key: string) => void;
   /** "b": the library was opened to choose layer B — Anwenden targets B */
   target?: "a" | "b";
   onToggleFavorite: (key: string) => void;
@@ -451,6 +454,11 @@ export function PresetLibrary({
                   <button className="mode-btn active" onClick={() => apply(sel.key, tileOverrides.current ?? undefined)}>
                     {target === "b" ? "Als Layer B" : tileVariant !== null ? "Variante anwenden" : "Anwenden"}
                   </button>
+                  {target === "a" && onOpenStudio && (
+                    <button className="mode-btn" onClick={() => onOpenStudio(sel.key)} title="Bausteine mischen, Code bearbeiten, Remix">
+                      Studio
+                    </button>
+                  )}
                   {target === "a" && onApplyLayerB && (
                     <button className="mode-btn" onClick={() => onApplyLayerB(sel.key)} title="Über das laufende Preset legen">
                       + als Layer B

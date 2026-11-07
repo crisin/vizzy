@@ -17,6 +17,39 @@ function butterchurn() {
   return bcModule;
 }
 
+// Console capture shared by all engines: installed while at least one load
+// is in flight, every active load gets its own list.
+const sinks = new Set<string[]>();
+let origError: typeof console.error | null = null;
+let origWarn: typeof console.warn | null = null;
+
+function startCapture(): string[] {
+  const sink: string[] = [];
+  if (sinks.size === 0) {
+    origError = console.error;
+    origWarn = console.warn;
+    const wrap =
+      (orig: (...a: unknown[]) => void) =>
+      (...args: unknown[]) => {
+        const msg = args.map(String).join(" ");
+        for (const s of sinks) s.push(msg);
+        orig.apply(console, args);
+      };
+    console.error = wrap(origError);
+    console.warn = wrap(origWarn);
+  }
+  sinks.add(sink);
+  return sink;
+}
+
+function stopCapture(sink: string[]) {
+  sinks.delete(sink);
+  if (sinks.size === 0 && origError && origWarn) {
+    console.error = origError;
+    console.warn = origWarn;
+  }
+}
+
 export class MilkdropEngine {
   readonly canvas: HTMLCanvasElement;
   private viz: BCVisualizer | null = null;
@@ -28,6 +61,28 @@ export class MilkdropEngine {
   private lastPreset: unknown = null;
   /** last error (compile or render), for the caller to show */
   error = "";
+  private shaderErrors: string[] = [];
+
+  /**
+   * Butterchurn never checks whether a preset's shaders compiled — a broken
+   * warp or comp shader just renders nothing. Wrapping compileShader on this
+   * engine's own context is the one place the driver's message is still
+   * available.
+   */
+  private watchShaders() {
+    // Butterchurn renders on an internal (offscreen) WebGL2 canvas and
+    // copies the result into ours with a 2D context.
+    const gl = (this.viz as unknown as { gl?: WebGL2RenderingContext }).gl;
+    if (!gl || typeof gl.compileShader !== "function") return;
+    const orig = gl.compileShader.bind(gl);
+    gl.compileShader = (shader: WebGLShader) => {
+      orig(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const log = (gl.getShaderInfoLog(shader) ?? "").replace(/\u0000/g, "").trim();
+        if (log) this.shaderErrors.push(`Shader: ${log}`);
+      }
+    };
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -41,6 +96,7 @@ export class MilkdropEngine {
         width: this.canvas.width,
         height: this.canvas.height,
       });
+      this.watchShaders();
     });
     try {
       await this.loading;
@@ -75,13 +131,24 @@ export class MilkdropEngine {
     this.held = true;
     this.error = "";
     this.traps = 0;
+    // Butterchurn reports shader compile errors on the console instead of
+    // throwing; catch them for the duration of the load so an editor can
+    // show what went wrong.
+    const seen = startCapture();
+    this.shaderErrors = [];
     try {
       await Promise.resolve(this.viz.loadPreset(preset as object, blend));
       if (seq === this.loadSeq) this.held = false;
+      this.error = [
+        ...this.shaderErrors,
+        ...seen.filter((m) => /error|fail|compile|shader/i.test(m)),
+      ].join("\n");
       return true;
     } catch (e) {
-      this.error = String(e);
+      this.error = [String(e), ...seen].join("\n");
       return false;
+    } finally {
+      stopCapture(seen);
     }
   }
 

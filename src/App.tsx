@@ -78,11 +78,9 @@ import { tagStore, useTags } from "./milkdrop/tags";
 import { notePlayed, pickAuto, type TagMode } from "./milkdrop/autoswitch";
 import { DEFAULT_LAYER_B, LayerB, shapeWave, type LayerBConfig } from "./milkdrop/layerB";
 import { LayerPanel } from "./milkdrop/LayerPanel";
-import {
-  deleteUserPreset,
-  loadUserPresets,
-  saveUserPreset,
-} from "./mdTweaks";
+import { PresetStudio } from "./milkdrop/PresetStudio";
+import { presetStore, useUserPresets } from "./milkdrop/presetStore";
+import { compose, makePreset, type VizzyPreset } from "./milkdrop/vpreset";
 import {
   CURATED,
   CURATED_PREFIX,
@@ -312,18 +310,14 @@ function App() {
   const [mode, setMode] = useState<VizMode>(
     saved.mode && VIZ_MODES.includes(saved.mode) ? saved.mode : "bars",
   );
-  const [userPresets, setUserPresets] = useState(loadUserPresets);
+  const userPresets = useUserPresets();
   const [presetKey, setPresetKey] = useState(() => {
     const k = saved.presetKey;
     if (!k) return DEFAULT_PRESET_KEY; // first run opens on a curated one
     if (PRESET_KEYS.includes(k)) return k;
     if (findCurated(k)) return k;
-    if (
-      k.startsWith("user:") &&
-      loadUserPresets().some((p) => `user:${p.name}` === k)
-    ) {
-      return k;
-    }
+    // own presets load from files asynchronously; checked once they are in
+    if (k.startsWith("user:")) return k;
     return DEFAULT_PRESET_KEY;
   });
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch ?? false);
@@ -339,6 +333,8 @@ function App() {
     () => saved.tagFilterMode ?? "any",
   );
   const [presetLibOpen, setPresetLibOpen] = useState(false);
+  /** preset key the studio was opened on; null = closed */
+  const [studioKey, setStudioKey] = useState<string | null>(null);
   /** the library was opened to pick layer B's preset, not the main one */
   const [libTarget, setLibTarget] = useState<"a" | "b">("a");
   const [layerB, setLayerB] = useState<LayerBConfig>(() => ({
@@ -538,22 +534,44 @@ function App() {
 
   const resolvePreset = useCallback(
     (key: string): unknown | null => {
-      const curated = findCurated(key);
-      if (curated) {
-        const base = PRESETS[curated.base];
-        return base ? mergeBaseVals(base, curated.overrides) : null;
-      }
-      if (key.startsWith("user:")) {
-        const up = userPresets.find((p) => p.name === key.slice(5));
-        if (!up) return null;
-        const base = PRESETS[up.base];
-        if (!base) return null;
-        return mergeBaseVals(base, up.overrides);
-      }
-      return PRESETS[key] ?? null;
+      // Own presets are made of parts that may come from any other preset,
+      // own ones included — hence the recursion (compose caps the depth).
+      const resolveAt = (k: string, depth: number): unknown | null => {
+        const curated = findCurated(k);
+        if (curated) {
+          const base = PRESETS[curated.base];
+          return base ? mergeBaseVals(base, curated.overrides) : null;
+        }
+        if (k.startsWith("user:")) {
+          const up = userPresets.find((p) => p.name === k.slice(5));
+          return up ? compose(up, resolveAt, depth) : null;
+        }
+        return PRESETS[k] ?? null;
+      };
+      return resolveAt(key, 0);
     },
     [userPresets, milkdropStatus],
   );
+
+  // An own preset whose file changed (saved here, or written by an editor
+  // or Claude Code) reloads in place.
+  const currentUserPreset = presetKey.startsWith("user:")
+    ? userPresets.find((p) => p.name === presetKey.slice(5))
+    : undefined;
+  useEffect(() => {
+    if (!currentUserPreset) return;
+    overridesRef.current = {
+      version: overridesRef.current.version + 1,
+      map: overridesRef.current.map,
+    };
+  }, [currentUserPreset]);
+
+  // a remembered own preset that no longer exists → back to the default
+  useEffect(() => {
+    if (presetStore.loaded && presetKey.startsWith("user:") && !currentUserPreset) {
+      setPresetKey(DEFAULT_PRESET_KEY);
+    }
+  }, [userPresets, presetKey, currentUserPreset]);
   const resolvePresetRef = useRef(resolvePreset);
   useEffect(() => {
     resolvePresetRef.current = resolvePreset;
@@ -586,14 +604,19 @@ function App() {
         ? userPresets.find((p) => p.name === presetKey.slice(5))
         : undefined;
       const parent = curated ?? currentUser;
-      const baseKey = parent?.base ?? presetKey;
-      const list = saveUserPreset({
-        name,
-        base: baseKey,
-        overrides: { ...(parent?.overrides ?? {}), ...mdOverrides },
-      });
-      setUserPresets(list);
+      const overrides = { ...(parent?.overrides ?? {}), ...mdOverrides };
+      const vp: VizzyPreset =
+        currentUser && currentUser.name === name
+          ? { ...currentUser, overrides }
+          : makePreset(name, parent?.base ?? presetKey, {
+              // an own preset's parts (mashup, code edits) carry over
+              parts: currentUser ? JSON.parse(JSON.stringify(currentUser.parts)) : {},
+              overrides,
+              lineage: { parents: [presetKey], op: "tweak", at: Date.now() },
+            });
+      void presetStore.save(vp);
       setPresetKey(`user:${name}`);
+      setMdOverrides({});
       flog(`[md] user preset saved: ${name}`);
     },
     [presetKey, userPresets, mdOverrides],
@@ -602,8 +625,7 @@ function App() {
   const removeUserPreset = useCallback(
     (name: string) => {
       const up = userPresets.find((p) => p.name === name);
-      const list = deleteUserPreset(name);
-      setUserPresets(list);
+      void presetStore.remove(name);
       setFavorites((prev) => prev.filter((k) => k !== `user:${name}`));
       tagStore.move(`user:${name}`, null);
       if (presetKey === `user:${name}`) {
@@ -1434,6 +1456,7 @@ function App() {
     helpOpen ||
     libraryOpen ||
     presetLibOpen ||
+    studioKey !== null ||
     tagBarOpen ||
     routingOpen ||
     (tweakOpen && mode === "milkdrop");
@@ -1462,7 +1485,8 @@ function App() {
       const key = e.key.toLowerCase();
 
       if (e.key === "Escape") {
-        if (presetLibOpen) setPresetLibOpen(false);
+        if (studioKey !== null) setStudioKey(null);
+        else if (presetLibOpen) setPresetLibOpen(false);
         else if (tagFilterOpen) setTagFilterOpen(false);
         else if (tagBarOpen) setTagBarOpen(false);
         else if (libraryOpen) setLibraryOpen(false);
@@ -1477,7 +1501,7 @@ function App() {
 
       // Modal dialogs own the keyboard until they are dismissed. Prevent
       // shortcuts from changing the app behind their backdrop.
-      if (libraryOpen || routingOpen || comfyOpen || presetLibOpen) return;
+      if (libraryOpen || presetLibOpen || studioKey !== null) return;
 
       // Global shortcuts must never fire while somebody is typing or using a
       // native select/range control.
@@ -1510,6 +1534,7 @@ function App() {
           setPresetLibOpen(true);
         }
         else if (key === "t") setTagBarOpen((v) => !v);
+        else if (key === "p") setStudioKey(presetKeyRef.current);
       } else if (modeRef.current === "3d") {
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           setScene3d((s) => {
@@ -1540,6 +1565,7 @@ function App() {
     tagFilterOpen,
     tagBarOpen,
     drawerTab,
+    studioKey,
   ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
@@ -1901,6 +1927,15 @@ function App() {
               aria-controls="tweak-panel"
             >
               Tweaks
+            </button>
+            <button
+              type="button"
+              className="mode-btn"
+              onClick={() => setStudioKey(presetKey)}
+              title="Preset-Studio: Bausteine mischen, Code bearbeiten, Remix (P)"
+              aria-keyshortcuts="P"
+            >
+              Studio
             </button>
             {(milkdropStatus === "idle" ||
               milkdropStatus === "loading") && (
@@ -2327,6 +2362,21 @@ function App() {
           onClose={() => setTagBarOpen(false)}
         />
       )}
+      {studioKey !== null && (
+        <PresetStudio
+          initialKey={studioKey}
+          allKeys={allPresetKeys}
+          favorites={favorites}
+          label={presetLabel}
+          resolvePreset={resolvePreset}
+          onApply={(k) => {
+            setPresetKey(k);
+            if (mode !== "milkdrop") setMode("milkdrop");
+            setStudioKey(null);
+          }}
+          onClose={() => setStudioKey(null)}
+        />
+      )}
       {presetLibOpen && (
         <PresetLibrary
           entries={catalog}
@@ -2346,6 +2396,10 @@ function App() {
             if (mode !== "milkdrop") setMode("milkdrop");
           }}
           onApplyLayerB={(k) => setLayerB((cfg) => ({ ...cfg, key: k, enabled: true }))}
+          onOpenStudio={(k) => {
+            setPresetLibOpen(false);
+            setStudioKey(k);
+          }}
           target={libTarget}
           onToggleFavorite={toggleFavorite}
           onClose={() => {
