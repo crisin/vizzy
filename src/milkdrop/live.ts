@@ -28,8 +28,13 @@ class LiveState {
   /** 0..1 position of `long` inside the adaptive window */
   norm = 0.5;
   level: EnergyLevel = 1;
-  /** performance.now() when sound came back after silence */
+  /** performance.now() when the current track started: a song change from
+   *  the media session (`regie/nowPlaying.ts`), or — without metadata —
+   *  sound coming back after silence */
   trackStartAt = 0;
+  /** true while the media session reports a playing track; the silence
+   *  heuristic then stays quiet so a gap inside a song isn't a "new track" */
+  metaActive = false;
   private silentFor = 0;
   /** last section boundary and which way the energy went there */
   lastSectionAt = -1e9;
@@ -79,7 +84,7 @@ class LiveState {
     // silence → sound counts as a new track (for the "intro" tag)
     if (rms < 0.005) this.silentFor += dt;
     else {
-      if (this.silentFor > 2.5) this.trackStartAt = now;
+      if (this.silentFor > 2.5 && !this.metaActive) this.trackStartAt = now;
       this.silentFor = 0;
     }
 
@@ -91,7 +96,12 @@ class LiveState {
     this.prevSection = section;
   }
 
-  /** Seconds since the current track started (sound after silence). */
+  /** A song change reported by the media session. */
+  markTrackStart() {
+    this.trackStartAt = performance.now();
+  }
+
+  /** Seconds since the current track started. */
   trackAge(): number {
     return (performance.now() - this.trackStartAt) / 1000;
   }

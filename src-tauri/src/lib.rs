@@ -1,6 +1,7 @@
 mod audio;
 mod bridge;
 mod llm;
+mod nowplaying;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
 pub mod comfy;
 mod phrasing;
@@ -81,6 +82,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(bridge::new())
+        .manage(nowplaying::new())
+        .setup(|app| {
+            use tauri::Manager;
+            let np = app.state::<nowplaying::Shared>().inner().clone();
+            nowplaying::spawn(app.handle().clone(), np);
+            Ok(())
+        })
         .manage(AudioState {
             shared,
             control: tx,
@@ -106,7 +114,10 @@ pub fn run() {
             bridge::bridge_set_state,
             bridge::bridge_reply,
             llm::llm_models,
-            llm::llm_chat
+            llm::llm_chat,
+            nowplaying::nowplaying_get,
+            nowplaying::nowplaying_prefer,
+            nowplaying::nowplaying_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

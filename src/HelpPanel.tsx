@@ -14,6 +14,7 @@ const SHORTCUTS = [
   ["A", "Automatischen Preset-Wechsel umschalten"],
   ["B", "Tempoanzeige ein- oder ausblenden"],
   ["D", "Diagnoseanzeige ein- oder ausblenden"],
+  ["C", "Cockpit: laufender Song und Song-Quelle"],
   ["E", "Einstellungen öffnen"],
   ["F", "Vollbild umschalten"],
   ["?", "Diese Hilfe öffnen"],

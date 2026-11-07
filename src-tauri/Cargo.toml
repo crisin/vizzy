@@ -38,6 +38,9 @@ base64 = "0.22"
 [target.'cfg(target_os = "windows")'.dependencies]
 wasapi = "0.23"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+# now playing via the system media session (src/nowplaying.rs); same
+# version wasapi already pulls in, so no second copy gets built
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Media_Control"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

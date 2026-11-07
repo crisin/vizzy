@@ -71,6 +71,7 @@ import { MdTweakPanel } from "./MdTweakPanel";
 import { HelpPanel } from "./HelpPanel";
 import { PresetLibrary } from "./milkdrop/PresetLibrary";
 import { TagBar } from "./milkdrop/TagBar";
+import { Cockpit } from "./regie/Cockpit";
 import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
 import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
@@ -353,6 +354,20 @@ function App() {
   const mdCanvasBRef = useRef<HTMLCanvasElement | null>(null);
   const [layerBError, setLayerBError] = useState("");
   const [tagBarOpen, setTagBarOpen] = useState(false);
+  const [cockpitOpen, setCockpitOpen] = useState(() => {
+    try {
+      return localStorage.getItem("vizzy.cockpit.open") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("vizzy.cockpit.open", cockpitOpen ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [cockpitOpen]);
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const tagsVersion = useTags();
   /** overrides to apply right after the next preset switch (library variant) */
@@ -1560,6 +1575,7 @@ function App() {
         else if (presetLibOpen) setPresetLibOpen(false);
         else if (tagFilterOpen) setTagFilterOpen(false);
         else if (tagBarOpen) setTagBarOpen(false);
+        else if (cockpitOpen) setCockpitOpen(false);
         else if (libraryOpen) setLibraryOpen(false);
         else if (comfyOpen) setComfyOpen(false);
         else if (routingOpen) setRoutingOpen(false);
@@ -1589,6 +1605,8 @@ function App() {
         setShowBpm((v) => !v);
       } else if (key === "d") {
         setDebugOpen((v) => !v);
+      } else if (key === "c") {
+        setCockpitOpen((v) => !v);
       } else if (key === "?") {
         setHelpOpen((v) => !v);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
@@ -1637,6 +1655,7 @@ function App() {
     presetLibOpen,
     tagFilterOpen,
     tagBarOpen,
+    cockpitOpen,
     drawerTab,
     studioKey,
     ratePreset,
@@ -1756,6 +1775,17 @@ function App() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className={`icon-btn ${cockpitOpen ? "active" : ""}`}
+            onClick={() => setCockpitOpen((v) => !v)}
+            title="Cockpit: laufender Song (C)"
+            aria-label="Cockpit öffnen"
+            aria-pressed={cockpitOpen}
+            aria-keyshortcuts="C"
+          >
+            ♪
+          </button>
           <button
             ref={settingsButtonRef}
             type="button"
@@ -2438,6 +2468,13 @@ function App() {
         <div className="toast" role="status">
           {toast}
         </div>
+      )}
+      {cockpitOpen && (
+        <Cockpit
+          presetLabel={mode === "milkdrop" ? presetLabel(presetKey) : VIZ_MODE_LABELS[mode]}
+          autoSwitch={mode === "milkdrop" && autoSwitch}
+          onClose={() => setCockpitOpen(false)}
+        />
       )}
       {tagBarOpen && mode === "milkdrop" && (
         <TagBar
