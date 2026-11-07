@@ -1,6 +1,6 @@
 # vizzy – Pools, Zuordnungen, Choreografien, Queue & Now Playing
 
-Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1–2 umgesetzt
+Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1–3 (MVP) umgesetzt
 
 ## Ziel
 
@@ -166,7 +166,7 @@ type QueueItem = { ref: string; kind: "preset" | "combo"; until?: "boundary" | "
 2. ✅ **Spotify PKCE** (`src-tauri/src/spotify.rs`, `src/regie/spotify.ts`, `SpotifySection.tsx`; Redirect `http://127.0.0.1:43821/callback`) – Client-ID in Settings, Loopback-Callback (bridge-HTTP-Server mitnutzen),
    Tokens im App-Data, Poll `currently-playing` (5/15 s, 429-Backoff, Interpolation),
    `context.uri` → Playlist-Name (`GET /playlists/{id}`, gecacht). Merge mit SMTC.
-3. **Pools + Regeln + Director** – `pools.json`, `rules.json`, Director vor `pickAuto`,
+3. ✅ **Pools + Regeln + Director** (`src/regie/regieStore.ts`, `director.ts`, `RegieModal.tsx` Taste G, `PictureSection.tsx` im Cockpit) – `pools.json`, `rules.json`, Director vor `pickAuto`,
    Regeln-/Pools-Tabs im Modal, Quick-Assign im Cockpit, globaler Schalter.
 
 **Danach**

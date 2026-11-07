@@ -128,7 +128,8 @@ pub fn run() {
             spotify::spotify_poll_now,
             spotify::spotify_disconnect,
             spotify::spotify_cancel_connect,
-            spotify::spotify_connect
+            spotify::spotify_connect,
+            spotify::spotify_playlists
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

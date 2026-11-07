@@ -1,10 +1,11 @@
 // Cockpit (key C): the side sheet that stays open next to the picture.
-// Phase 1 shows what the media session reports — song, source app,
-// position — and lets you pin the source app. Rules, quick-assign and the
-// queue land here in the next phases.
+// What plays (song, playlist, position, source app), which rule is in
+// charge, one-click binding of the current picture to song / artist /
+// playlist or a pool, and the Spotify connection. The queue lands here next.
 
 import { useEffect, useState } from "react";
 import { appLabel, contextLabel, nowPlaying, positionNow, useNowPlaying, type MediaSession } from "./nowPlaying";
+import { PictureSection } from "./PictureSection";
 import { SpotifySection } from "./SpotifySection";
 import "./regie.css";
 
@@ -27,12 +28,16 @@ function ago(at: number): string {
 const STATUS_ICON: Record<string, string> = { playing: "▶", paused: "⏸", stopped: "■", other: "·" };
 
 type Props = {
+  presetKey: string;
   presetLabel: string;
   autoSwitch: boolean;
+  /** presets only exist in Milkdrop mode — binding needs it */
+  canAssign: boolean;
   onClose: () => void;
+  onOpenRegie: () => void;
 };
 
-export function Cockpit({ presetLabel, autoSwitch, onClose }: Props) {
+export function Cockpit({ presetKey, presetLabel, autoSwitch, canAssign, onClose, onOpenRegie }: Props) {
   const { track, prefer, history } = useNowPlaying();
   const [sessions, setSessions] = useState<MediaSession[]>([]);
   const [, tick] = useState(0);
@@ -107,17 +112,13 @@ export function Cockpit({ presetLabel, autoSwitch, onClose }: Props) {
         )}
       </section>
 
-      <section className="cockpit-sec">
-        <div className="cockpit-label">Bild</div>
-        <div className="cockpit-row">
-          <span className="cockpit-value" title={presetLabel}>
-            {presetLabel}
-          </span>
-        </div>
-        <div className="cockpit-dim">
-          Regel: keine · {autoSwitch ? "Auto-Switch" : "manuell"}
-        </div>
-      </section>
+      <PictureSection
+        presetKey={presetKey}
+        presetLabel={presetLabel}
+        autoSwitch={autoSwitch}
+        canAssign={canAssign}
+        onOpenRegie={onOpenRegie}
+      />
 
       <section className="cockpit-sec">
         <label className="cockpit-label" htmlFor="np-source">

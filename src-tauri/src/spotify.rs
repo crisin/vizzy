@@ -485,6 +485,44 @@ pub fn spotify_disconnect(app: tauri::AppHandle, sp: tauri::State<'_, Shared>) -
     sp.status()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistInfo {
+    uri: String,
+    name: String,
+    owner: String,
+}
+
+/// Your playlists (owned + followed), for picking one in the rule editor.
+#[tauri::command]
+pub async fn spotify_playlists(sp: tauri::State<'_, Shared>) -> Result<Vec<PlaylistInfo>, String> {
+    let sp = sp.inner().clone();
+    let mut out = Vec::new();
+    let mut url = Some(format!("{API}/me/playlists?limit=50"));
+    // 10 pages = 500 playlists is plenty for a picker
+    for _ in 0..10 {
+        let Some(u) = url.take() else { break };
+        let v = match sp.get(&u).await {
+            Ok(Some(v)) => v,
+            Ok(None) => break,
+            Err(Fail::Disconnected) => return Err("Spotify nicht verbunden".into()),
+            Err(Fail::Rate(s)) => return Err(format!("Spotify-Limit, in {s} s nochmal")),
+            Err(Fail::Other(e)) => return Err(e),
+        };
+        for p in v["items"].as_array().into_iter().flatten() {
+            let (Some(uri), Some(name)) = (p["uri"].as_str(), p["name"].as_str()) else { continue };
+            sp.names.lock().unwrap().insert(uri.to_string(), Some(name.to_string()));
+            out.push(PlaylistInfo {
+                uri: uri.to_string(),
+                name: name.to_string(),
+                owner: p["owner"]["display_name"].as_str().unwrap_or_default().to_string(),
+            });
+        }
+        url = v["next"].as_str().map(String::from);
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn spotify_cancel_connect(sp: tauri::State<'_, Shared>) {
     sp.cancel.store(true, Ordering::SeqCst);

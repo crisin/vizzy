@@ -72,6 +72,8 @@ import { HelpPanel } from "./HelpPanel";
 import { PresetLibrary } from "./milkdrop/PresetLibrary";
 import { TagBar } from "./milkdrop/TagBar";
 import { Cockpit } from "./regie/Cockpit";
+import { director } from "./regie/director";
+import { RegieModal } from "./regie/RegieModal";
 import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
 import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
@@ -354,6 +356,7 @@ function App() {
   const mdCanvasBRef = useRef<HTMLCanvasElement | null>(null);
   const [layerBError, setLayerBError] = useState("");
   const [tagBarOpen, setTagBarOpen] = useState(false);
+  const [regieOpen, setRegieOpen] = useState(false);
   const [cockpitOpen, setCockpitOpen] = useState(() => {
     try {
       return localStorage.getItem("vizzy.cockpit.open") === "1";
@@ -821,9 +824,11 @@ function App() {
 
   // The auto-switch picks through a ref so the render loop never has to be
   // restarted when the browse list or the tags change.
-  const autoPickRef = useRef(() => {});
+  const autoPickRef = useRef((_reason: "auto" | "trap" | "skip") => {});
   useEffect(() => {
-    autoPickRef.current = () => {
+    autoPickRef.current = (reason) => {
+      // a matching rule (Regie) may hold the picture or pick from its pool
+      if (director.override(reason)) return;
       const tagMode = (params.get("milkdrop", "tagMode") | 0) as TagMode;
       const nextA = pickAuto(browseKeys, presetKeyRef.current, tagMode);
       const breedP = params.get("milkdrop", "breed");
@@ -851,7 +856,38 @@ function App() {
       }
     };
   }, [browseKeys]);
-  const autoPick = useCallback(() => autoPickRef.current(), []);
+  const autoPick = useCallback(
+    (reason: "auto" | "trap" | "skip" = "auto") => autoPickRef.current(reason),
+    [],
+  );
+
+  // Regie: rules apply presets/combos on song changes. A picture the
+  // director just put up gets a full cooldown before the auto-switch may
+  // replace it.
+  const directorSwitchAtRef = useRef(0);
+  const playableRef = useRef<Set<string>>(new Set());
+  playableRef.current = useMemo(
+    () => new Set(allPresetKeys.filter((k) => !quarantine.includes(k))),
+    [allPresetKeys, quarantine],
+  );
+  useEffect(
+    () =>
+      director.attach({
+        applyPreset: (key) => {
+          directorSwitchAtRef.current = performance.now();
+          setPresetKey(key);
+        },
+        applyCombo: (c) => {
+          directorSwitchAtRef.current = performance.now();
+          setPresetKey(c.a);
+          setLayerB(c.b);
+        },
+        playable: () => playableRef.current,
+        currentKey: () => presetKeyRef.current,
+        label: presetLabel,
+      }),
+    [],
+  );
 
   const applyFromLibrary = useCallback(
     (key: string, overrides?: Record<string, number>) => {
@@ -1471,6 +1507,7 @@ function App() {
       mdCanvasBRef,
       layerBRef,
       setLayerBError,
+      directorSwitchAtRef,
     );
   }, [autoPick, quarantinePreset]);
 
@@ -1521,7 +1558,7 @@ function App() {
       } else {
         showToast(`${dir > 0 ? "♥" : "✕"} ${presetLabel(target)} · Bewertung ${r > 0 ? "+" : ""}${r}`);
       }
-      if (dir < 0) autoPickRef.current();
+      if (dir < 0) autoPickRef.current("skip");
     },
     [showToast],
   );
@@ -1571,7 +1608,8 @@ function App() {
       const key = e.key.toLowerCase();
 
       if (e.key === "Escape") {
-        if (studioKey !== null) setStudioKey(null);
+        if (regieOpen) setRegieOpen(false);
+        else if (studioKey !== null) setStudioKey(null);
         else if (presetLibOpen) setPresetLibOpen(false);
         else if (tagFilterOpen) setTagFilterOpen(false);
         else if (tagBarOpen) setTagBarOpen(false);
@@ -1588,7 +1626,7 @@ function App() {
 
       // Modal dialogs own the keyboard until they are dismissed. Prevent
       // shortcuts from changing the app behind their backdrop.
-      if (libraryOpen || presetLibOpen || studioKey !== null) return;
+      if (libraryOpen || presetLibOpen || studioKey !== null || regieOpen) return;
 
       // Global shortcuts must never fire while somebody is typing or using a
       // native select/range control.
@@ -1607,6 +1645,9 @@ function App() {
         setDebugOpen((v) => !v);
       } else if (key === "c") {
         setCockpitOpen((v) => !v);
+      } else if (key === "g") {
+        e.preventDefault();
+        setRegieOpen(true);
       } else if (key === "?") {
         setHelpOpen((v) => !v);
       } else if (e.key >= "1" && e.key <= String(VIZ_MODES.length)) {
@@ -1656,6 +1697,7 @@ function App() {
     tagFilterOpen,
     tagBarOpen,
     cockpitOpen,
+    regieOpen,
     drawerTab,
     studioKey,
     ratePreset,
@@ -2471,9 +2513,24 @@ function App() {
       )}
       {cockpitOpen && (
         <Cockpit
+          presetKey={presetKey}
+          canAssign={mode === "milkdrop"}
           presetLabel={mode === "milkdrop" ? presetLabel(presetKey) : VIZ_MODE_LABELS[mode]}
           autoSwitch={mode === "milkdrop" && autoSwitch}
           onClose={() => setCockpitOpen(false)}
+          onOpenRegie={() => setRegieOpen(true)}
+        />
+      )}
+      {regieOpen && (
+        <RegieModal
+          presetKeys={allPresetKeys}
+          label={presetLabel}
+          currentKey={presetKey}
+          onPlay={(k) => {
+            setPresetKey(k);
+            if (mode !== "milkdrop") setMode("milkdrop");
+          }}
+          onClose={() => setRegieOpen(false)}
         />
       )}
       {tagBarOpen && mode === "milkdrop" && (
@@ -2541,7 +2598,7 @@ function startVisualizer(
   presetKeyRef: { current: string },
   autoRef: { current: boolean },
   sceneRef: { current: SceneName },
-  onAutoSwitch: () => void,
+  onAutoSwitch: (reason?: "auto" | "trap" | "skip") => void,
   onQuarantine: (key: string) => void,
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: ModelAction | null },
@@ -2557,6 +2614,8 @@ function startVisualizer(
   mdCanvasB: { current: HTMLCanvasElement | null },
   layerBRef: { current: LayerBConfig },
   onLayerBError: (msg: string) => void,
+  /** performance.now() of the last picture the Regie director put up */
+  directorSwitchAt: { current: number },
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -2706,7 +2765,7 @@ function startVisualizer(
       onQuarantine(bcTrapKey);
       lastAutoSwitch = now;
       bcSkipDeadline = now + 1500;
-      onAutoSwitch();
+      onAutoSwitch("trap");
     }
   }
 
@@ -2764,7 +2823,7 @@ function startVisualizer(
 
   function wantsAutoSwitch(): boolean {
     if (
-      performance.now() - lastAutoSwitch <
+      performance.now() - Math.max(lastAutoSwitch, directorSwitchAt.current) <
       params.get("milkdrop", "cooldown") * 1000
     ) {
       return false;

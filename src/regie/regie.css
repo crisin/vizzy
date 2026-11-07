@@ -246,3 +246,360 @@
   color: #fda4af;
   overflow-wrap: anywhere;
 }
+
+/* ------------------------------------------------------------------ */
+/* Regie modal (G)                                                     */
+/* ------------------------------------------------------------------ */
+
+.regie-modal {
+  width: min(var(--ui-modal-w), 94vw);
+  min-height: min(520px, 80vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.regie-modal .modal-head {
+  gap: var(--ui-gap);
+}
+.regie-modal .modal-head h2 {
+  flex: 1 1 auto;
+}
+
+.regie-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.regie-dim {
+  color: #64748b;
+  font-size: var(--ui-font-sub);
+}
+
+.regie-empty {
+  margin: 8px 0;
+  color: #94a3b8;
+  font-size: var(--ui-font-sub);
+  line-height: 1.5;
+}
+
+.regie-toggle {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #e2e8f0;
+}
+
+.regie-add,
+.regie-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-gap);
+  min-width: 0;
+}
+
+.regie-add {
+  padding: 8px 10px;
+  border-radius: var(--ui-radius);
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px dashed rgba(148, 163, 184, 0.25);
+}
+
+.regie-input {
+  min-width: 0;
+  flex: 1 1 160px;
+  min-height: var(--ui-btn-h);
+  padding: var(--ui-pad-y) var(--ui-pad-x);
+  font: inherit;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--ui-radius);
+}
+
+.rule-list,
+.pool-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rule-row {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(90px, 0.8fr) auto minmax(0, 2.6fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--ui-radius);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+.rule-row.is-active {
+  border-color: rgba(74, 222, 128, 0.6);
+  box-shadow: inset 3px 0 0 #4ade80;
+}
+.rule-row.is-off {
+  opacity: 0.5;
+}
+.rule-row.is-drag {
+  opacity: 0.4;
+}
+
+.rule-grip {
+  cursor: grab;
+  color: #475569;
+}
+
+.rule-prio {
+  min-width: 1.4em;
+  text-align: right;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--ui-font-sub);
+}
+
+.rule-match {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e2e8f0;
+}
+.rule-icon {
+  display: inline-block;
+  width: 1.3em;
+  color: #a78bfa;
+}
+
+.rule-arrow {
+  color: #475569;
+}
+
+.rule-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.rule-target .src-select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.rule-kind {
+  flex: none !important;
+}
+
+.rule-value {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.rule-value .regie-input {
+  flex: 1 1 auto;
+  width: 100%;
+}
+.regie-input.has-current::placeholder {
+  color: #e2e8f0;
+  opacity: 1;
+}
+.regie-input.has-current:focus::placeholder {
+  color: #64748b;
+}
+
+.rule-tools {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+@media (max-width: 760px) {
+  .rule-row {
+    grid-template-columns: auto auto auto 1fr auto;
+  }
+  .rule-arrow {
+    display: none;
+  }
+  .rule-target {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+  }
+  .rule-tools {
+    grid-column: 5;
+    grid-row: 1;
+  }
+}
+
+/* pools */
+.regie-body.pools {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.pool-side {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pool-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  color: #cbd5e1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius);
+  cursor: pointer;
+  text-align: left;
+}
+.pool-item:hover {
+  background: rgba(30, 41, 59, 0.6);
+}
+.pool-item.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #f1f5f9;
+}
+
+.pool-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pool-name {
+  font-weight: 600;
+}
+
+.pool-entries li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--ui-radius);
+  background: rgba(15, 23, 42, 0.6);
+}
+.pool-entries li.is-current {
+  box-shadow: inset 3px 0 0 #38bdf8;
+}
+.pool-entry-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pool-bindings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.pool-binding {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.15);
+  color: #c4b5fd;
+  font-size: var(--ui-font-sub);
+}
+
+.pool-danger {
+  margin-top: 6px;
+}
+
+@media (max-width: 700px) {
+  .regie-body.pools {
+    flex-direction: column;
+  }
+  .pool-side {
+    flex-basis: auto;
+    width: 100%;
+  }
+}
+
+/* cockpit: rule + quick assign */
+.cockpit-rule {
+  line-height: 1.45;
+}
+.cockpit-rule-on {
+  color: #4ade80;
+}
+
+.cockpit-assign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cockpit-menu {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: var(--ui-radius);
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+.cockpit-menu button {
+  font: inherit;
+  text-align: left;
+  color: #cbd5e1;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.cockpit-menu button:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.12);
+  color: #f1f5f9;
+}
+.cockpit-menu button:disabled {
+  color: #475569;
+  cursor: default;
+}
+
+.cockpit-note {
+  font-size: var(--ui-font-sub);
+  color: #4ade80;
+}
+
+.cockpit-link {
+  align-self: flex-start;
+  font: inherit;
+  font-size: var(--ui-font-sub);
+  color: #7dd3fc;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
