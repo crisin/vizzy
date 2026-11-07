@@ -27,7 +27,9 @@ export type RuleMatch =
   | { kind: "song"; keys: string[]; label: string }
   | { kind: "artist"; name: string }
   /** a Spotify context: playlist, album, Liked Songs … */
-  | { kind: "context"; uri: string; ctxKind: string; name: string };
+  | { kind: "context"; uri: string; ctxKind: string; name: string }
+  /** a tag new-helper has on the song (context or mood) */
+  | { kind: "tag"; tag: string };
 
 export type Hold = "song" | "start";
 
@@ -204,6 +206,7 @@ export function sameMatch(a: RuleMatch, b: RuleMatch): boolean {
   if (a.kind === "song" && b.kind === "song") return a.keys.some((k) => b.keys.includes(k));
   if (a.kind === "artist" && b.kind === "artist") return a.name.toLowerCase() === b.name.toLowerCase();
   if (a.kind === "context" && b.kind === "context") return a.uri === b.uri;
+  if (a.kind === "tag" && b.kind === "tag") return a.tag.toLowerCase() === b.tag.toLowerCase();
   return false;
 }
 

@@ -11,6 +11,7 @@ import { useAnalysis, type SongAnalysis } from "./analysis";
 import { choreos, sectionAt, useChoreos, useRecording, type Anchor, type Choreo, type Cue, type Snap } from "./choreo";
 import { positionNow, useNowPlaying, type Track } from "./nowPlaying";
 import { PresetPicker, entryLabel } from "./PresetPicker";
+import { useNhSong } from "./newHelper";
 
 type Props = {
   presetKeys: string[];
@@ -137,6 +138,14 @@ function SongEditor({
   const sections = analysis?.sections ?? [];
   const cues = choreo?.cues ?? [];
   const cue = cues.find((c) => c.id === selCue) ?? null;
+  // verse / chorus … from new-helper's synced lyrics, as timeline markers
+  const nh = useNhSong({
+    baseKey: song.key,
+    title: song.title,
+    artist: song.artist,
+    spotifyId: song.keys.find((k) => k.startsWith("spotify:track:"))?.slice(14) ?? null,
+  });
+  const lyricMarks = (nh?.sections ?? []).filter((s): s is { label: string; startMs: number } => s.startMs !== null);
 
   const ensure = () =>
     choreos.ensure({
@@ -199,6 +208,7 @@ function SongEditor({
           duration={duration}
           analysis={analysis}
           cues={cues}
+          lyricMarks={lyricMarks}
           track={track}
           selected={selCue}
           label={label}
@@ -283,6 +293,7 @@ function Timeline({
   duration,
   analysis,
   cues,
+  lyricMarks,
   track,
   selected,
   label,
@@ -293,6 +304,7 @@ function Timeline({
   duration: number;
   analysis: SongAnalysis | null;
   cues: Cue[];
+  lyricMarks: { label: string; startMs: number }[];
   track: Track | null;
   selected: string | null;
   label: (k: string) => string;
@@ -398,6 +410,17 @@ function Timeline({
             </g>
           );
         })}
+        {lyricMarks.map((m, i) => (
+          <line
+            key={`l${i}`}
+            className="tl-lyric"
+            x1={x(m.startMs)}
+            x2={x(m.startMs)}
+            y1={0}
+            y2={H - LANE}
+            pointerEvents="none"
+          />
+        ))}
         {pos !== null && <line className="tl-playhead" x1={x(pos)} x2={x(pos)} y1={0} y2={H} pointerEvents="none" />}
       </svg>
       {/* labels as HTML so they don't stretch with the svg */}
@@ -413,6 +436,21 @@ function Timeline({
           );
         })}
       </div>
+      {lyricMarks.length > 0 && (
+        <div className="tl-lyric-labels">
+          {lyricMarks.map((m, i) => (
+            <button
+              key={i}
+              type="button"
+              style={{ left: `${(m.startMs / duration) * 100}%` }}
+              onClick={() => onAdd(m.startMs)}
+              title={`${m.label} – Cue hier setzen`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="tl-scale regie-dim">
         <span>0:00</span>
         <span>{drag ? fmt(drag.t) : "Klick: Cue mit laufendem Bild · Kante ziehen: verschieben"}</span>

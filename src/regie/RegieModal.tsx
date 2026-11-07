@@ -21,6 +21,7 @@ import {
   type RuleTarget,
 } from "./regieStore";
 import { useSpotifyStatus } from "./spotify";
+import { useNewHelper } from "./newHelper";
 import { LEARNED_START, contextRatings, useContextRatings, type Scope } from "./contextRatings";
 import { PresetPicker, entryLabel } from "./PresetPicker";
 import { ChoreoTab } from "./ChoreoTab";
@@ -98,6 +99,10 @@ function RulesTab({ presetKeys, label, currentKey }: Props) {
   const sp = useSpotifyStatus();
   const [dragId, setDragId] = useState<string | null>(null);
   const [artist, setArtist] = useState("");
+  const [tagText, setTagText] = useState("");
+  const nh = useNewHelper();
+  const songTags = track ? (nh.info[track.baseKey]?.tags ?? []) : [];
+  const nhOn = !!nh.status.baseUrl && nh.status.hasToken;
   const [playlists, setPlaylists] = useState<{ uri: string; name: string; owner: string }[] | null>(null);
   const [plError, setPlError] = useState("");
 
@@ -173,6 +178,33 @@ function RulesTab({ presetKeys, label, currentKey }: Props) {
             ☺ +
           </button>
         </form>
+        {nhOn && (
+          <form
+            className="regie-inline"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const tag = tagText.trim().replace(/^#/, "").toLowerCase();
+              if (tag) add({ kind: "tag", tag });
+              setTagText("");
+            }}
+          >
+            <input
+              className="regie-input"
+              list="regie-nh-tags"
+              value={tagText}
+              onChange={(e) => setTagText(e.target.value)}
+              placeholder={songTags.length ? `Tag, z. B. ${songTags[0].tag}` : "new-helper-Tag"}
+            />
+            <datalist id="regie-nh-tags">
+              {songTags.map((t) => (
+                <option key={t.tag} value={t.tag} />
+              ))}
+            </datalist>
+            <button type="submit" className="mode-btn" disabled={!tagText.trim()}>
+              # +
+            </button>
+          </form>
+        )}
         {inTauri && sp.connected && (
           playlists ? (
             <select

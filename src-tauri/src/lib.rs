@@ -1,6 +1,7 @@
 mod audio;
 mod bridge;
 mod llm;
+mod newhelper;
 mod nowplaying;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
 pub mod comfy;
@@ -85,12 +86,15 @@ pub fn run() {
         .manage(bridge::new())
         .manage(nowplaying::new())
         .manage(spotify::new())
+        .manage(newhelper::new())
         .setup(|app| {
             use tauri::Manager;
             let np = app.state::<nowplaying::Shared>().inner().clone();
             nowplaying::spawn(app.handle().clone(), np);
             let sp = app.state::<spotify::Shared>().inner().clone();
             spotify::spawn(app.handle().clone(), sp);
+            let nh = app.state::<newhelper::Shared>().inner().clone();
+            newhelper::load(app.handle(), &nh);
             Ok(())
         })
         .manage(AudioState {
@@ -129,7 +133,11 @@ pub fn run() {
             spotify::spotify_disconnect,
             spotify::spotify_cancel_connect,
             spotify::spotify_connect,
-            spotify::spotify_playlists
+            spotify::spotify_playlists,
+            newhelper::newhelper_status,
+            newhelper::newhelper_configure,
+            newhelper::newhelper_test,
+            newhelper::newhelper_song
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

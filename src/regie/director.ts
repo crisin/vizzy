@@ -22,6 +22,7 @@ import { choreos, type Choreo, type Cue } from "./choreo";
 import { artistsOf } from "./artists";
 import { LEARNED_START, contextRatings } from "./contextRatings";
 export { artistsOf, splitArtists } from "./artists";
+import { newHelper } from "./newHelper";
 import { queue } from "./queue";
 import { COMBO_PREFIX, regie, type Pool, type Rule, type RuleMatch } from "./regieStore";
 
@@ -49,6 +50,10 @@ export function matches(m: RuleMatch, t: Track): boolean {
       return artistsOf(t.artist).includes(norm(m.name));
     case "context":
       return t.context?.uri === m.uri;
+    case "tag": {
+      const tag = m.tag.toLowerCase();
+      return newHelper.infoFor(t)?.tags.some((x) => x.tag === tag) ?? false;
+    }
   }
 }
 
@@ -87,6 +92,8 @@ class Director {
   constructor() {
     nowPlaying.subscribe(() => this.evaluate());
     regie.subscribe(() => this.evaluate());
+    // new-helper's tags arrive a moment after the song starts
+    newHelper.subscribe(() => this.evaluate());
     choreos.subscribe(() => this.refreshChoreo());
     choreos.subscribeRec(() => this.refreshChoreo());
   }
@@ -452,14 +459,17 @@ export function describeMatch(m: RuleMatch): string {
       return m.name;
     case "context":
       return m.name;
+    case "tag":
+      return m.tag;
   }
 }
 
-export const MATCH_ICON: Record<RuleMatch["kind"], string> = { song: "♪", artist: "☺", context: "▤" };
+export const MATCH_ICON: Record<RuleMatch["kind"], string> = { song: "♪", artist: "☺", context: "▤", tag: "#" };
 export const MATCH_KIND_LABEL: Record<RuleMatch["kind"], string> = {
   song: "Song",
   artist: "Artist",
   context: "Spotify",
+  tag: "new-helper-Tag",
 };
 
 if (import.meta.env.DEV) {

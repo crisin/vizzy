@@ -5,6 +5,7 @@ import { useState } from "react";
 import { MATCH_ICON, describeMatch, director, splitArtists, useActiveRule, useChoreoState } from "./director";
 import { choreos, useRecording } from "./choreo";
 import { contextLabel, useNowPlaying, type Track } from "./nowPlaying";
+import { useNewHelper, type NhSongInfo } from "./newHelper";
 import { contextRatings, useContextRatings, type Scope } from "./contextRatings";
 import { regie, useRegie, type RuleMatch } from "./regieStore";
 
@@ -29,7 +30,7 @@ type Props = {
 type Ctx = { match: RuleMatch; label: string; short: string };
 
 /** The things the running song can be bound by, most specific first. */
-function contextsOf(t: Track): Ctx[] {
+function contextsOf(t: Track, nh: NhSongInfo | null): Ctx[] {
   const out: Ctx[] = [
     {
       match: { kind: "song", keys: [...new Set([t.key, t.baseKey])], label: `${t.artist} — ${t.title}` },
@@ -45,12 +46,18 @@ function contextsOf(t: Track): Ctx[] {
       label: contextLabel(t.context),
       short: t.context.kind === "playlist" ? "▤ Playlist" : `▤ ${contextLabel(t.context).split(":")[0]}`,
     });
+  // new-helper tags, moods first — they are what a picture most often fits
+  const tags = [...(nh?.tags ?? [])].sort((a, b) => (a.type === b.type ? 0 : a.type === "MOOD" ? -1 : 1));
+  for (const tg of tags.slice(0, 4))
+    out.push({ match: { kind: "tag", tag: tg.tag }, label: `Tag #${tg.tag}`, short: `# ${tg.tag}` });
   return out;
 }
 
 export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, onOpenRegie }: Props) {
   const { track } = useNowPlaying();
   const { enabled, pools } = useRegie();
+  const nhSnap = useNewHelper();
+  const nh = track ? (nhSnap.info[track.baseKey] ?? null) : null;
   const active = useActiveRule();
   const choreo = useChoreoState();
   const rec = useRecording();
@@ -63,7 +70,7 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
     window.setTimeout(() => setNote((n) => (n === msg ? "" : n)), 2500);
   };
 
-  const ctxs = track && track.status !== "other" ? contextsOf(track) : [];
+  const ctxs = track && track.status !== "other" ? contextsOf(track, nh) : [];
   const can = canAssign && !!presetKey;
 
   const bind = (c: Ctx) => {
@@ -152,7 +159,7 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
           <span className="cockpit-dim">Binden an</span>
           {ctxs.map((c) => (
             <button
-              key={c.match.kind}
+              key={c.match.kind === "tag" ? `tag:${c.match.tag}` : c.match.kind}
               type="button"
               className="mode-btn"
               disabled={!can}
@@ -182,7 +189,12 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
             </button>
           )}
           {ctxs.map((c) => (
-            <button key={c.match.kind} type="button" role="menuitem" onClick={() => newPoolFor(c)}>
+            <button
+              key={c.match.kind === "tag" ? `tag:${c.match.tag}` : c.match.kind}
+              type="button"
+              role="menuitem"
+              onClick={() => newPoolFor(c)}
+            >
               Neuer Pool für {c.label}
             </button>
           ))}

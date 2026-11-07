@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { appLabel, contextLabel, nowPlaying, positionNow, useNowPlaying, type MediaSession } from "./nowPlaying";
 import { PictureSection } from "./PictureSection";
 import { SpotifySection } from "./SpotifySection";
+import { NewHelperSection, NhTagsLine } from "./NewHelperSection";
 import "./regie.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -89,6 +90,7 @@ export function Cockpit({ presetKey, presetLabel, autoSwitch, canAssign, onClose
                 ▸ {contextLabel(track.context)}
               </div>
             )}
+            <NhTagsLine />
             <div className="np-progress" aria-hidden>
               <div className="np-progress-fill" style={{ width: `${pct}%` }} />
             </div>
@@ -146,6 +148,7 @@ export function Cockpit({ presetKey, presetLabel, autoSwitch, canAssign, onClose
       </section>
 
       <SpotifySection />
+      <NewHelperSection />
 
       {history.length > 0 && (
         <section className="cockpit-sec cockpit-history">
