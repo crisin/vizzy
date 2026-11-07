@@ -79,9 +79,9 @@ VIZZY [♪ Quelle ▾]                           [Milkdrop|3D|Klassisch ▾]   �
 - **Hilfe** wandert aus der Kopfzeile ins `⋯`-Menü und als Tab in die
   Einstellungen; `?` bleibt als Taste.
 - **Modus-Wahl:** Milkdrop und 3D sind eigene Welten, die vier 2D-Modi
-  sind kleine Varianten. Vorschlag: `Milkdrop | 3D | Klassisch ▾`
-  (Klassisch = Balken/Radial/Welle/Spektro). Tasten `1`–`6` bleiben.
-  → *offene Entscheidung, siehe unten.*
+  sind kleine Varianten. Daher: `Milkdrop | 3D | Klassisch ▾`
+  (Klassisch = Balken/Radial/Welle/Spektro, der Knopf zeigt den zuletzt
+  gewählten). Tasten `1`–`6` bleiben.
 
 ### 3D
 
@@ -131,8 +131,7 @@ Raus aus dem Drawer:
 - **Favoritenliste, eigene Presets, „Preset-Tweaks öffnen“** → Library
   (Filter „Favoriten“, „Eigene“) und Studio.
 - **Tweaks-Tab** → Studio-Tab „Anpassen“.
-- **Hilfe-Tab** → bleibt als 7. Tab nur, wenn Platz; sonst eigenes kleines
-  Fenster über `?`.
+- **Hilfe-Tab** → eigenes kleines Fenster über `?` und das `⋯`-Menü.
 
 Der Drawer **schiebt** die HUD-Zeilen nach links (Breite bekannt, per
 CSS-Variable), statt sie zu überdecken. Tab-Leiste: wenn trotzdem zu eng,
@@ -201,16 +200,52 @@ Neu:
 | `B` | BPM-Anzeige | **Layer B an/aus** (passt zum Knopf) |
 | `Shift+B` | Layer B | Layer-B-Einstellungen |
 | `I` | — | **Info-Overlay**: BPM + Song + Preset-Name kurz einblenden (ersetzt die BPM-Taste) |
+| `H` | — | Präsentationsmodus an/aus |
+| `F` | Vollbild | bleibt; **Esc verlässt das Vollbild nicht mehr** |
 | `G` | — | Regie (geplant) |
 | `Q` / `N` / `Shift+Q` | — | Einreihen / Queue überspringen / leeren (geplant) |
 | `?` | Hilfe | bleibt |
 
-Freie Tasten danach noch: H J K M O U V W X Y Z.
+Freie Tasten danach noch: J K M O U V W X Y Z.
 
 Eine Quelle der Wahrheit: die Tastenliste lebt an *einer* Stelle im Code
 (Tabelle mit Taste, Aktion, Modus), aus der Handler, Hilfe, Tooltips und
 `⋯`-Menü generiert werden. Damit können Hilfe und README nicht mehr
 auseinanderlaufen.
+
+## Live-Betrieb (TV / Party)
+
+vizzy läuft meist im Vollbild auf einem zweiten Bildschirm oder unbeaufsichtigt
+auf einer Party. Daraus folgen Regeln, die über das Aufräumen hinausgehen:
+
+- **Präsentationsmodus** (Taste `H`, auch im `⋯`-Menü): Die Leiste und der
+  Cursor kommen bei Mausbewegung **nicht** zurück. Tasten wirken weiter.
+  `H` oder ein Doppelklick holt die Bedienung zurück. Der Modus bleibt über
+  einen Neustart erhalten, damit eine Party-Maschine direkt sauber startet.
+- **Rückmeldung bei Tasten (OSD):** Jede Taste ohne sichtbares Panel zeigt
+  1,5 s eine kleine Einblendung unten mittig, etwa „Auto an“, „★ Favorit“,
+  „Layer B aus“, „Tags: drop“. Das ersetzt die heute fehlende Antwort im
+  Vollbild, wo die Leiste ausgeblendet ist.
+- **Info-Einblendung `I`:** Song, Artist, Preset und BPM für etwa 4 s
+  groß unten links. Optional automatisch bei jedem Songwechsel
+  (Einstellung in „Bedienung“).
+- **Esc verlässt das Vollbild nicht mehr.** Heute wirft ein Esc zu viel
+  aus dem Vollbild. Das Vollbild schaltet nur noch `F`. Esc schließt
+  ausschließlich Panels.
+- **Keine gefährlichen Einzeltasten:** Keine Taste löscht etwas oder öffnet
+  im Präsentationsmodus eine Werkstatt, die das Bild verdeckt. `L` und `P`
+  holen dort zuerst die Bedienung zurück.
+- **Bildschirm merken:** Vollbild öffnet auf dem Monitor, auf dem das
+  Fenster zuletzt im Vollbild war. Ziel: Start → läuft auf dem TV.
+- **Robust laufen:** Wenn die Quelle verschwindet, wechselt vizzy heute
+  schon automatisch auf eine andere. Das soll künftig sichtbar sein:
+  als OSD „Quelle gewechselt: …“ und im Cockpit, statt still zu
+  passieren.
+- **Lesbar auf Distanz:** Die UI-Größe „TV“ gibt es schon. Für den
+  Präsentationsmodus und die Info-Einblendung gilt sie automatisch.
+- *Später:* Fernbedienung vom Handy über die vorhandene lokale
+  HTTP-Brücke (nächstes/vorheriges Preset, Auto, Favorit). Gehört nicht
+  zu diesem Umbau.
 
 ## Sicherheit und Rückmeldung
 
@@ -230,9 +265,9 @@ README angepasst, Commit.
 | Phase | Inhalt | Umfang |
 |---|---|---|
 | **U0 Bugfixes** | `P` leakt ins Studio; Studio-Dirty-Check; doppelte Milkdrop-Gruppe; Löschen mit Rückgängig; Morph-Leerzustand; Library-Ladezustand; README 1–6 | klein |
-| **U1 Gerüst** | Tastentabelle als Quelle der Wahrheit; Fenster-Grammatik (Seitenleisten schieben die HUD, Werkstätten fangen Klick daneben ab); Cockpit als linke Seitenleiste | mittel |
+| **U1 Gerüst + Live** | Tastentabelle als Quelle der Wahrheit inkl. `B`/`I`/`H`; OSD-Rückmeldung; Präsentationsmodus; Esc ohne Vollbild-Ausstieg; Fenster-Grammatik (Seitenleisten schieben die HUD, Werkstätten fangen Klick daneben ab); Cockpit als linke Seitenleiste | mittel |
 | **U2 Drawer** | 6 feste Tabs, Routing/ComfyUI eingegliedert, Automatik-Tab, Duplikate raus, Ausgrauen statt Verschwinden | mittel |
-| **U3 Bühne** | Preset-Pille, `⋯`-Menü, Library als Auswahl (Dropdown raus), Rotation in der Library, 3D-Pille mit deutschen Namen + Aktionszeile | mittel–groß |
+| **U3 Bühne** | Preset-Pille, `⋯`-Menü, `Milkdrop \| 3D \| Klassisch ▾`, Library als Auswahl (Dropdown raus), Rotation in der Library, 3D-Pille mit deutschen Namen + Aktionszeile, Info-Einblendung, Hilfe als kleines Fenster, Vollbild-Monitor merken | mittel–groß |
 | **U4 Studio** | Tab „Anpassen“ ersetzt den Tweaks-Tab | klein–mittel |
 | danach | Playlist-Plan (Spotify, Regie, Queue) setzt auf das neue Gerüst auf | — |
 
@@ -240,13 +275,13 @@ U1 ist auch ein guter Moment, die UI-Teile aus `App.tsx` (3700 Zeilen)
 in eigene Komponenten zu ziehen (`Hud`, `PresetPill`, `ScenePill`,
 `MoreMenu`), wie es `PLAN-playlists.md` ohnehin anmahnt.
 
-## Offene Entscheidungen
+## Entscheidungen (2026-11-07)
 
-1. **Modus-Wahl:** sechs gleichrangige Modi behalten oder
-   `Milkdrop | 3D | Klassisch ▾`?
-2. **Wo läuft vizzy hauptsächlich?** Am Schreibtisch nebenher, auf einem
-   zweiten Bildschirm/TV, oder live (Party)? Davon hängt ab, wie aggressiv
-   die Bühne aufgeräumt wird und ob es einen „Präsentationsmodus“ ganz
-   ohne HUD braucht.
-3. **Hilfe:** 7. Drawer-Tab oder eigenes kleines Fenster?
-4. **`B` umbelegen** ist eine Gewohnheitsänderung — ok?
+1. **Modus-Wahl:** `Milkdrop | 3D | Klassisch ▾`. Die Tasten `1`–`6`
+   bleiben.
+2. **Einsatz:** hauptsächlich **zweiter Bildschirm / TV** und **live /
+   Party**. Daraus folgt der Abschnitt „Live-Betrieb“ unten: Bedienung
+   per Tastatur zuerst, ein Präsentationsmodus ohne Leiste und nichts, was
+   versehentlich das Bild stört.
+3. **Hilfe:** eigenes kleines Fenster (`?` und `⋯`-Menü), kein Tab.
+4. **`B` wird umbelegt:** `B` schaltet Layer B, `I` zeigt die Info-Einblendung.
