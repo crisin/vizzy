@@ -57,6 +57,8 @@ export function PresetLibrary({
   runtimeReady,
   resolvePreset,
   onApply,
+  onApplyLayerB,
+  target = "a",
   onToggleFavorite,
   onClose,
 }: {
@@ -67,6 +69,10 @@ export function PresetLibrary({
   runtimeReady: boolean;
   resolvePreset: (key: string) => unknown | null;
   onApply: (key: string, overrides?: Record<string, number>) => void;
+  /** puts the preset on layer B (shown when given) */
+  onApplyLayerB?: (key: string) => void;
+  /** "b": the library was opened to choose layer B — Anwenden targets B */
+  target?: "a" | "b";
   onToggleFavorite: (key: string) => void;
   onClose: () => void;
 }) {
@@ -326,7 +332,7 @@ export function PresetLibrary({
         style={{ ["--card-w" as string]: `${prefs.size}px` }}
       >
         <div className="modal-head mdlib-head">
-          <h2 id="mdlib-title">Preset-Library</h2>
+          <h2 id="mdlib-title">{target === "b" ? "Preset für Layer B" : "Preset-Library"}</h2>
           <input
             className="mdlib-search"
             type="search"
@@ -443,8 +449,13 @@ export function PresetLibrary({
                 <div className="mdlib-hint">{sel.authors.join(" + ") || "unbekannt"}</div>
                 <div className="mdlib-actions">
                   <button className="mode-btn active" onClick={() => apply(sel.key, tileOverrides.current ?? undefined)}>
-                    {tileVariant !== null ? "Variante anwenden" : "Anwenden"}
+                    {target === "b" ? "Als Layer B" : tileVariant !== null ? "Variante anwenden" : "Anwenden"}
                   </button>
+                  {target === "a" && onApplyLayerB && (
+                    <button className="mode-btn" onClick={() => onApplyLayerB(sel.key)} title="Über das laufende Preset legen">
+                      + als Layer B
+                    </button>
+                  )}
                   <button className={`mode-btn ${favorites.includes(sel.key) ? "active" : ""}`} onClick={() => onToggleFavorite(sel.key)} title="Favorit (S)">
                     {favorites.includes(sel.key) ? "★" : "☆"}
                   </button>

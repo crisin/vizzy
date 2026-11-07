@@ -39,6 +39,13 @@ class LiveState {
   gridConf = 0;
   /** last auto-switch choice, for the debug HUD */
   lastPick = "";
+  /** current tempo estimate (0 = unknown) */
+  bpm = 0;
+
+  /** Seconds per bar at the current tempo, 2 s when the tempo is unknown. */
+  barSeconds(): number {
+    return this.bpm > 40 ? (4 * 60) / this.bpm : 2;
+  }
 
   update(rms: number, section: number, phrasePhase: number, gridConf: number, dt: number) {
     this.rms = rms;

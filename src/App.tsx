@@ -76,6 +76,8 @@ import { buildCatalog } from "./milkdrop/catalog";
 import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
 import { tagStore, useTags } from "./milkdrop/tags";
 import { notePlayed, pickAuto, type TagMode } from "./milkdrop/autoswitch";
+import { DEFAULT_LAYER_B, LayerB, shapeWave, type LayerBConfig } from "./milkdrop/layerB";
+import { LayerPanel } from "./milkdrop/LayerPanel";
 import {
   deleteUserPreset,
   loadUserPresets,
@@ -286,6 +288,7 @@ type Persisted = {
   quarantine?: string[];
   tagFilter?: string[];
   tagFilterMode?: "any" | "all";
+  layerB?: Partial<LayerBConfig>;
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -336,6 +339,18 @@ function App() {
     () => saved.tagFilterMode ?? "any",
   );
   const [presetLibOpen, setPresetLibOpen] = useState(false);
+  /** the library was opened to pick layer B's preset, not the main one */
+  const [libTarget, setLibTarget] = useState<"a" | "b">("a");
+  const [layerB, setLayerB] = useState<LayerBConfig>(() => ({
+    ...DEFAULT_LAYER_B,
+    ...(saved.layerB ?? {}),
+  }));
+  const layerBRef = useRef(layerB);
+  useEffect(() => {
+    layerBRef.current = layerB;
+  }, [layerB]);
+  const mdCanvasBRef = useRef<HTMLCanvasElement | null>(null);
+  const [layerBError, setLayerBError] = useState("");
   const [tagBarOpen, setTagBarOpen] = useState(false);
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const tagsVersion = useTags();
@@ -697,6 +712,7 @@ function App() {
       quarantine,
       tagFilter,
       tagFilterMode,
+      layerB,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
@@ -722,6 +738,7 @@ function App() {
     quarantine,
     tagFilter,
     tagFilterMode,
+    layerB,
   ]);
 
   const isFavorite = favorites.includes(presetKey);
@@ -764,9 +781,18 @@ function App() {
   const autoPickRef = useRef(() => {});
   useEffect(() => {
     autoPickRef.current = () => {
-      setPresetKey((current) =>
-        pickAuto(browseKeys, current, (params.get("milkdrop", "tagMode") | 0) as TagMode),
-      );
+      const tagMode = (params.get("milkdrop", "tagMode") | 0) as TagMode;
+      const nextA = pickAuto(browseKeys, presetKeyRef.current, tagMode);
+      setPresetKey(nextA);
+      const b = layerBRef.current;
+      if (b.enabled && b.auto) {
+        // one bar later, so the whole picture never changes at once
+        window.setTimeout(() => {
+          const pool = browseKeys.filter((k) => k !== nextA);
+          const nextB = pickAuto(pool, layerBRef.current.key, tagMode);
+          setLayerB((cfg) => ({ ...cfg, key: nextB }));
+        }, live.barSeconds() * 1000);
+      }
     };
   }, [browseKeys]);
   const autoPick = useCallback(() => autoPickRef.current(), []);
@@ -1386,6 +1412,9 @@ function App() {
       resolvePresetRef,
       debugElRef,
       freqCanvasRef,
+      mdCanvasBRef,
+      layerBRef,
+      setLayerBError,
     );
   }, [autoPick, quarantinePreset]);
 
@@ -1459,6 +1488,8 @@ function App() {
         void toggleFullscreen();
       } else if (key === "e" || e.key === ",") {
         toggleDrawer();
+      } else if (key === "b" && e.shiftKey && modeRef.current === "milkdrop") {
+        setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
       } else if (key === "b") {
         setShowBpm((v) => !v);
       } else if (key === "d") {
@@ -1530,6 +1561,16 @@ function App() {
       onBlurCapture={pokeHud}
     >
       <canvas ref={mdCanvasRef} id="mdviz" aria-hidden="true" />
+      <canvas
+        ref={mdCanvasBRef}
+        id="mdviz-b"
+        aria-hidden="true"
+        style={{
+          visibility: mode === "milkdrop" && layerB.enabled && layerB.key ? "visible" : "hidden",
+          mixBlendMode: layerB.blend as React.CSSProperties["mixBlendMode"],
+          opacity: layerB.opacity,
+        }}
+      />
       <canvas ref={gl3dCanvasRef} id="viz3d" aria-hidden="true" />
       <canvas ref={canvasRef} id="viz" aria-hidden="true" />
       <div className="sr-only" aria-live="polite">
@@ -1824,6 +1865,31 @@ function App() {
               aria-keyshortcuts="T"
             >
               🏷
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${layerB.enabled && layerB.key ? "active" : ""}`}
+              onClick={() => {
+                if (!layerB.key) {
+                  setDrawerTab("layer");
+                  setSettingsOpen(true);
+                } else {
+                  setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setDrawerTab("layer");
+                setSettingsOpen(true);
+              }}
+              title={
+                layerB.key
+                  ? `Layer B: ${presetLabel(layerB.key)} — Klick an/aus, Rechtsklick Einstellungen (Shift+B)`
+                  : "Zweites Preset darüberlegen"
+              }
+              aria-pressed={layerB.enabled}
+            >
+              B
             </button>
             <button
               type="button"
@@ -2125,6 +2191,34 @@ function App() {
                   },
                 ]
               : []),
+            ...(mode === "milkdrop"
+              ? [
+                  {
+                    id: "layer",
+                    label: "Layer",
+                    after: "milkdrop" as const,
+                    content: (
+                      <LayerPanel
+                        cfg={layerB}
+                        onChange={setLayerB}
+                        presetKeys={allPresetKeys}
+                        label={presetLabel}
+                        currentKey={presetKey}
+                        error={layerBError}
+                        onPickFromLibrary={() => {
+                          setLibTarget("b");
+                          setPresetLibOpen(true);
+                        }}
+                        onSwap={() => {
+                          const a = presetKey;
+                          setPresetKey(layerB.key);
+                          setLayerB((cfg) => ({ ...cfg, key: a }));
+                        }}
+                      />
+                    ),
+                  },
+                ]
+              : []),
             {
               id: "routing",
               label: "Routing",
@@ -2242,11 +2336,22 @@ function App() {
           runtimeReady={milkdropStatus === "ready"}
           resolvePreset={resolvePreset}
           onApply={(k, ov) => {
-            applyFromLibrary(k, ov);
+            if (libTarget === "b") {
+              setLayerB((cfg) => ({ ...cfg, key: k, enabled: true }));
+              setPresetLibOpen(false);
+              setLibTarget("a");
+            } else {
+              applyFromLibrary(k, ov);
+            }
             if (mode !== "milkdrop") setMode("milkdrop");
           }}
+          onApplyLayerB={(k) => setLayerB((cfg) => ({ ...cfg, key: k, enabled: true }))}
+          target={libTarget}
           onToggleFavorite={toggleFavorite}
-          onClose={() => setPresetLibOpen(false)}
+          onClose={() => {
+            setPresetLibOpen(false);
+            setLibTarget("a");
+          }}
         />
       )}
     </div>
@@ -2274,6 +2379,9 @@ function startVisualizer(
   resolveRef: { current: (key: string) => unknown | null },
   debugEl: { current: HTMLPreElement | null },
   freqCanvas: { current: HTMLCanvasElement | null },
+  mdCanvasB: { current: HTMLCanvasElement | null },
+  layerBRef: { current: LayerBConfig },
+  onLayerBError: (msg: string) => void,
 ): () => void {
   const ctx = canvas.getContext("2d")!;
 
@@ -2587,6 +2695,8 @@ function startVisualizer(
       const v = Math.max(-1, Math.min(1, wave[j] * gain));
       timeByte[j] = (v * 127 + 128) | 0;
     }
+    const lb = layerBRef.current;
+    if (lb.enabled && lb.bandA) shapeWave(timeByte, lb.bandA, 1, timeByte);
     if (bcHeld) return; // the last good frame stays up while a reload lands
 
     // Butterchurn's own clock accepts frame times up to a full second. One
@@ -2628,6 +2738,7 @@ function startVisualizer(
       beat = f[4];
       flux = f[5];
       bpm = f[6];
+      live.bpm = bpm;
       bpmConf = f[7];
       beatPhase = f[8];
       beatCount = f[9];
@@ -2780,6 +2891,8 @@ function startVisualizer(
   // an EMA over 1/dt systematically overestimates under the FPS limiter,
   // because vsync quantizes the intervals (16/33/50 ms mix).
   let fps = 60;
+  let layerB: LayerB | null = null;
+  let lastLayerBError = "";
   let fpsFrames = 0;
   let fpsWindowStart = last;
 
@@ -2877,6 +2990,15 @@ function startVisualizer(
 
     if (modeRef.current === "milkdrop") {
       renderMilkdrop();
+      const lb = layerBRef.current;
+      if (lb.enabled && lb.key && mdCanvasB.current) {
+        layerB ??= new LayerB(mdCanvasB.current);
+        layerB.render(lb, (k) => resolveRef.current(k), 0, params.get("milkdrop", "blend"));
+        if (layerB.error !== lastLayerBError) {
+          lastLayerBError = layerB.error;
+          onLayerBError(lastLayerBError);
+        }
+      }
     } else if (modeRef.current === "3d") {
       render3D(dt, now / 1000);
     } else {
