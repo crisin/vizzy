@@ -74,6 +74,8 @@ import { TagBar } from "./milkdrop/TagBar";
 import { Cockpit } from "./regie/Cockpit";
 import { director } from "./regie/director";
 import { RegieModal } from "./regie/RegieModal";
+import { queue } from "./regie/queue";
+import { QueueBar } from "./regie/QueueBar";
 import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
 import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
@@ -1664,6 +1666,15 @@ function App() {
           setPresetLibOpen(true);
         }
         else if (key === "t") setTagBarOpen((v) => !v);
+        else if (key === "q" && e.shiftKey) {
+          queue.clear();
+          showToast("Queue geleert");
+        } else if (key === "q") {
+          queue.add(presetKeyRef.current);
+          showToast(`+ Queue: ${presetLabel(presetKeyRef.current)}`);
+        } else if (key === "n") {
+          if (!director.playNextQueued()) showToast("Queue ist leer");
+        }
         else if (key === "p") setStudioKey(presetKeyRef.current);
         else if (e.key === "+" || e.key === "=") ratePreset(1);
         else if (e.key === "-") ratePreset(-1);
@@ -1698,6 +1709,7 @@ function App() {
     tagBarOpen,
     cockpitOpen,
     regieOpen,
+    showToast,
     drawerTab,
     studioKey,
     ratePreset,
@@ -2521,6 +2533,7 @@ function App() {
           onOpenRegie={() => setRegieOpen(true)}
         />
       )}
+      {mode === "milkdrop" && <QueueBar label={presetLabel} autoSwitch={autoSwitch} />}
       {regieOpen && (
         <RegieModal
           presetKeys={allPresetKeys}
@@ -2847,7 +2860,8 @@ function startVisualizer(
     // interval: once it has elapsed the switch is held until the music
     // reaches the chosen boundary, so presets change in time with the track
     // instead of whenever the timer happens to run out.
-    if (autoRef.current && wantsAutoSwitch()) {
+    // A filled live queue advances on the same boundaries, auto or not.
+    if ((autoRef.current || queue.length > 0) && wantsAutoSwitch()) {
       lastAutoSwitch = performance.now();
       onAutoSwitch();
     }

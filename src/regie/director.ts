@@ -15,6 +15,7 @@ import { live } from "../milkdrop/live";
 import { comboStore, type Combo } from "../milkdrop/combos";
 import { params } from "../params";
 import { nowPlaying, type Track } from "./nowPlaying";
+import { queue } from "./queue";
 import { COMBO_PREFIX, regie, type Pool, type Rule, type RuleMatch } from "./regieStore";
 
 export type DirectorHost = {
@@ -67,6 +68,8 @@ class Director {
   /** what was last applied: rule id + target, so edits re-apply */
   private appliedSig = "";
   private orderPos = new Map<string, number>();
+  /** a queue entry is on screen — once the queue runs dry the rule comes back */
+  private queueRan = false;
   /** the pool entry that is on screen (may be a combo) */
   private lastEntry = "";
   private listeners = new Set<() => void>();
@@ -107,29 +110,63 @@ class Director {
     if (track) this.lastBase = track.baseKey;
     if (songChanged) this.lastEntry = "";
     this.setActive(next);
-    if (!next) {
-      this.appliedSig = "";
-      return;
-    }
-    const sig = `${next.rule.id}|${JSON.stringify(next.rule.target)}`;
+    const sig = next ? `${next.rule.id}|${JSON.stringify(next.rule.target)}` : "";
     // apply on a new song, or when a different/edited rule takes over
     // mid-song (Spotify's playlist arriving after the media session)
-    if (!songChanged && sig === this.appliedSig) return;
+    const due = songChanged || (next !== null && sig !== this.appliedSig);
     this.appliedSig = sig;
-    this.apply(next.rule);
+    if (!due) return;
+    // the queue outranks every rule — a new song takes its next entry
+    if (songChanged && queue.length > 0) {
+      this.playQueued();
+      return;
+    }
+    // mid-song rule change while a queue entry shows: let it finish its slot
+    if (!songChanged && this.queueRan) return;
+    if (next) this.apply(next.rule);
+  }
+
+  /** Puts a preset key or `combo:<name>` on screen. */
+  private playEntry(ref: string): boolean {
+    const h = this.host;
+    if (!h) return false;
+    if (ref.startsWith(COMBO_PREFIX)) {
+      const c = comboStore.getSnapshot().find((x) => x.name === ref.slice(COMBO_PREFIX.length));
+      if (!c) return false;
+      h.applyCombo(c);
+    } else {
+      if (!h.playable().has(ref)) return false;
+      h.applyPreset(ref);
+    }
+    this.lastEntry = ref;
+    return true;
+  }
+
+  /** Next playable queue entry; unplayable ones (deleted, quarantined) are dropped. */
+  private playQueued(): boolean {
+    for (let it = queue.shift(); it; it = queue.shift()) {
+      if (this.playEntry(it.ref)) {
+        this.queueRan = true;
+        live.lastPick = `queue: ${it.ref}`;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** "N": the next queue entry right now. */
+  playNextQueued(): boolean {
+    return queue.length > 0 && this.playQueued();
   }
 
   private apply(rule: Rule) {
-    const h = this.host;
-    if (!h) return;
+    if (!this.host) return;
+    this.queueRan = false;
     const t = rule.target;
     if (t.kind === "preset") {
-      if (h.playable().has(t.key)) h.applyPreset(t.key);
-      this.lastEntry = t.key;
+      this.playEntry(t.key);
     } else if (t.kind === "combo") {
-      const c = comboStore.getSnapshot().find((x) => x.name === t.name);
-      if (c) h.applyCombo(c);
-      this.lastEntry = COMBO_PREFIX + t.name;
+      this.playEntry(COMBO_PREFIX + t.name);
     } else {
       const pool = regie.getSnapshot().pools.find((p) => p.id === t.poolId);
       if (pool) this.playFromPool(pool, true);
@@ -155,6 +192,7 @@ class Director {
     if (list.length === 0) return;
     const current = this.lastEntry || h.currentKey();
     let next: string;
+    this.queueRan = false;
     if (pool.pick === "order") {
       const pos = fresh ? 0 : ((this.orderPos.get(pool.id) ?? -1) + 1) % list.length;
       this.orderPos.set(pool.id, pos);
@@ -163,13 +201,7 @@ class Director {
       const mode = pool.pick === "shuffle" ? 0 : ((params.get("milkdrop", "tagMode") | 0) as TagMode);
       next = pickAuto(list, current, mode);
     }
-    this.lastEntry = next;
-    if (next.startsWith(COMBO_PREFIX)) {
-      const c = comboStore.getSnapshot().find((x) => x.name === next.slice(COMBO_PREFIX.length));
-      if (c) h.applyCombo(c);
-    } else {
-      h.applyPreset(next);
-    }
+    this.playEntry(next);
     live.lastPick = `pool ${pool.name}: ${next}`;
   }
 
@@ -179,7 +211,16 @@ class Director {
    * or a "-" rating ("skip") always gets out of a hold.
    */
   override(reason: "auto" | "trap" | "skip"): boolean {
+    if (queue.length > 0 && this.playQueued()) return true;
     const a = this.active;
+    if (this.queueRan) {
+      // queue ran dry: back to what the rule wants
+      this.queueRan = false;
+      if (a) {
+        this.apply(a.rule);
+        return true;
+      }
+    }
     if (!a) return false;
     const t = a.rule.target;
     if (t.kind === "pool") {

@@ -16,6 +16,8 @@ const SHORTCUTS = [
   ["D", "Diagnoseanzeige ein- oder ausblenden"],
   ["C", "Cockpit: laufender Song, aktive Regel, schnell zuordnen"],
   ["G", "Regie: Regeln (Song/Artist/Playlist → Bild) und Pools"],
+  ["Q", "Laufendes Preset in die Queue (Shift+Q: Queue leeren)"],
+  ["N", "Nächsten Queue-Eintrag sofort"],
   ["E", "Einstellungen öffnen"],
   ["F", "Vollbild umschalten"],
   ["?", "Diese Hilfe öffnen"],

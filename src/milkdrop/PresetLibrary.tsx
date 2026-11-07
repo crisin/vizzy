@@ -15,6 +15,7 @@ import {
   type PreviewRecord,
 } from "./previews";
 import { ENERGY_TAGS, tagStore, useTags } from "./tags";
+import { LibraryActions } from "../regie/LibraryActions";
 import { TagChips } from "./TagChips";
 import "./library.css";
 import { presetStore, useUserPresets } from "./presetStore";
@@ -451,6 +452,7 @@ export function PresetLibrary({
                   onToggle={(t) => tagStore.toggleMany(multi, t)}
                   allowCreate
                 />
+                {target === "a" && <LibraryActions keys={multi} />}
                 <div className="mdlib-actions">
                   <button className="mode-btn" onClick={() => setMulti([])}>Auswahl aufheben</button>
                 </div>
@@ -478,6 +480,7 @@ export function PresetLibrary({
                   </button>
                   {quarantine.includes(sel.key) && <span className="mdlib-hint">⛔ trappte wiederholt — Anwenden gibt es frei</span>}
                 </div>
+                {target === "a" && <LibraryActions keys={[sel.key]} />}
                 <TagChips
                   selected={tagStore.get(sel.key)}
                   suggested={suggestions.get(sel.key)}
