@@ -13,9 +13,10 @@ const GROUPS: { id: string; title: string; keys: string[] }[] = [
 const DEF_BY_KEY = new Map(TWEAK_DEFS.map((d) => [d.key, d]));
 
 /**
- * Preset tweaks — lives as a tab in the settings drawer. Values are the
+ * Preset tweaks — the "Anpassen" tab of the preset studio. Values are the
  * preset's own baseVals with the user's overrides on top; the reset arrow
- * per row drops that one override.
+ * per row drops that one override. The studio saves, so the footer with
+ * name and save button is optional.
  */
 export function MdTweakPanel({
   presetKey,
@@ -26,6 +27,7 @@ export function MdTweakPanel({
   onResetKey,
   onSave,
   onDeleteUser,
+  footer = true,
 }: {
   presetKey: string;
   baseVals: Record<string, unknown>;
@@ -35,6 +37,7 @@ export function MdTweakPanel({
   onResetKey: (key: string) => void;
   onSave: (name: string) => void;
   onDeleteUser: (name: string) => void;
+  footer?: boolean;
 }) {
   const isUser = presetKey.startsWith("user:");
   const [name, setName] = useState(isUser ? presetKey.slice(5) : "Mein Preset");
@@ -93,6 +96,7 @@ export function MdTweakPanel({
           </Section>
         );
       })}
+      {footer && (
       <div className="tweak-footer">
         <button className="mode-btn" disabled={!dirty} onClick={onReset} title="Alle Tweaks verwerfen">
           Alles verwerfen
@@ -123,6 +127,7 @@ export function MdTweakPanel({
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

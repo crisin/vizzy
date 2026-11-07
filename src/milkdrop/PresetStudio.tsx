@@ -21,10 +21,12 @@ import {
 } from "./vpreset";
 import { EEL_REFERENCE } from "./reference";
 import { askAgent, listModels, loadLlmConfig, saveLlmConfig, type LlmConfig } from "./agent";
+import { MdTweakPanel } from "../MdTweakPanel";
 import "./studio.css";
 
 type Bc = Record<string, unknown> & { baseVals?: Record<string, unknown>; waves?: { baseVals?: Record<string, unknown> }[]; shapes?: { baseVals?: Record<string, unknown> }[] };
-type Tab = "parts" | "code" | "remix" | "ai";
+export type StudioTab = "tweak" | "parts" | "code" | "remix" | "ai";
+type Tab = StudioTab;
 type Child = { preset: VizzyPreset; ok: boolean; reason: string; thumb: string };
 
 const SLOT_PARTS = ["baseVals", ...CODE_PARTS] as const;
@@ -61,6 +63,8 @@ export function PresetStudio({
   resolvePreset,
   onApply,
   onClose,
+  initialTab = "tweak",
+  initialOverrides,
 }: {
   initialKey: string;
   allKeys: string[];
@@ -70,13 +74,24 @@ export function PresetStudio({
   /** a saved preset should play in the main picture */
   onApply: (key: string) => void;
   onClose: () => void;
+  /** "tweak" (Anpassen) for quick changes, "parts" for building */
+  initialTab?: Tab;
+  /** live tweaks the main picture already carries — the draft starts there */
+  initialOverrides?: Record<string, number>;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
   const existing = initialKey.startsWith("user:") ? presetStore.byName(initialKey.slice(5)) : undefined;
-  const [draft, setDraft] = useState<VizzyPreset>(() => draftFrom(initialKey, existing));
+  const [draft, setDraft] = useState<VizzyPreset>(() => {
+    const d = draftFrom(initialKey, existing);
+    if (initialOverrides && Object.keys(initialOverrides).length) {
+      d.overrides = { ...d.overrides, ...initialOverrides };
+    }
+    return d;
+  });
   const [savedAs, setSavedAs] = useState<string | null>(existing ? existing.name : null);
-  const [dirty, setDirty] = useState(false);
-  const [tab, setTab] = useState<Tab>("parts");
+  // live tweaks carried over count as unsaved work
+  const [dirty, setDirty] = useState(() => !!initialOverrides && Object.keys(initialOverrides).length > 0);
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [codePart, setCodePart] = useState<CodePart>("frame");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -91,6 +106,12 @@ export function PresetStudio({
   // a reference to the preset being edited would be its *saved* version.
   const resolveAt = (k: string) => resolvePreset(k);
   const composed = useMemo(() => compose(draft, resolveAt) as Bc | null, [draft, resolvePreset]);
+  // what the sliders in "Anpassen" sit on: everything but the overrides
+  const plainBaseVals = useMemo(
+    () => ((compose({ ...draft, overrides: {} }, resolveAt) as Bc | null)?.baseVals ?? {}) as Record<string, unknown>,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draft.base, draft.parts, resolvePreset],
+  );
   const pool = favorites.length >= 4 ? favorites : allKeys;
   const randomKey = () => pool[Math.floor(Math.random() * pool.length)];
 
@@ -350,6 +371,7 @@ export function PresetStudio({
           <div className="studio-tabs" role="tablist">
             {(
               [
+                ["tweak", "Anpassen"],
                 ["parts", "Bausteine"],
                 ["code", "Code"],
                 ["remix", "Remix"],
@@ -390,6 +412,31 @@ export function PresetStudio({
 
         <div className="studio-body">
           <div className="studio-main">
+            {tab === "tweak" && (
+              <div className="studio-tweak">
+                <p className="set-note">
+                  Die Grundwerte des Presets verbiegen — Bewegung, Nachleuchten, Welle,
+                  Farbe. Rechts siehst du es live; gespeichert wird mit „Speichern“.
+                </p>
+                <MdTweakPanel
+                  presetKey={initialKey}
+                  baseVals={plainBaseVals}
+                  overrides={draft.overrides}
+                  onChange={(k, v) => edit((d) => ({ ...d, overrides: { ...d.overrides, [k]: v } }))}
+                  onReset={() => edit((d) => ({ ...d, overrides: {} }))}
+                  onResetKey={(k) =>
+                    edit((d) => {
+                      const o = { ...d.overrides };
+                      delete o[k];
+                      return { ...d, overrides: o };
+                    })
+                  }
+                  onSave={() => {}}
+                  onDeleteUser={() => {}}
+                  footer={false}
+                />
+              </div>
+            )}
             {tab === "parts" && (
               <div className="studio-parts">
                 <p className="set-note">

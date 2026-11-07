@@ -75,7 +75,6 @@ import {
 } from "./comfy";
 import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
-import { MdTweakPanel } from "./MdTweakPanel";
 import { HelpPanel } from "./HelpPanel";
 import { PresetLibrary } from "./milkdrop/PresetLibrary";
 import { TagBar } from "./milkdrop/TagBar";
@@ -93,11 +92,11 @@ import { tagStore, useTags } from "./milkdrop/tags";
 import { notePlayed, pickAuto, type TagMode } from "./milkdrop/autoswitch";
 import { DEFAULT_LAYER_B, LayerB, shapeWave, type LayerBConfig } from "./milkdrop/layerB";
 import { LayerPanel } from "./milkdrop/LayerPanel";
-import { PresetStudio } from "./milkdrop/PresetStudio";
+import { PresetStudio, type StudioTab } from "./milkdrop/PresetStudio";
 import { breedChild, isBreedKey, resolveBreed, spawn } from "./milkdrop/breed";
 import { setBridgeHooks } from "./milkdrop/bridgeClient";
 import { presetStore, useUserPresets } from "./milkdrop/presetStore";
-import { compose, makePreset, type VizzyPreset } from "./milkdrop/vpreset";
+import { compose } from "./milkdrop/vpreset";
 import {
   CURATED,
   CURATED_PREFIX,
@@ -361,6 +360,12 @@ function App() {
   const [presetLibOpen, setPresetLibOpen] = useState(false);
   /** preset key the studio was opened on; null = closed */
   const [studioKey, setStudioKey] = useState<string | null>(null);
+  const [studioTab, setStudioTab] = useState<StudioTab>("tweak");
+  /** "tweak" (Anpassen) for quick changes, "parts" to build from pieces */
+  const openStudio = (key: string, tab: StudioTab = "tweak") => {
+    setStudioTab(tab);
+    setStudioKey(key);
+  };
   /** the library was opened to pick layer B's preset, not the main one */
   const [libTarget, setLibTarget] = useState<"a" | "b">("a");
   const [layerB, setLayerB] = useState<LayerBConfig>(() => ({
@@ -488,7 +493,6 @@ function App() {
   const [bakeState, setBakeState] = useState<BakeState>({ kind: "idle" });
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [routingOpen, setRoutingOpen] = tabFlag("routing");
-  const [tweakOpen, setTweakOpen] = tabFlag("tweaks");
   const [mdOverrides, setMdOverrides] = useState<Record<string, number>>({});
   const overridesRef = useRef({
     version: 0,
@@ -603,14 +607,14 @@ function App() {
 
   useEffect(() => {
     const needed =
-      mode === "milkdrop" || bgLayer === "milkdrop" || tweakOpen || presetLibOpen;
+      mode === "milkdrop" || bgLayer === "milkdrop" || studioKey !== null || presetLibOpen;
     if (needed && milkdropStatus === "idle") {
       void requestMilkdropRuntime();
     }
   }, [
     mode,
     bgLayer,
-    tweakOpen,
+    studioKey,
     presetLibOpen,
     milkdropStatus,
     requestMilkdropRuntime,
@@ -669,42 +673,6 @@ function App() {
       ...PRESET_KEYS,
     ],
     [userPresets],
-  );
-
-  const currentBaseVals = useMemo(() => {
-    const p = resolvePreset(presetKey) as {
-      baseVals?: Record<string, unknown>;
-    } | null;
-    return p?.baseVals ?? {};
-  }, [resolvePreset, presetKey]);
-
-  const saveTweaks = useCallback(
-    (name: string) => {
-      // Saving forks whatever is on screen into a user preset. Curated and
-      // user presets are themselves base+overrides, so resolve down to the
-      // real Butterchurn key and carry their overrides along — storing
-      // "vizzy:Kirchenfenster" as a base would not resolve later.
-      const curated = findCurated(presetKey);
-      const currentUser = presetKey.startsWith("user:")
-        ? userPresets.find((p) => p.name === presetKey.slice(5))
-        : undefined;
-      const parent = curated ?? currentUser;
-      const overrides = { ...(parent?.overrides ?? {}), ...mdOverrides };
-      const vp: VizzyPreset =
-        currentUser && currentUser.name === name
-          ? { ...currentUser, overrides }
-          : makePreset(name, parent?.base ?? presetKey, {
-              // an own preset's parts (mashup, code edits) carry over
-              parts: currentUser ? JSON.parse(JSON.stringify(currentUser.parts)) : {},
-              overrides,
-              lineage: { parents: [presetKey], op: "tweak", at: Date.now() },
-            });
-      void presetStore.save(vp);
-      setPresetKey(`user:${name}`);
-      setMdOverrides({});
-      flog(`[md] user preset saved: ${name}`);
-    },
-    [presetKey, userPresets, mdOverrides],
   );
 
   /* ---- undo for deletions: delete right away, offer to take it back ---- */
@@ -1764,8 +1732,7 @@ function App() {
     presetLibOpen ||
     studioKey !== null ||
     tagBarOpen ||
-    routingOpen ||
-    (tweakOpen && mode === "milkdrop");
+    routingOpen;
 
   // read in render scope so a change in the settings panel re-arms the timer
   const hideDelay = params.get("ui", "hideDelay");
@@ -1822,7 +1789,6 @@ function App() {
         else if (libraryOpen) setLibraryOpen(false);
         else if (comfyOpen) setComfyOpen(false);
         else if (routingOpen) setRoutingOpen(false);
-        else if (tweakOpen) setTweakOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
         else if (helpOpen) setHelpOpen(false);
         return;
@@ -1915,7 +1881,7 @@ function App() {
           setPresetLibOpen(true);
           break;
         case "studio":
-          setStudioKey(presetKeyRef.current);
+          openStudio(presetKeyRef.current);
           break;
         case "tagbar":
           setTagBarOpen((v) => !v);
@@ -1964,7 +1930,6 @@ function App() {
     libraryOpen,
     comfyOpen,
     routingOpen,
-    tweakOpen,
     settingsOpen,
     helpOpen,
     pokeHud,
@@ -2277,8 +2242,8 @@ function App() {
                   },
                 },
                 { separator: true },
-                { label: "Preset anpassen", onSelect: () => setTweakOpen(true) },
-                { label: "Im Studio öffnen", keyHint: "P", onSelect: () => setStudioKey(presetKey) },
+                { label: "Preset anpassen", keyHint: "P", onSelect: () => openStudio(presetKey, "tweak") },
+                { label: "Aus Bausteinen bauen", onSelect: () => openStudio(presetKey, "parts") },
                 { separator: true },
                 { label: "Präsentationsmodus", keyHint: "H", onSelect: () => enterPresentation() },
               ]}
@@ -2598,34 +2563,6 @@ function App() {
           onTab={setDrawerTab}
           extraTabs={[
             {
-              id: "tweaks",
-              label: "Tweaks",
-              after: "auto" as const,
-              title: "Laufendes Preset verbiegen und als eigenes speichern",
-              ...milkdropOnly,
-              content: (
-                      <MdTweakPanel
-                        key={presetKey}
-                        presetKey={presetKey}
-                        baseVals={currentBaseVals}
-                        overrides={mdOverrides}
-                        onChange={(key, value) =>
-                          setMdOverrides((prev) => ({ ...prev, [key]: value }))
-                        }
-                        onReset={() => setMdOverrides({})}
-                        onResetKey={(key) =>
-                          setMdOverrides((prev) => {
-                            const next = { ...prev };
-                            delete next[key];
-                            return next;
-                          })
-                        }
-                        onSave={saveTweaks}
-                        onDeleteUser={removeUserPreset}
-                      />
-              ),
-            },
-            {
               id: "layer",
               label: "Layer B",
               after: "auto" as const,
@@ -2765,11 +2702,15 @@ function App() {
       {studioKey !== null && (
         <PresetStudio
           initialKey={studioKey}
+          initialTab={studioTab}
+          initialOverrides={studioKey === presetKey ? mdOverrides : undefined}
           allKeys={allPresetKeys}
           favorites={favorites}
           label={presetLabel}
           resolvePreset={resolvePreset}
           onApply={(k) => {
+            // live tweaks went into the saved preset
+            setMdOverrides({});
             setPresetKey(k);
             if (mode !== "milkdrop") setMode("milkdrop");
             setStudioKey(null);
@@ -2798,7 +2739,7 @@ function App() {
           onApplyLayerB={(k) => setLayerB((cfg) => ({ ...cfg, key: k, enabled: true }))}
           onOpenStudio={(k) => {
             setPresetLibOpen(false);
-            setStudioKey(k);
+            openStudio(k);
           }}
           target={libTarget}
           onToggleFavorite={toggleFavorite}

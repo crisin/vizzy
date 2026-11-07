@@ -32,11 +32,11 @@ See [PLAN.md](PLAN.md) for the roadmap.
   for many at once), live with `T` (a chip bar over the picture, `1`–`9`
   toggle) or in code (`src/milkdrop/tagSeeds.ts`, `tags` on curated
   presets — defaults the user's own tags override). Stored in `tags.json`
-  in the app data directory. "Tags ▾" in the toolbar restricts ←/→,
+  in the app data directory. The library's "Rotation" bar restricts ←/→,
   random and auto to presets with given tags (any/all). Three groups mean
   something to the auto-switch: energy (`ruhig`/`mittel`/`hoch`), song
   section (`intro`/`build`/`drop`/`break`/`outro`) and `nie-auto`. With
-  "Auswahl nach Tags" on (Settings → Milkdrop), the auto-switch weights its
+  "Auswahl nach Tags" on (Settings → Automatik), the auto-switch weights its
   draw towards presets whose energy matches the smoothed level of the
   track (adaptive, so a quiet album still spans all three) and whose
   section tag matches what just happened — energy jumping up at a section
@@ -50,13 +50,15 @@ See [PLAN.md](PLAN.md) for the roadmap.
   (`vite.config.ts`) switches it to the saturating instruction, the way
   original Milkdrop behaves. A preset that still fails three times is
   quarantined (⛔) and left out of the rotation until picked by hand.
-- **Layer B** (`B` in the toolbar, `Shift+B`, drawer tab "Layer"): a second
+- **Layer B** (`B`, ⋯ menu, `Shift+B` / drawer tab "Layer B"): a second
   Milkdrop preset on its own canvas over the first, mixed by blend mode and
   opacity. Each layer can listen to all, only the bass or only the highs
   (split on the waveform Butterchurn analyses); B has its own level and
   render scale and can follow the auto-switch one bar after A. A/B swap,
   and good mixes can be kept as named "Kombis" (`combos.json`).
-- **Preset studio** (`P`, toolbar, or from the library): own presets are
+- **Preset studio** (`P`, ⋯ menu, or from the library): *Anpassen* bends the
+  base values with sliders (zoom, decay, wave, colour — what used to be
+  "Tweaks"); beyond that, own presets are
   made of *parts* — base values, init/frame/pixel equations, warp and comp
   shaders, four waves, four shapes — each taken from any other preset or
   written inline. *Bausteine* builds mashups by picking parts (or rolling
@@ -69,7 +71,7 @@ See [PLAN.md](PLAN.md) for the roadmap.
   instruction. Presets are JSON files in `<app data>/presets/`, polled, so
   an edited file reloads in place; each remembers its lineage, shown as a
   family tree in the library.
-- **Breeding** (Settings → Milkdrop → Zucht-Anteil): the auto-switch now and
+- **Breeding** (Settings → Automatik → Zucht-Anteil): the auto-switch now and
   then plays a fresh mutation of the preset it picked. `+` keeps a child as
   an own preset, `-` drops it and moves on; both also rate presets (−3..3),
   and the auto-switch favours what you rated up.
@@ -162,9 +164,27 @@ See [PLAN.md](PLAN.md) for the roadmap.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.
-- **Rendering settings** (editor → "Rendering"): render resolution as %
+- **Rendering settings** (Settings → Bild → "Rendering"): render resolution as %
   of native and an FPS limit — turn resolution down for smooth fullscreen
   Milkdrop on weak/integrated GPUs (retina fullscreen is 4× the pixels).
+
+### Using it
+
+Three levels, three kinds of window (see [PLAN-ux.md](PLAN-ux.md)):
+
+- **Stage** — the toolbar over the picture: source, `Milkdrop | 3D |
+  Klassisch ▾`, and for Milkdrop `‹ preset ›` (click: library) · ☆ · Auto ·
+  Library · ⋯; for 3D `‹ scene ›` plus the scene's own actions. It hides
+  itself after a few seconds; `H` keeps it away for good (presentation mode).
+- **Side panels** — settings on the right (Audio, Bild, Automatik, Layer B,
+  Bedienung, System), cockpit on the left (`C`). The picture keeps running
+  and the toolbar moves out of their way.
+- **Workshops** — library (`L`), studio (`P`), Regie (`G`): full screen,
+  closed with Esc or Schließen, never by a stray click beside them; the
+  studio asks before dropping unsaved work.
+
+Deleting anything (image, morph set, model, own preset, combo) happens at
+once and offers "Rückgängig" for 8 seconds.
 
 ### Keys
 
@@ -273,8 +293,8 @@ Notes:
 
 Windows feature set is complete through the editor phase: parameter
 editor, frequency listeners with a modulation matrix (route any Hz
-range onto any effect parameter, ◎ button), Milkdrop preset tweaking
-with saveable user presets (🎛 button), background layer compositing,
+range onto any effect parameter, Settings → Audio), Milkdrop preset tweaking
+with saveable user presets (studio → Anpassen), background layer compositing,
 and thirteen 3D scenes. The macOS capture backend (Core Audio process taps
 via `objc2-core-audio`, `src-tauri/src/audio/mac.rs`) covers all three
 source kinds. Next up: custom shader visualizations with a live code

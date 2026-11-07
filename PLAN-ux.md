@@ -262,10 +262,20 @@ auf einer Party. Daraus folgen Regeln, die über das Aufräumen hinausgehen:
 Jede Phase endet wie gewohnt: Typecheck grün, Sichtprüfung im Tauri-Dev,
 README angepasst, Commit.
 
-**Stand 2026-11-07:** U0 erledigt (994c42c). U1 erledigt bis auf zwei
-Punkte, die in U3 wandern: Vollbild-Monitor merken und die Einblendung
-„Quelle gewechselt“. Die Info-Einblendung `I` ist da (Auto-Einblendung bei
-Songwechsel noch nicht).
+**Stand 2026-11-08: U0–U4 umgesetzt.** U0 994c42c · U1 a8defed · U2 7a963fa ·
+U3 d4888ca + 5df9844 · U4 im Commit danach. Abweichungen vom Konzept:
+
+- **Tweaks** gibt es als Drawer-Tab nicht mehr; sie sind der Studio-Tab
+  „Anpassen“ und starten mit den Live-Tweaks des Hauptbilds (etwa einer
+  Library-Variante).
+- **ComfyUI** sitzt im Tab „Bild“ (dort, wo gebacken wird), nicht in
+  „System“; Spotify und new-helper bleiben im Cockpit.
+- **Hilfe** steht weiter als `?` oben in der Leiste (das `⋯`-Menü gibt es nur
+  bei Milkdrop) und öffnet ein eigenes kleines Fenster.
+- **Quellenwechsel** braucht eine Rust-Änderung: Der Capture-Thread zählt
+  seine Rückfälle (`audio_fallbacks`), die App fragt alle 3 s nach.
+- Ungeprüft in der Tauri-App: Vollbild-Monitor merken, Quellenwechsel-OSD,
+  Präsentationsmodus nach Neustart.
 
 | Phase | Inhalt | Umfang |
 |---|---|---|
