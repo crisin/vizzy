@@ -9,6 +9,7 @@ Config-UI, Layering, Editor, Remix und Parallax-Kombination.
 |---|---|
 | Crash bei Presets | WASM-Opcode patchen (saturierendes trunc), bestehende Trap-Recovery bleibt als Sicherheitsnetz |
 | Bibliothek | Grid aus Vorschauen + eine große Live-Kachel; Vorschauen wahlweise Standbild oder kurzer Clip, der Audio-Dynamik, Tweak-Streuung und Zeitverlauf zeigt |
+| Tags | Freie Tags wie Favoriten, vergeben über Library, Code und eine Live-Tag-Leiste; Abspielen nach Tag filterbar; Auto-Switch wählt anhand Energie-Tags passend zu Pegel und Song-Abschnitt. Teil von M1 |
 | Vorschauen | In-App im Hintergrund generiert (auch für eigene Presets), Ablage in IndexedDB |
 | Config-UI | Ein rechter Drawer für alles: Settings, Tweaks, Routing, ComfyUI, Hilfe, Preset-Studio |
 | Layering | Alle drei Formen, Reihenfolge: zwei Presets übereinander → Mashup aus Teilen → Milkdrop in 3D-Szenen |
@@ -120,8 +121,66 @@ großen Live-Kachel für das markierte Preset.
    bleiben.
 6. **Tweak-Variante übernehmen.** Aus der Tweak-Streuung im Clip kann eine
    Variante direkt als Overrides übernommen werden (Klick auf den Frame).
+7. **Tag-System.** Tags funktionieren wie Favoriten (der Stern wird intern
+   selbst ein Tag `★`), nur beliebig viele und benannt.
+   - **Modell.** `src/milkdrop/tags.ts`: `tags: Record<presetKey, string[]>`
+     plus eine Tag-Liste mit Farbe. Speicherung in `AppData/vizzy/tags.json`
+     (Tauri fs, gleicher Ordner wie später die Preset-Dateien; einmalige
+     Migration der Favoriten aus `vizzy.favorites`). Im Browser-Fallback
+     localStorage. Eigene Presets tragen ihre Tags zusätzlich in der
+     Preset-Datei, damit sie beim Teilen mitgehen.
+   - **Reservierte Tags mit Bedeutung.** Freie Tags sind reine Labels.
+     Drei Gruppen versteht der Auto-Switch: Energie `ruhig` / `mittel` /
+     `hoch`, Abschnitt `intro` / `build` / `drop` / `break` / `outro`, und
+     `nie-auto` (nur manuell). Sie werden beim ersten Start angelegt und in
+     der Tag-Leiste zuerst gezeigt; alles andere ist frei (`spiral`,
+     `organisch`, `psy`, `langsam`, …).
+   - **Drei Wege zu taggen.**
+     1. *Library:* Tag-Chips unter jeder Kachel, Mehrfachauswahl → ein Tag
+        auf alle markierten anwenden, Filter-Chips oben (UND/ODER).
+     2. *Code:* `curated.ts` und Preset-Dateien bekommen ein Feld `tags`;
+        dazu eine Datei `src/milkdrop/tagSeeds.ts` mit Start-Tags für die
+        107 Butterchurn-Presets (grob nach Autor und Name; Chris verfeinert
+        live). Code-Tags sind Defaults, die Nutzer-Datei gewinnt.
+     3. *Live:* Taste `T` öffnet eine schmale Tag-Leiste am unteren Rand
+        über dem Bild: die Tags als Chips, Klick toggelt für das laufende
+        Preset, Ziffern `1`–`9` schalten die ersten neun Chips, Enter mit
+        Text legt ein neues Tag an. Bleibt offen, bis `T`/`Esc`, damit man
+        beim Durchhören einfach mitklicken kann. Mausfrei bedienbar, weil
+        das meist von der Couch passiert.
+   - **Abspielen nach Tag.** `nur ★` wird zu einem Tag-Filter: ein oder
+     mehrere Tags wählen (UND/ODER), gilt wie heute für `←/→`, Zufall und
+     Auto. Der aktive Filter steht als Chip in der Toolbar.
+   - **Vorschlag aus der Vorschau.** Der Preview-Generator misst nebenbei
+     Bewegung (Frame-Differenz) und Helligkeit und schlägt daraus ein
+     Energie-Tag vor; es wird als *Vorschlag* (gestrichelter Chip) gezeigt
+     und erst durch Bestätigung ein Tag. So ist das Energie-Set nach dem
+     ersten Durchlauf grob vorsortiert.
+8. **Auto-Switch nach Tags.** Der Auto-Algorithmus (`wantsAutoSwitch` /
+   `onAutoSwitch`, wandert mit in `src/milkdrop/autoswitch.ts`) wählt
+   nicht mehr gleichverteilt, sondern gewichtet:
+   - **Energie-Pegel.** Aus der Rust-Analyse kommt bereits RMS und die
+     Phrasen-/Sektionsverfolgung (`phrasing.rs`). Ein geglätteter Pegel
+     über die letzten ~8 s wird in drei Stufen geteilt (Schwellen
+     adaptiv, wie `AutoRange` im Morph-Grid, damit leise Alben nicht
+     dauerhaft `ruhig` sind). Presets mit passendem Energie-Tag bekommen
+     Gewicht 1, Nachbarstufe 0.3, Gegenstufe 0.05, ungetaggte 0.5.
+   - **Abschnitt.** Sektionswechsel mit Energiesprung nach oben wählt aus
+     `drop`, nach unten aus `break`; die ersten 30 s eines erkannten
+     Tracks (Stille davor) bevorzugen `intro`. Ohne Abschnitts-Tags greift
+     nur die Energie-Gewichtung.
+   - **Abwechslung.** Zuletzt gespielte Presets werden abgewertet, damit
+     ein kleiner Tag-Pool nicht pendelt.
+   - **Verhalten.** Parameter in den Settings: Tag-Steuerung aus / sanft /
+     streng (streng = nur passende Tags, sonst Fallback auf alle). Das
+     Debug-HUD zeigt Pegelstufe und den Grund der letzten Wahl
+     (`auto: hoch → "Flexi - area 51" (tag hoch, w=1.0)`), damit man die
+     Gewichtung beim Hören nachvollziehen kann.
+   - Der Zucht-Modus aus M5 erbt die Gewichtung: Kinder bekommen die
+     Energie-Tags ihrer Eltern.
 
-**Dateien:** neu `src/milkdrop/{engine,catalog,previews,LibraryModal}.ts(x)`,
+**Dateien:** neu `src/milkdrop/{engine,catalog,previews,tags,tagSeeds,autoswitch,LibraryModal,TagBar}.ts(x)`,
+`src-tauri/src/presets.rs` (nur der Tags-Teil, Rest in M4a),
 `src/idb.ts`, `src/App.tsx` (Entflechtung), `src/App.css`.
 
 **Risiken.** WebGL-Kontextlimit (Browser: ~16): Haupt + Hintergrund-Layer
@@ -362,7 +421,7 @@ Library-Stammbaum.
 | Phase | Umfang | Branch / PR |
 |---|---|---|
 | M0 Crash | klein | `fix/md-trunc-sat` |
-| M1 Library | mittel; enthält die Engine-Entflechtung | `feat/md-library` |
+| M1 Library | mittel-groß; enthält Engine-Entflechtung, Tags und Tag-Auto-Switch | `feat/md-library` |
 | M2 Drawer | mittel-groß | `feat/ui-drawer` |
 | M3a Layer A+B | klein | `feat/md-layers` |
 | M3b Composer-Modell | mittel | `feat/md-compose` |
