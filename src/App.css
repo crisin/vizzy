@@ -814,6 +814,8 @@ body {
   justify-content: center;
   align-items: center;
   gap: 10px;
+  /* left: 50% would otherwise cap the shrink-to-fit width at half the screen */
+  width: max-content;
   max-width: calc(100vw - 32px);
   padding: 10px 14px;
   background: rgba(10, 12, 20, 0.82);
@@ -1335,4 +1337,184 @@ kbd {
 
 .comfy-num select.src-select {
   width: auto;
+}
+
+/* ---------------------------------------------------------------- stage UI */
+
+/* Milkdrop | 3D | Klassisch ▾ — the ▾ menu must not be clipped */
+.seg.mode-switch {
+  overflow: visible;
+}
+
+.seg.mode-switch > .mode-btn:first-child {
+  border-radius: var(--ui-radius) 0 0 var(--ui-radius);
+}
+
+.seg.mode-switch .mode-more .mode-btn {
+  border-radius: 0 var(--ui-radius) var(--ui-radius) 0;
+  padding-inline: calc(var(--ui-pad-x) * 0.6);
+}
+
+/* the preset / scene pill: ‹ name › as one control, in the middle */
+.hud-pill-row {
+  justify-content: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 0 1 560px;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--ui-radius);
+  background: rgba(15, 23, 42, 0.88);
+  overflow: hidden;
+}
+
+.pill-step {
+  flex: none;
+  width: calc(var(--ui-btn-h) * 1.1);
+  background: none;
+  border: 0;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 1.3em;
+  cursor: pointer;
+}
+
+.pill-step:hover,
+.pill-name:hover {
+  background: rgba(30, 41, 59, 0.94);
+}
+
+.pill-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 10px;
+  background: none;
+  border: 0;
+  border-inline: 1px solid rgba(148, 163, 184, 0.22);
+  color: #f1f5f9;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pill-title,
+.pill-status {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill-title {
+  font-weight: 600;
+}
+
+.pill-status {
+  font-size: var(--ui-font-sub);
+  color: #7dd3fc;
+}
+
+.pill-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  border-inline: 1px solid rgba(148, 163, 184, 0.22);
+  color: #f1f5f9;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.pill-select option {
+  background: #0f172a;
+  font-weight: 400;
+}
+
+/* what the current scene can do, in its own row */
+.hud-actions {
+  justify-content: center;
+}
+
+/* ⋯ and ▾ menus */
+.menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: rgba(9, 11, 18, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  animation: sheet-in 0.12s ease-out;
+}
+
+.menu-right {
+  right: 0;
+}
+
+.menu-left {
+  left: 0;
+}
+
+.menu-item {
+  display: grid;
+  grid-template-columns: 1.2em 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: rgba(56, 189, 248, 0.16);
+}
+
+.menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu-check {
+  color: #7dd3fc;
+}
+
+.menu-key {
+  font-size: var(--ui-font-sub);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(148, 163, 184, 0.18);
 }

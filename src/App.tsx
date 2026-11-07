@@ -13,7 +13,9 @@ import type { BCVisualizer } from "butterchurn";
 import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
 import { matchKey, withKey } from "./keys";
 import { InfoOverlay } from "./ui/InfoOverlay";
-import { SCENE_NAMES, type SceneName } from "./sceneCatalog";
+import { SCENE_DESCS, SCENE_LABELS, SCENE_NAMES, type SceneName } from "./sceneCatalog";
+import { ModeSwitch } from "./ui/ModeSwitch";
+import { MoreMenu } from "./ui/MoreMenu";
 import type { Viz3D } from "./scenes3d";
 import { params, PARAMS_STORAGE_KEY } from "./params";
 import { SettingsPanel } from "./SettingsPanel";
@@ -220,6 +222,12 @@ const VIZ_MODE_LABELS: Record<VizMode, string> = {
   milkdrop: "Milkdrop",
   "3d": "3D",
 };
+/** the small 2D modes, sharing one "Klassisch" button in the toolbar */
+const CLASSIC_MODES = (["bars", "radial", "scope", "spektro"] as VizMode[]).map((m) => ({
+  id: m,
+  label: VIZ_MODE_LABELS[m],
+  key: String(VIZ_MODES.indexOf(m) + 1),
+}));
 
 /** UI size tiers: dedicated dimensions per screen class, applied through
  *  CSS custom properties on the stage (see App.css `[data-ui=...]`). */
@@ -552,6 +560,13 @@ function App() {
     pendingOverridesRef.current = null;
     notePlayed(presetKey);
   }, [presetKey]);
+
+  const stepScene = useCallback((dir: 1 | -1) => {
+    setScene3d((cur) => {
+      const i = SCENE_NAMES.indexOf(cur);
+      return SCENE_NAMES[(i + dir + SCENE_NAMES.length) % SCENE_NAMES.length];
+    });
+  }, []);
 
   // Drawer tabs that only apply to Milkdrop stay in place, greyed out, with a
   // way to get there — the tab bar never rearranges itself.
@@ -983,14 +998,6 @@ function App() {
 
   const quarantinePreset = useCallback((key: string) => {
     setQuarantine((prev) => (prev.includes(key) ? prev : [...prev, key]));
-  }, []);
-
-  /** Picking a preset by hand gives it another chance. */
-  const pickPreset = useCallback((key: string) => {
-    setQuarantine((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : prev,
-    );
-    setPresetKey(key);
   }, []);
 
   const stepPreset = useCallback(
@@ -1734,6 +1741,16 @@ function App() {
     return () => window.clearTimeout(hideTimer.current);
   }, [pokeHud]);
 
+  /** H, the ⋯ menu and the settings switch all come through here */
+  const enterPresentation = useCallback(() => {
+    setPresentation(true);
+    setSettingsOpen(false);
+    setCockpitOpen(false);
+    setTagBarOpen(false);
+    setTagFilterOpen(false);
+    showToast("Präsentationsmodus · H holt die Bedienung zurück");
+  }, [showToast]);
+
   // Key-triggered preset changes announce the new name (OSD) — the
   // auto-switch does not, it would chatter.
   const announcePresetRef = useRef(false);
@@ -1799,12 +1816,7 @@ function App() {
             setPresentation(false);
             showToast("Bedienung wieder da");
           } else {
-            setPresentation(true);
-            setSettingsOpen(false);
-            setCockpitOpen(false);
-            setTagBarOpen(false);
-            setTagFilterOpen(false);
-            showToast("Präsentationsmodus · H holt die Bedienung zurück");
+            enterPresentation();
           }
           break;
         case "info":
@@ -1835,7 +1847,7 @@ function App() {
             const i = SCENE_NAMES.indexOf(sceneRef.current);
             const next = SCENE_NAMES[(i + dir + SCENE_NAMES.length) % SCENE_NAMES.length];
             setScene3d(next);
-            showToast(next);
+            showToast(SCENE_LABELS[next]);
           }
           break;
         }
@@ -1923,6 +1935,14 @@ function App() {
     favorites,
     layerB,
   ]);
+
+  const rotationNote = [
+    favOnly ? "nur ★" : "",
+    tagFilter.length ? `Tags: ${tagFilter.join(tagFilterMode === "all" ? " + " : " | ")}` : "",
+    layerB.enabled && layerB.key ? `+ B: ${presetLabel(layerB.key)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
   const inputs = sources.filter((s) => s.kind === "input");
@@ -2022,22 +2042,16 @@ function App() {
               · · ·
             </span>
           )}
-          <div className="seg" role="group" aria-label="Visualisierung">
-            {VIZ_MODES.map((m, i) => (
-              <button
-                key={m}
-                type="button"
-                className={`mode-btn ${mode === m ? "active" : ""}`}
-                onClick={() => setMode(m)}
-                title={`${VIZ_MODE_LABELS[m]} · Taste ${i + 1}`}
-                aria-label={`Visualisierung: ${VIZ_MODE_LABELS[m]}`}
-                aria-pressed={mode === m}
-                aria-keyshortcuts={String(i + 1)}
-              >
-                {VIZ_MODE_LABELS[m]}
-              </button>
-            ))}
-          </div>
+          <ModeSwitch
+            mode={mode}
+            primary={(["milkdrop", "3d"] as VizMode[]).map((m) => ({
+              id: m,
+              label: VIZ_MODE_LABELS[m],
+              key: String(VIZ_MODES.indexOf(m) + 1),
+            }))}
+            classic={CLASSIC_MODES}
+            onMode={(m) => setMode(m as VizMode)}
+          />
           <button
             type="button"
             className={`icon-btn ${cockpitOpen ? "active" : ""}`}
@@ -2118,68 +2132,39 @@ function App() {
           </div>
         )}
         {mode === "milkdrop" && (
-          <div className="hud-row hud-sub">
-            <button
-              type="button"
-              className="mode-btn"
-              onClick={() => stepPreset(-1)}
-              title="Vorheriges Preset (←)"
-              aria-label="Vorheriges Preset"
-            >
-              Zurück
-            </button>
-            <button
-              type="button"
-              className="mode-btn"
-              onClick={() => setPresetLibOpen(true)}
-              title={withKey("Preset-Library mit Vorschauen", "library")}
-              aria-keyshortcuts="L"
-            >
-              Library
-            </button>
-            <select
-              className="src-select preset-select"
-              value={presetKey}
-              onChange={(e) => pickPreset(e.target.value)}
-              title={presetKey}
-              aria-label="Milkdrop-Preset"
-            >
-              {favorites.length > 0 && (
-                <optgroup label="★ Favoriten">
-                  {favorites.map((k) => (
-                    <option key={`fav-${k}`} value={k}>
-                      {presetLabel(k)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              <optgroup label="✦ Vizzy — kuratiert">
-                {CURATED.map((p) => (
-                  <option
-                    key={`${CURATED_PREFIX}${p.name}`}
-                    value={`${CURATED_PREFIX}${p.name}`}
-                  >
-                    {p.name}
-                  </option>
-                ))}
-              </optgroup>
-              {userPresets.length > 0 && (
-                <optgroup label="Eigene Presets">
-                  {userPresets.map((p) => (
-                    <option key={`user:${p.name}`} value={`user:${p.name}`}>
-                      {p.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              <optgroup label="Butterchurn">
-                {PRESET_KEYS.map((k) => (
-                  <option key={k} value={k}>
-                    {quarantine.includes(k) ? `⛔ ${k}` : k}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
+          <div className="hud-row hud-sub hud-pill-row">
+            <div className="pill" role="group" aria-label="Laufendes Preset">
+              <button
+                type="button"
+                className="pill-step"
+                onClick={() => stepPreset(-1)}
+                title={withKey("Vorheriges Preset", "prev")}
+                aria-label="Vorheriges Preset"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="pill-name"
+                onClick={() => setPresetLibOpen(true)}
+                title={`${presetKey} · Klick: Library (L)`}
+              >
+                <span className="pill-title">
+                  {quarantine.includes(presetKey) ? "⛔ " : ""}
+                  {presetLabel(presetKey)}
+                </span>
+                {rotationNote && <span className="pill-status">{rotationNote}</span>}
+              </button>
+              <button
+                type="button"
+                className="pill-step"
+                onClick={() => stepPreset(1)}
+                title={withKey("Nächstes Preset", "next")}
+                aria-label="Nächstes Preset"
+              >
+                ›
+              </button>
+            </div>
             <button
               type="button"
               className={`icon-btn star-btn ${isFavorite ? "active" : ""}`}
@@ -2189,123 +2174,71 @@ function App() {
                   ? withKey("Aus Favoriten entfernen", "fav")
                   : withKey("Zu Favoriten hinzufügen", "fav")
               }
-              aria-label={
-                isFavorite
-                  ? "Preset aus Favoriten entfernen"
-                  : "Preset zu Favoriten hinzufügen"
-              }
               aria-pressed={isFavorite}
-              aria-keyshortcuts="S"
             >
               {isFavorite ? "★" : "☆"}
             </button>
             <button
               type="button"
-              className="mode-btn"
-              onClick={() => stepPreset(1)}
-              title="Nächstes Preset (→)"
-              aria-label="Nächstes Preset"
-            >
-              Weiter
-            </button>
-            <button
-              type="button"
-              className="mode-btn"
-              onClick={randomPreset}
-              title={withKey("Zufälliges Preset", "random")}
-              aria-label="Zufälliges Preset"
-              aria-keyshortcuts="R"
-            >
-              Zufall
-            </button>
-            <button
-              type="button"
               className={`mode-btn ${autoSwitch ? "active" : ""}`}
               onClick={() => setAutoSwitch((v) => !v)}
-              title={withKey("Auto-Wechsel bei Beats", "auto")}
-              aria-label="Automatischen Preset-Wechsel umschalten"
+              title={withKey("Automatisch im Takt wechseln", "auto")}
               aria-pressed={autoSwitch}
-              aria-keyshortcuts="A"
             >
-              auto
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${favOnly ? "active" : ""}`}
-              onClick={() => setFavOnly((v) => !v)}
-              disabled={favorites.length === 0}
-              title="Nur Favoriten durchblättern — gilt für ←/→, Zufall und Auto"
-              aria-label="Nur Favoriten verwenden"
-              aria-pressed={favOnly}
-            >
-              nur ★
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${tagFilter.length ? "active" : ""}`}
-              onClick={() => setTagFilterOpen((v) => !v)}
-              title="Nur Presets mit bestimmten Tags spielen — gilt für ←/→, Zufall und Auto"
-              aria-expanded={tagFilterOpen}
-            >
-              {tagFilter.length ? `Tags: ${tagFilter.join(tagFilterMode === "all" ? " + " : " | ")}` : "Tags ▾"}
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${tagBarOpen ? "active" : ""}`}
-              onClick={() => setTagBarOpen((v) => !v)}
-              title={withKey("Laufendes Preset taggen", "tagbar")}
-              aria-pressed={tagBarOpen}
-              aria-keyshortcuts="T"
-            >
-              🏷
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${layerB.enabled && layerB.key ? "active" : ""}`}
-              onClick={() => {
-                if (!layerB.key) {
-                  setDrawerTab("layer");
-                  setSettingsOpen(true);
-                } else {
-                  setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
-                }
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setDrawerTab("layer");
-                setSettingsOpen(true);
-              }}
-              title={
-                layerB.key
-                  ? `Layer B: ${presetLabel(layerB.key)} — Klick an/aus (B), Rechtsklick Einstellungen (Shift+B)`
-                  : "Zweites Preset darüberlegen"
-              }
-              aria-pressed={layerB.enabled}
-            >
-              B
-            </button>
-            <button
-              type="button"
-              className={`mode-btn ${tweakOpen ? "active" : ""}`}
-              onClick={() => setTweakOpen((v) => !v)}
-              title="Preset-Tweaks — verbiegen & als eigenes Preset speichern"
-              aria-label="Preset-Tweaks öffnen"
-              aria-pressed={tweakOpen}
-              aria-controls="tweak-panel"
-            >
-              Tweaks
+              ⟳ Auto
             </button>
             <button
               type="button"
               className="mode-btn"
-              onClick={() => setStudioKey(presetKey)}
-              title={withKey("Preset-Studio: Bausteine mischen, Code bearbeiten, Remix", "studio")}
-              aria-keyshortcuts="P"
+              onClick={() => setPresetLibOpen(true)}
+              title={withKey("Preset-Library: auswählen, Favoriten, Tags, Rotation", "library")}
             >
-              Studio
+              Library
             </button>
-            {(milkdropStatus === "idle" ||
-              milkdropStatus === "loading") && (
+            <MoreMenu
+              label="⋯"
+              title="Mehr"
+              items={[
+                { label: "Zufälliges Preset", keyHint: "R", onSelect: () => randomPreset() },
+                {
+                  label: "Nur Favoriten",
+                  checked: favOnly,
+                  disabled: favorites.length === 0,
+                  title: favorites.length === 0 ? "Noch keine Favoriten" : undefined,
+                  onSelect: () => setFavOnly((v) => !v),
+                },
+                { label: "Rotation festlegen …", onSelect: () => setPresetLibOpen(true) },
+                { separator: true },
+                { label: "Taggen", keyHint: "T", checked: tagBarOpen, onSelect: () => setTagBarOpen((v) => !v) },
+                {
+                  label: layerB.key ? `Layer B: ${presetLabel(layerB.key)}` : "Layer B …",
+                  keyHint: "B",
+                  checked: layerB.enabled && !!layerB.key,
+                  onSelect: () => {
+                    if (!layerB.key) {
+                      setDrawerTab("layer");
+                      setSettingsOpen(true);
+                    } else {
+                      setLayerB((cfg) => ({ ...cfg, enabled: !cfg.enabled }));
+                    }
+                  },
+                },
+                {
+                  label: "Layer-B-Einstellungen",
+                  keyHint: "Shift+B",
+                  onSelect: () => {
+                    setDrawerTab("layer");
+                    setSettingsOpen(true);
+                  },
+                },
+                { separator: true },
+                { label: "Preset anpassen", onSelect: () => setTweakOpen(true) },
+                { label: "Im Studio öffnen", keyHint: "P", onSelect: () => setStudioKey(presetKey) },
+                { separator: true },
+                { label: "Präsentationsmodus", keyHint: "H", onSelect: () => enterPresentation() },
+              ]}
+            />
+            {(milkdropStatus === "idle" || milkdropStatus === "loading") && (
               <span className="feature-status" role="status">
                 Milkdrop wird geladen…
               </span>
@@ -2322,200 +2255,228 @@ function App() {
           </div>
         )}
         {mode === "3d" && (
-          <div className="hud-row hud-sub">
-            {SCENE_NAMES.map((s) => (
+          <>
+            <div className="hud-row hud-sub hud-pill-row">
+              <div className="pill" role="group" aria-label="3D-Szene">
+                <button
+                  type="button"
+                  className="pill-step"
+                  onClick={() => stepScene(-1)}
+                  title={withKey("Vorherige Szene", "prev")}
+                  aria-label="Vorherige Szene"
+                >
+                  ‹
+                </button>
+                <select
+                  className="pill-select"
+                  value={scene3d}
+                  onChange={(e) => setScene3d(e.target.value as SceneName)}
+                  title={SCENE_DESCS[scene3d]}
+                  aria-label="3D-Szene"
+                >
+                  {SCENE_NAMES.map((n) => (
+                    <option key={n} value={n}>
+                      {SCENE_LABELS[n]} — {SCENE_DESCS[n]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="pill-step"
+                  onClick={() => stepScene(1)}
+                  title={withKey("Nächste Szene", "next")}
+                  aria-label="Nächste Szene"
+                >
+                  ›
+                </button>
+              </div>
               <button
-                key={s}
                 type="button"
-                className={`mode-btn ${scene3d === s ? "active" : ""}`}
-                onClick={() => setScene3d(s)}
-                title="Szene (←/→)"
-                aria-pressed={scene3d === s}
-              >
-                {s}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="mode-btn"
-              onClick={() => {
-                camResetRef.current += 1;
-              }}
-              title="Kamera zurücksetzen (auch: Doppelklick) — Maus: ziehen = kreisen, Rad = zoomen, rechts = verschieben"
-            >
-              Kamera zurücksetzen
-            </button>
-            {scene3d === "model" && (
-              <button
-                type="button"
-                className="mode-btn lib-btn"
+                className="mode-btn"
                 onClick={() => {
-                  refreshModels();
-                  setLibraryOpen(true);
+                  camResetRef.current += 1;
                 }}
-                title="Modell-Library öffnen"
-            >
-                Modell: {" "}
-                {selectedModelId != null
-                  ? (models.find((m) => m.id === selectedModelId)?.name ??
-                    "Library")
-                  : "Library"}
+                title="Kamera zurücksetzen (auch: Doppelklick) — Maus: ziehen = kreisen, Rad = zoomen, rechts = verschieben"
+              >
+                ⟲ Kamera
               </button>
-            )}
-            {scene3d === "parallax" && (
-              <>
-                {images.length > 0 && (
-                  <select
-                    className="mode-btn"
-                    value={selectedImageId ?? ""}
-                    onChange={(e) =>
-                      void pickImage(
-                        e.target.value === "" ? null : Number(e.target.value),
-                      )
-                    }
-                    title="Gespeichertes Bild wählen (◆ = mit gebackener Tiefenkarte)"
-                  >
-                    <option value="">— Platzhalter —</option>
-                    {images.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.hasDepth ? "◆ " : "◇ "}
-                        {i.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <button
-                  type="button"
-                  className="mode-btn"
-                  onClick={() => imageInputRef.current?.click()}
-                  title="Bild laden (PNG/JPG/WebP)"
-                >
-                  Bild +
-                </button>
-                <button
-                  type="button"
-                  className="mode-btn"
-                  disabled={selectedImageId == null}
-                  onClick={() => depthInputRef.current?.click()}
-                  title="Fertige Tiefenkarte als Datei zum aktuellen Bild laden. Ohne sie läuft die Szene auf einer grob geschätzten Tiefe."
-                >
-                  Tiefenkarte +
-                </button>
-                <button
-                  type="button"
-                  className="mode-btn"
-                  disabled={selectedImageId == null}
-                  onClick={() => {
-                    setBakeKind("depth");
-                    setBakeState({ kind: "idle" });
-                    setComfyOpen(true);
-                  }}
-                  title="Tiefenkarte in ComfyUI backen"
-                >
-                  {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
-                </button>
-                {selectedImageId != null && (
+            </div>
+            {(scene3d === "model" || scene3d === "parallax" || scene3d === "morph") && (
+              <div className="hud-row hud-sub hud-actions">
+                {scene3d === "model" && (
                   <button
                     type="button"
-                    className="mode-btn danger"
-                    onClick={() => void removeImage(selectedImageId)}
-                    title="Bild aus der Library löschen"
-                  >
-                    ✕
+                    className="mode-btn lib-btn"
+                    onClick={() => {
+                      refreshModels();
+                      setLibraryOpen(true);
+                    }}
+                    title="Modell-Library öffnen"
+                >
+                    Modell: {" "}
+                    {selectedModelId != null
+                      ? (models.find((m) => m.id === selectedModelId)?.name ??
+                        "Library")
+                      : "Library"}
                   </button>
                 )}
-              </>
-            )}
-            {scene3d === "morph" && (
-              <>
-                {morphSets.length > 0 && (
-                  <select
-                    className="mode-btn"
-                    value={selectedMorphId ?? ""}
-                    onChange={(e) =>
-                      void pickMorphSet(
-                        e.target.value === "" ? null : Number(e.target.value),
-                      )
-                    }
-                    title="Gespeicherten Varianten-Satz wählen"
-                  >
-                    <option value="">— Platzhalter —</option>
-                    {morphSets.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.frameCount}× {m.name}
-                      </option>
-                    ))}
-                  </select>
+                {scene3d === "parallax" && (
+                  <>
+                    {images.length > 0 && (
+                      <select
+                        className="mode-btn"
+                        value={selectedImageId ?? ""}
+                        onChange={(e) =>
+                          void pickImage(
+                            e.target.value === "" ? null : Number(e.target.value),
+                          )
+                        }
+                        title="Gespeichertes Bild wählen (◆ = mit gebackener Tiefenkarte)"
+                      >
+                        <option value="">— Platzhalter —</option>
+                        {images.map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.hasDepth ? "◆ " : "◇ "}
+                            {i.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      onClick={() => imageInputRef.current?.click()}
+                      title="Bild laden (PNG/JPG/WebP)"
+                    >
+                      Bild +
+                    </button>
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      disabled={selectedImageId == null}
+                      onClick={() => depthInputRef.current?.click()}
+                      title="Fertige Tiefenkarte als Datei zum aktuellen Bild laden. Ohne sie läuft die Szene auf einer grob geschätzten Tiefe."
+                    >
+                      Tiefenkarte +
+                    </button>
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      disabled={selectedImageId == null}
+                      onClick={() => {
+                        setBakeKind("depth");
+                        setBakeState({ kind: "idle" });
+                        setComfyOpen(true);
+                      }}
+                      title="Tiefenkarte in ComfyUI backen"
+                    >
+                      {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
+                    </button>
+                    {selectedImageId != null && (
+                      <button
+                        type="button"
+                        className="mode-btn danger"
+                        onClick={() => void removeImage(selectedImageId)}
+                        title="Bild aus der Library löschen"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </>
                 )}
-                <button
-                  type="button"
-                  className="mode-btn"
-                  onClick={() => morphInputRef.current?.click()}
-                  title={`Varianten laden — mehrere Bilder auf einmal, nach Dateiname sortiert (max. ${MAX_FRAMES}). Gleicher Seed, variierende Stimmung.`}
-                >
-                  Varianten +
-                </button>
-                <button
-                  type="button"
-                  className="mode-btn"
-                  disabled={selectedImageId == null}
-                  onClick={() => {
-                    setBakeKind("variants");
-                    setBakeState({ kind: "idle" });
-                    setComfyOpen(true);
-                  }}
-                  title={
-                    selectedImageId == null
-                      ? "Quellbild fehlt — erst „Bild +“ in der Parallax-Szene laden"
-                      : "Varianten aus dem Parallax-Bild in ComfyUI backen"
-                  }
-                >
-                  {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
-                </button>
-                {selectedMorphId != null && (
-                  <button
-                    type="button"
-                    className="mode-btn danger"
-                    onClick={() => void removeMorphSet(selectedMorphId)}
-                    title="Satz aus der Library löschen"
-                  >
-                    ✕
-                  </button>
+                {scene3d === "morph" && (
+                  <>
+                    {morphSets.length > 0 && (
+                      <select
+                        className="mode-btn"
+                        value={selectedMorphId ?? ""}
+                        onChange={(e) =>
+                          void pickMorphSet(
+                            e.target.value === "" ? null : Number(e.target.value),
+                          )
+                        }
+                        title="Gespeicherten Varianten-Satz wählen"
+                      >
+                        <option value="">— Platzhalter —</option>
+                        {morphSets.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.frameCount}× {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      onClick={() => morphInputRef.current?.click()}
+                      title={`Varianten laden — mehrere Bilder auf einmal, nach Dateiname sortiert (max. ${MAX_FRAMES}). Gleicher Seed, variierende Stimmung.`}
+                    >
+                      Varianten +
+                    </button>
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      disabled={selectedImageId == null}
+                      onClick={() => {
+                        setBakeKind("variants");
+                        setBakeState({ kind: "idle" });
+                        setComfyOpen(true);
+                      }}
+                      title={
+                        selectedImageId == null
+                          ? "Quellbild fehlt — erst „Bild +“ in der Parallax-Szene laden"
+                          : "Varianten aus dem Parallax-Bild in ComfyUI backen"
+                      }
+                    >
+                      {bakeState.kind === "running" ? "backt…" : "Backen ✨"}
+                    </button>
+                    {selectedMorphId != null && (
+                      <button
+                        type="button"
+                        className="mode-btn danger"
+                        onClick={() => void removeMorphSet(selectedMorphId)}
+                        title="Satz aus der Library löschen"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </>
                 )}
-              </>
+              </div>
             )}
-            <input
-              ref={morphInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: "none" }}
-              onChange={onMorphFiles}
-            />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".glb,.gltf,.zip"
-              style={{ display: "none" }}
-              onChange={onModelFile}
-            />
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={onImageFile}
-            />
-            <input
-              ref={depthInputRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={onDepthFile}
-            />
-          </div>
+          </>
         )}
       </div>
+      {/* file pickers, reachable from every mode (empty-scene hints, libraries) */}
+      <input
+        ref={morphInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={onMorphFiles}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".glb,.gltf,.zip"
+        style={{ display: "none" }}
+        onChange={onModelFile}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={onImageFile}
+      />
+      <input
+        ref={depthInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={onDepthFile}
+      />
       {settingsOpen && (
         <SettingsPanel
           paramGroups={[
@@ -2538,14 +2499,7 @@ function App() {
           debugOpen={debugOpen}
           onDebug={setDebugOpen}
           presentation={presentation}
-          onPresentation={(on) => {
-            setPresentation(on);
-            if (on) {
-              setSettingsOpen(false);
-              setCockpitOpen(false);
-              showToast("Präsentationsmodus · H holt die Bedienung zurück");
-            }
-          }}
+          onPresentation={(on) => (on ? enterPresentation() : setPresentation(false))}
           bgLayer={bgLayer}
           bgLayers={BG_LAYERS}
           onBgLayer={(v) => setBgLayer(v as BgLayer)}
@@ -2760,7 +2714,7 @@ function App() {
           mode === "milkdrop"
             ? presetLabel(presetKey)
             : mode === "3d"
-              ? `3D · ${scene3d}`
+              ? `3D · ${SCENE_LABELS[scene3d]}`
               : VIZ_MODE_LABELS[mode]
         }
       />
