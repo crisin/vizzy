@@ -92,6 +92,7 @@ export class MorphScene {
 
   private mesh: THREE.Mesh;
   private material: THREE.ShaderMaterial;
+  private mdTex: THREE.Texture | null = null;
   private geometry: THREE.PlaneGeometry;
   private frames: THREE.DataArrayTexture;
   private count = 1;
@@ -134,6 +135,9 @@ export class MorphScene {
         uCover: { value: new THREE.Vector2(1, 1) },
         uPan: { value: new THREE.Vector2(0, 0) },
         uZoom: { value: 1 },
+        uMd: { value: BLACK },
+        uMdMode: { value: 0 },
+        uMdAmount: { value: 0 },
       },
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
@@ -235,9 +239,24 @@ export class MorphScene {
     }
   }
 
+  /** The live Milkdrop picture, or null while it is not rendered. */
+  setMilkdrop(tex: THREE.Texture | null) {
+    this.mdTex = tex;
+  }
+
+  wantsMilkdrop(): boolean {
+    return (params.get("morph", "md") | 0) > 0;
+  }
+
   update(frame: AudioFrameLike) {
     const u = this.material.uniforms;
     const dt = Math.min(0.1, frame.dt);
+    const md = this.mdTex ? params.get("morph", "md") | 0 : 0;
+    u.uMdMode.value = md;
+    if (md) {
+      u.uMd.value = this.mdTex;
+      u.uMdAmount.value = params.get("morph", "mdStaerke") * (1 + frame.beat * params.get("morph", "mdKick"));
+    }
 
     // --- where the music is, on the surface ---
     const centroid = spectralCentroid(frame.disp);
@@ -394,9 +413,17 @@ const VERTEX = /* glsl */ `
   }
 `;
 
+/** Stand-in for the Milkdrop texture while there is none. */
+const BLACK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+BLACK.needsUpdate = true;
+
 const FRAGMENT = /* glsl */ `
   precision highp float;
   precision highp sampler2DArray;
+
+  uniform sampler2D uMd;
+  uniform float uMdMode;
+  uniform float uMdAmount;
 
   uniform sampler2DArray uFrames;
   uniform vec4 uLayers;
@@ -431,6 +458,15 @@ const FRAGMENT = /* glsl */ `
     float sum = w.x + w.y + w.z + w.w;
     w = sum > 1e-6 ? w / sum : vec4(1.0, 0.0, 0.0, 0.0);
 
+    int mdMode = int(uMdMode + 0.5);
+    vec3 md = mdMode > 0 ? texture(uMd, vUv).rgb : vec3(0.0);
+    if (mdMode == 2) {
+      vec3 mx = texture(uMd, vUv + vec2(0.006, 0.0)).rgb;
+      vec3 my = texture(uMd, vUv + vec2(0.0, 0.006)).rgb;
+      uv += vec2(dot(mx - md, vec3(0.333)), -dot(my - md, vec3(0.333))) * uMdAmount * 0.6;
+      uv = clamp(uv, 0.0, 1.0);
+    }
+
     vec3 c0 = texture(uFrames, vec3(uv, uLayers.x)).rgb;
     vec3 c1 = texture(uFrames, vec3(uv, uLayers.y)).rgb;
     vec3 c2 = texture(uFrames, vec3(uv, uLayers.z)).rgb;
@@ -454,6 +490,15 @@ const FRAGMENT = /* glsl */ `
       col = m;
     } else {
       col = c0 * w.x + c1 * w.y + c2 * w.z + c3 * w.w;
+    }
+
+    if (mdMode == 1) {
+      float lum = dot(md, vec3(0.299, 0.587, 0.114));
+      vec3 lit = col * (0.35 + 1.6 * md) + md * 0.35 * smoothstep(0.15, 0.6, lum);
+      col = mix(col, lit, clamp(uMdAmount, 0.0, 1.5));
+    } else if (mdMode == 3) {
+      float bright = smoothstep(0.5, 0.9, dot(col, vec3(0.333)));
+      col += md * bright * uMdAmount * 1.2;
     }
 
     fragColor = vec4(col, 1.0);

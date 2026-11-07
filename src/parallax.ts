@@ -211,6 +211,7 @@ export class ParallaxScene {
 
   private mesh: THREE.Mesh;
   private material: THREE.ShaderMaterial;
+  private mdTex: THREE.Texture | null = null;
   private geometry: THREE.PlaneGeometry;
   private colorTex: THREE.Texture;
   private depthTex: THREE.Texture;
@@ -252,6 +253,11 @@ export class ParallaxScene {
         uTime: { value: 0 },
         uTexel: { value: new THREE.Vector2(1 / 512, 1 / 512) },
         uFog: { value: new THREE.Color(BG) },
+        uMd: { value: BLACK },
+        uMdMode: { value: 0 },
+        uMdNear: { value: 0.8 },
+        uMdFar: { value: 0.25 },
+        uMdAmount: { value: 1 },
       },
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
@@ -406,6 +412,14 @@ export class ParallaxScene {
     u.uBeat.value = frame.beat;
     u.uTime.value = frame.t;
     (u.uBands.value as Float32Array).set(frame.disp);
+    const md = this.mdTex ? params.get("parallax", "md") | 0 : 0;
+    u.uMdMode.value = md;
+    if (md) {
+      u.uMd.value = this.mdTex;
+      u.uMdNear.value = params.get("parallax", "mdNah");
+      u.uMdFar.value = params.get("parallax", "mdFern");
+      u.uMdAmount.value = 1 + frame.beat * params.get("parallax", "mdKick");
+    }
 
     this.rebuild(Math.round(params.get("parallax", "detail")));
     this.fit(swing);
@@ -423,6 +437,16 @@ export class ParallaxScene {
       );
       this.camera.lookAt(0, 0, 0);
     }
+  }
+
+  /** The live Milkdrop picture, or null while it is not rendered. */
+  setMilkdrop(tex: THREE.Texture | null) {
+    this.mdTex = tex;
+  }
+
+  /** Whether the scene currently wants the Milkdrop picture. */
+  wantsMilkdrop(): boolean {
+    return (params.get("parallax", "md") | 0) > 0;
   }
 
   resize(aspect: number) {
@@ -445,6 +469,10 @@ function mean(arr: Float32Array, from: number, to: number): number {
   for (let i = from; i < end; i++) sum += arr[i];
   return end > from ? sum / (end - from) : 0;
 }
+
+/** Stand-in for the Milkdrop texture while there is none. */
+const BLACK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+BLACK.needsUpdate = true;
 
 /* ----------------------------------------------------------------- shaders */
 
@@ -503,6 +531,11 @@ const FRAGMENT = /* glsl */ `
   uniform float uTime;
   uniform vec2 uTexel;
   uniform vec3 uFog;
+  uniform sampler2D uMd;
+  uniform float uMdMode;
+  uniform float uMdNear;
+  uniform float uMdFar;
+  uniform float uMdAmount;
   varying vec2 vUv;
   varying float vNear;
 
@@ -520,6 +553,19 @@ const FRAGMENT = /* glsl */ `
       uv.x += (h - 0.5) * uGlitch * uBeat * 0.07;
     }
 
+    // Milkdrop on the picture, weighted by depth: near and far get their
+    // own strength, so the foreground can dance while the distance stays put
+    float mdW = mix(uMdFar, uMdNear, vNear) * uMdAmount;
+    int mdMode = int(uMdMode + 0.5);
+    vec3 md = mdMode > 0 ? texture2D(uMd, vUv).rgb : vec3(0.0);
+    if (mdMode == 2) {
+      // warp: the gradient of the Milkdrop picture pushes the image around
+      vec3 mx = texture2D(uMd, vUv + vec2(0.006, 0.0)).rgb;
+      vec3 my = texture2D(uMd, vUv + vec2(0.0, 0.006)).rgb;
+      vec2 g = vec2(dot(mx - md, vec3(0.333)), dot(my - md, vec3(0.333)));
+      uv += g * mdW * 0.6;
+    }
+
     vec4 c = texture2D(uMap, clamp(uv, 0.0, 1.0));
 
     // A displaced grid stretches like rubber across depth cliffs. Fading the
@@ -534,6 +580,18 @@ const FRAGMENT = /* glsl */ `
     // far pixels sink toward the background — cheap aerial perspective
     vec3 rgb = mix(c.rgb, uFog, (1.0 - vNear) * uHaze);
     rgb *= 0.94 + uBeat * 0.22;
+
+    if (mdMode == 1) {
+      // light: Milkdrop colours the picture like a projector would, with a
+      // threshold so dark Milkdrop areas don't grey the image out
+      float lum = dot(md, vec3(0.299, 0.587, 0.114));
+      vec3 lit = rgb * (0.35 + 1.6 * md) + md * 0.35 * smoothstep(0.15, 0.6, lum);
+      rgb = mix(rgb, lit, clamp(mdW, 0.0, 1.5));
+    } else if (mdMode == 3) {
+      // reflection: only where the picture itself is bright
+      float bright = smoothstep(0.5, 0.9, dot(c.rgb, vec3(0.333)));
+      rgb += md * bright * mdW * 1.2;
+    }
 
     gl_FragColor = vec4(rgb, c.a * alpha);
   }

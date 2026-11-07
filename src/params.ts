@@ -52,6 +52,7 @@ export const GROUP_LABELS: Record<string, string> = {
   model: "Modell",
   milkdrop: "Milkdrop",
   layer: "Layer",
+  md3d: "Milkdrop in 3D",
 };
 
 export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
@@ -215,6 +216,26 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     },
     toggle("invert", "Tiefenkarte invertieren", 0,
       "Für Karten, bei denen Weiß fern bedeutet"),
+    {
+      key: "md",
+      label: "Milkdrop im Bild",
+      min: 0,
+      max: 3,
+      step: 1,
+      default: 0,
+      kind: "select",
+      hint: "Das laufende Milkdrop-Preset wirkt auf das Bild — nach Tiefe gewichtet",
+      options: [
+        { value: 0, label: "Aus" },
+        { value: 1, label: "Licht — Milkdrop beleuchtet das Bild" },
+        { value: 2, label: "Verzerrung — Milkdrop lässt das Bild wabern" },
+        { value: 3, label: "Reflexion — nur in den hellen Stellen" },
+      ],
+    },
+    { key: "mdNah", label: "Milkdrop: Stärke vorne", min: 0, max: 1.5, step: 0.05, default: 0.8 },
+    { key: "mdFern", label: "Milkdrop: Stärke hinten", min: 0, max: 1.5, step: 0.05, default: 0.25,
+      hint: "Vorne stark, hinten schwach: der Vordergrund tanzt, die Ferne bleibt ruhig — oder umgekehrt" },
+    { key: "mdKick", label: "Milkdrop: Beat-Kick", min: 0, max: 2, step: 0.05, default: 0.5 },
   ],
   // N Varianten desselben Bildes als Steuerfläche: X = Klangfarbe,
   // Y = Energie. Die Musik fährt einen Cursor darüber, das Bild ist die
@@ -247,6 +268,30 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
       hint: "Nur im Dissolve-Modus" },
     { key: "drift", label: "Kamera-Drift", min: 0, max: 1, step: 0.05, default: 0.3 },
     { key: "puls", label: "Beat-Zoom", min: 0, max: 1, step: 0.05, default: 0.35 },
+    {
+      key: "md",
+      label: "Milkdrop im Bild",
+      min: 0,
+      max: 3,
+      step: 1,
+      default: 0,
+      kind: "select",
+      hint: "Das laufende Milkdrop-Preset wirkt auf die Varianten",
+      options: [
+        { value: 0, label: "Aus" },
+        { value: 1, label: "Licht — Milkdrop beleuchtet das Bild" },
+        { value: 2, label: "Verzerrung — Milkdrop lässt das Bild wabern" },
+        { value: 3, label: "Reflexion — nur in den hellen Stellen" },
+      ],
+    },
+    { key: "mdStaerke", label: "Milkdrop: Stärke", min: 0, max: 1.5, step: 0.05, default: 0.6 },
+    { key: "mdKick", label: "Milkdrop: Beat-Kick", min: 0, max: 2, step: 0.05, default: 0.5 },
+  ],
+  // Milkdrop in den 3D-Szenen
+  md3d: [
+    { key: "bg", label: "Milkdrop als Hintergrund", min: 0, max: 1, step: 1, default: 0, kind: "toggle",
+      hint: "Das laufende Milkdrop-Preset läuft hinter jeder 3D-Szene" },
+    { key: "bgHell", label: "Hintergrund-Helligkeit", min: 0, max: 1.5, step: 0.05, default: 0.6 },
   ],
   layer: [
     { key: "blur", label: "BG-Blur (px)", min: 0, max: 24, step: 1, default: 8 },

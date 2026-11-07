@@ -2227,6 +2227,7 @@ function App() {
         <SettingsPanel
           paramGroups={[
             mode === "3d" ? scene3d : mode,
+            ...(mode === "3d" ? ["md3d"] : []),
             ...(supportsBgLayer(mode) && bgLayer !== "off" ? ["layer"] : []),
           ]}
           milkdropAvailable={mode === "milkdrop"}
@@ -2569,6 +2570,7 @@ function startVisualizer(
         .then(({ Viz3D: Viz3DClass }) => {
           if (!running) return;
           viz3d = new Viz3DClass(gl3dCanvas, sceneRef.current, flog);
+          viz3d.setMilkdropCanvas(mdCanvas);
           // debug hook: lets the debug HUD / devtools poke the live scene
           (window as unknown as Record<string, unknown>).__viz3d = viz3d;
           flog(
@@ -3133,6 +3135,8 @@ function startVisualizer(
         }
       }
     } else if (modeRef.current === "3d") {
+      // scenes that use the Milkdrop picture need it rendered first
+      if (viz3d?.wantsMilkdrop()) renderMilkdrop();
       render3D(dt, now / 1000);
     } else {
       // layered background under the 2D visualization (the waterfall paints

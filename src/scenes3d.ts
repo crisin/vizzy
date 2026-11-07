@@ -29,6 +29,9 @@ interface Scene3D {
   /** scenes that frame a fixed subject need the new aspect, not just a new
    *  projection matrix */
   resize?(aspect: number): void;
+  /** scenes that mix the live Milkdrop picture into their own image */
+  setMilkdrop?(tex: THREE.Texture | null): void;
+  wantsMilkdrop?(): boolean;
   dispose(): void;
 }
 
@@ -1288,6 +1291,11 @@ export class Viz3D {
   private homeTarget = new THREE.Vector3();
   private userCam = false;
   private onDblClick = () => this.resetCamera();
+  /** the Milkdrop output canvas, shared as a texture with the scenes */
+  private mdCanvas: HTMLCanvasElement | null = null;
+  private mdTex: THREE.CanvasTexture | null = null;
+  private sceneBg: THREE.Scene["background"] | undefined = undefined;
+  private bgApplied = false;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -1442,6 +1450,7 @@ export class Viz3D {
 
   setScene(name: SceneName) {
     if (name === this.name) return;
+    this.bgApplied = false;
     this.active.dispose();
     this.name = name;
     this.active = this.create(name);
@@ -1460,8 +1469,50 @@ export class Viz3D {
     }
   }
 
+  /** Where the Milkdrop picture comes from (Butterchurn's output canvas). */
+  setMilkdropCanvas(canvas: HTMLCanvasElement | null) {
+    this.mdCanvas = canvas;
+  }
+
+  /** True when this frame needs a rendered Milkdrop picture — the caller
+   *  renders Milkdrop first, then the 3D scene. */
+  wantsMilkdrop(): boolean {
+    if (!this.mdCanvas) return false;
+    return (this.active.wantsMilkdrop?.() ?? false) || params.get("md3d", "bg") >= 0.5;
+  }
+
+  private applyMilkdrop() {
+    const want = this.wantsMilkdrop();
+    const c = this.mdCanvas;
+    if (want && c && c.width > 0) {
+      if (!this.mdTex || this.mdTex.image !== c) {
+        this.mdTex?.dispose();
+        this.mdTex = new THREE.CanvasTexture(c);
+        this.mdTex.colorSpace = THREE.SRGBColorSpace;
+      }
+      this.mdTex.needsUpdate = true;
+    }
+    const tex = want ? this.mdTex : null;
+    this.active.setMilkdrop?.(tex);
+    // as background behind any scene
+    const bg = want && params.get("md3d", "bg") >= 0.5 && tex;
+    if (bg) {
+      if (!this.bgApplied) {
+        this.sceneBg = this.active.scene.background;
+        this.bgApplied = true;
+      }
+      this.active.scene.background = tex;
+      this.active.scene.backgroundIntensity = params.get("md3d", "bgHell");
+    } else if (this.bgApplied) {
+      this.active.scene.background = this.sceneBg ?? null;
+      this.active.scene.backgroundIntensity = 1;
+      this.bgApplied = false;
+    }
+  }
+
   render(frame: Omit<AudioFrame3D, "cameraAuto">) {
     if (this.userCam) this.controls?.update();
+    this.applyMilkdrop();
     this.active.update({ ...frame, cameraAuto: !this.userCam });
     this.renderer.render(this.active.scene, this.active.camera);
   }
