@@ -16,6 +16,7 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -99,7 +100,16 @@ pub fn empty_frame() -> Vec<f32> {
     frame
 }
 
-pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>, params: SharedParams) {
+/// How often the capture thread gave up on the chosen source and fell back
+/// to the default loopback — the frontend polls it to say so on screen.
+pub type Fallbacks = Arc<AtomicU32>;
+
+pub fn spawn_capture(
+    shared: SharedAnalysis,
+    rx: Receiver<SourceSpec>,
+    params: SharedParams,
+    fallbacks: Fallbacks,
+) {
     std::thread::Builder::new()
         .name("vizzy-audio".into())
         .spawn(move || {
@@ -130,6 +140,7 @@ pub fn spawn_capture(shared: SharedAnalysis, rx: Receiver<SourceSpec>, params: S
                             );
                             spec = SourceSpec::Loopback { device_id: None };
                             failures = 0;
+                            fallbacks.fetch_add(1, Ordering::Relaxed);
                             continue;
                         }
 

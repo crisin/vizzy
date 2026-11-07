@@ -51,6 +51,21 @@ function loadPrefs(): Prefs {
 
 const isEnergy = (t: string) => (ENERGY_TAGS as readonly string[]).includes(t);
 
+export type Rotation = {
+  favOnly: boolean;
+  onFavOnly: (v: boolean) => void;
+  tags: string[];
+  onTags: (t: string[]) => void;
+  mode: "any" | "all";
+  onMode: (m: "any" | "all") => void;
+  /** presets in the rotation right now */
+  count: number;
+  favCount: number;
+  /** presets matching the rotation tags (null: no tags set) — under two,
+   *  the rotation ignores the tags rather than run dry */
+  tagMatches: number | null;
+};
+
 export function PresetLibrary({
   entries,
   currentKey,
@@ -64,6 +79,8 @@ export function PresetLibrary({
   target = "a",
   onToggleFavorite,
   onClose,
+  rotation,
+  onDeleteUser,
 }: {
   entries: CatalogEntry[];
   currentKey: string;
@@ -80,6 +97,10 @@ export function PresetLibrary({
   target?: "a" | "b";
   onToggleFavorite: (key: string) => void;
   onClose: () => void;
+  /** what ←/→, random and the auto-switch draw from — set here */
+  rotation?: Rotation;
+  /** deletes an own preset (the app offers undo) */
+  onDeleteUser?: (name: string) => void;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
   useTags();
@@ -97,6 +118,7 @@ export function PresetLibrary({
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMode, setTagMode] = useState<"any" | "all">("any");
   const [selected, setSelected] = useState(currentKey);
+  const [rotOpen, setRotOpen] = useState(false);
   const [multi, setMulti] = useState<string[]>([]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
 
@@ -396,6 +418,85 @@ export function PresetLibrary({
           )}
         </div>
 
+        {rotation && target === "a" && (
+          <div className={`mdlib-rotation ${rotOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="mdlib-rot-head"
+              onClick={() => setRotOpen((v) => !v)}
+              aria-expanded={rotOpen}
+              title="Woraus ←/→, Zufall und der Auto-Wechsel ziehen"
+            >
+              <span className="mdlib-rot-label">Rotation</span>
+              <span>
+                {rotation.favOnly ? "nur ★" : rotation.tags.length ? "" : "alle Presets"}
+                {rotation.tags.length > 0 &&
+                  `${rotation.favOnly ? " · " : ""}Tags: ${rotation.tags.join(rotation.mode === "all" ? " + " : " | ")}`}
+                {" · "}
+                <b>{rotation.count}</b> in der Rotation
+                {rotation.tagMatches !== null && rotation.tagMatches < 2 && (
+                  <em className="mdlib-rot-warn">
+                    {" "}
+                    — nur {rotation.tagMatches} mit diesen Tags, deshalb laufen alle
+                  </em>
+                )}
+              </span>
+              <span aria-hidden="true">{rotOpen ? "▴" : "▾"}</span>
+            </button>
+            {rotOpen && (
+              <div className="mdlib-rot-body">
+                <button
+                  className={`chip ${!rotation.favOnly && !rotation.tags.length ? "on" : ""}`}
+                  onClick={() => {
+                    rotation.onFavOnly(false);
+                    rotation.onTags([]);
+                  }}
+                >
+                  Alle
+                </button>
+                <button
+                  className={`chip ${rotation.favOnly ? "on" : ""}`}
+                  disabled={rotation.favCount === 0}
+                  onClick={() => rotation.onFavOnly(!rotation.favOnly)}
+                  title={rotation.favCount === 0 ? "Noch keine Favoriten" : `${rotation.favCount} Favoriten`}
+                >
+                  nur ★
+                </button>
+                <span className="mdlib-sep" />
+                <TagChips
+                  compact
+                  selected={rotation.tags}
+                  onToggle={(t) =>
+                    rotation.onTags(rotation.tags.includes(t) ? rotation.tags.filter((x) => x !== t) : [...rotation.tags, t])
+                  }
+                />
+                {rotation.tags.length > 1 && (
+                  <button
+                    className="chip"
+                    onClick={() => rotation.onMode(rotation.mode === "any" ? "all" : "any")}
+                    title="ODER: einer der Tags · UND: alle"
+                  >
+                    {rotation.mode === "any" ? "ODER" : "UND"}
+                  </button>
+                )}
+                {(tagFilter.length > 0 || source === "fav") && (
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      rotation.onFavOnly(source === "fav");
+                      rotation.onTags(tagFilter);
+                      rotation.onMode(tagMode);
+                    }}
+                    title="Die Filter der Ansicht oben als Rotation übernehmen"
+                  >
+                    ← Diese Ansicht übernehmen
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mdlib-body">
           <div className="mdlib-grid" ref={gridRef} tabIndex={0} aria-label="Presets">
             {visible.map((e) => {
@@ -482,6 +583,15 @@ export function PresetLibrary({
                   <button className={`mode-btn ${favorites.includes(sel.key) ? "active" : ""}`} onClick={() => onToggleFavorite(sel.key)} title="Favorit (S)">
                     {favorites.includes(sel.key) ? "★" : "☆"}
                   </button>
+                  {target === "a" && onDeleteUser && sel.key.startsWith("user:") && (
+                    <button
+                      className="mode-btn danger"
+                      onClick={() => onDeleteUser(sel.key.slice(5))}
+                      title="Eigenes Preset löschen (mit Rückgängig)"
+                    >
+                      Löschen
+                    </button>
+                  )}
                   {quarantine.includes(sel.key) && <span className="mdlib-hint">⛔ trappte wiederholt — Anwenden gibt es frei</span>}
                 </div>
                 {target === "a" && <LibraryActions keys={[sel.key]} />}

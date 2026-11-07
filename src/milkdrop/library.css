@@ -71,6 +71,61 @@
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
 }
 
+/* Rotation: what ←/→, random and auto draw from — set here, shown as a
+   one-line summary until opened */
+.mdlib-rotation {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  padding-block: 6px;
+}
+
+.mdlib-rot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 6px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: #cbd5e1;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mdlib-rot-head:hover {
+  background: rgba(30, 41, 59, 0.6);
+}
+
+.mdlib-rot-head b {
+  color: #7dd3fc;
+}
+
+.mdlib-rot-warn {
+  color: #fbbf24;
+  font-style: normal;
+}
+
+.mdlib-rot-label {
+  font-size: var(--ui-font-sub);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.mdlib-rot-head > span:last-child {
+  margin-left: auto;
+  color: #94a3b8;
+}
+
+.mdlib-rot-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 6px 4px;
+}
+
 .mdlib-sep {
   width: 1px;
   height: 18px;

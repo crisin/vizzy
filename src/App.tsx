@@ -13,6 +13,7 @@ import type { BCVisualizer } from "butterchurn";
 import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
 import { matchKey, withKey } from "./keys";
 import { InfoOverlay } from "./ui/InfoOverlay";
+import { rememberFullscreen, restoreFullscreen } from "./ui/fullscreenMemory";
 import { SCENE_DESCS, SCENE_LABELS, SCENE_NAMES, type SceneName } from "./sceneCatalog";
 import { ModeSwitch } from "./ui/ModeSwitch";
 import { MoreMenu } from "./ui/MoreMenu";
@@ -86,7 +87,6 @@ import { contextRatings, type Scope } from "./regie/contextRatings";
 import { nowPlaying, positionNow } from "./regie/nowPlaying";
 import { choreos } from "./regie/choreo";
 import { QueueBar } from "./regie/QueueBar";
-import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
 import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
 import { tagStore, useTags } from "./milkdrop/tags";
@@ -389,7 +389,6 @@ function App() {
       // ignore
     }
   }, [cockpitOpen]);
-  const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const tagsVersion = useTags();
   /** overrides to apply right after the next preset switch (library variant) */
   const pendingOverridesRef = useRef<Record<string, number> | null>(null);
@@ -428,13 +427,22 @@ function App() {
       },
     ];
   };
-  const [helpOpen, setHelpOpen] = tabFlag("help");
+  // Help is a small window of its own (not a drawer tab); it and the drawer
+  // share the right edge, so opening one closes the other.
+  const [helpOpen, setHelpOpenRaw] = useState(false);
+  const setHelpOpen = (v: boolean | ((prev: boolean) => boolean)) =>
+    setHelpOpenRaw((prev) => {
+      const next = typeof v === "function" ? v(prev) : v;
+      if (next) setSettingsOpen(false);
+      return next;
+    });
   const toggleDrawer = () => {
     if (settingsOpen) {
       setSettingsOpen(false);
       return;
     }
     if (drawerTab === "help") setDrawerTab("audio");
+    setHelpOpenRaw(false);
     setSettingsOpen(true);
   };
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -817,6 +825,14 @@ function App() {
         } else {
           const def = srcs.find((s) => s.kind === "loopback" && s.is_default);
           if (def) setSelected(`loopback|${def.id}`);
+          // the saved source is gone (device unplugged, app closed) — say so
+          // instead of silently listening to something else
+          if (savedVal) {
+            const name = savedVal.startsWith("app|") ? splitOnce(splitOnce(savedVal, "|")[1], "|")[1] : "";
+            showToast(
+              `${name ? `„${name}“ läuft nicht` : "Gespeicherte Audioquelle nicht gefunden"} — höre auf System-Audio (Standard)`,
+            );
+          }
         }
       } catch (e) {
         console.error(e);
@@ -1668,6 +1684,31 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(""), 2200);
   }, []);
 
+  // The capture thread falls back to the default loopback on its own when
+  // a source keeps failing. Make that visible rather than silent.
+  const fallbacksRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!inTauri) return;
+    const id = window.setInterval(() => {
+      invoke<number>("audio_fallbacks")
+        .then((n) => {
+          const prev = fallbacksRef.current;
+          fallbacksRef.current = n;
+          if (prev === null || n <= prev) return;
+          showToast("Audioquelle ausgefallen — höre jetzt auf System-Audio (Standard)");
+          invoke<SourceInfo[]>("list_sources")
+            .then((list) => {
+              setSources(list);
+              const def = list.find((x) => x.kind === "loopback" && x.is_default);
+              if (def) setSelected(`loopback|${def.id}`);
+            })
+            .catch(console.error);
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [showToast]);
+
   /** + / - while listening. On a bred child, + keeps it as an own preset
    *  and both count for the parent; - also moves on right away. */
   const ratePreset = useCallback(
@@ -1698,10 +1739,17 @@ function App() {
     [showToast],
   );
 
+  // last session ended in fullscreen → go back there, on the same monitor
+  useEffect(() => {
+    void restoreFullscreen();
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
       const win = getCurrentWindow();
-      await win.setFullscreen(!(await win.isFullscreen()));
+      const next = !(await win.isFullscreen());
+      await win.setFullscreen(next);
+      void rememberFullscreen(next);
     } else if (document.fullscreenElement) {
       await document.exitFullscreen();
     } else {
@@ -1747,7 +1795,6 @@ function App() {
     setSettingsOpen(false);
     setCockpitOpen(false);
     setTagBarOpen(false);
-    setTagFilterOpen(false);
     showToast("Präsentationsmodus · H holt die Bedienung zurück");
   }, [showToast]);
 
@@ -1770,7 +1817,6 @@ function App() {
         // the studio handles its own Esc (it may ask about unsaved work)
         else if (studioKey !== null) return;
         else if (presetLibOpen) setPresetLibOpen(false);
-        else if (tagFilterOpen) setTagFilterOpen(false);
         else if (tagBarOpen) setTagBarOpen(false);
         else if (cockpitOpen) setCockpitOpen(false);
         else if (libraryOpen) setLibraryOpen(false);
@@ -1923,7 +1969,6 @@ function App() {
     helpOpen,
     pokeHud,
     presetLibOpen,
-    tagFilterOpen,
     tagBarOpen,
     cockpitOpen,
     regieOpen,
@@ -2611,20 +2656,11 @@ function App() {
                       />
               ),
             },
-            {
-              id: "help",
-              label: "?",
-              title: withKey("Hilfe und Tastenkürzel", "help"),
-              content: (
-                <HelpPanel
-                  embedded
-                  onClose={() => setSettingsOpen(false)}
-                  returnFocusRef={helpButtonRef}
-                />
-              ),
-            },
           ]}
         />
+      )}
+      {helpOpen && (
+        <HelpPanel onClose={() => setHelpOpen(false)} returnFocusRef={helpButtonRef} />
       )}
       {libraryOpen && (
         <LibraryModal
@@ -2635,37 +2671,6 @@ function App() {
           onAdd={() => fileInputRef.current?.click()}
           onClose={() => setLibraryOpen(false)}
         />
-      )}
-      {tagFilterOpen && mode === "milkdrop" && (
-        <div className="tagfilter-pop" role="dialog" aria-label="Tag-Filter">
-          <div className="tagfilter-head">
-            <span>Nur Presets mit</span>
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setTagFilterMode((m) => (m === "any" ? "all" : "any"))}
-              title="ODER: irgendeiner der Tags · UND: alle"
-            >
-              {tagFilterMode === "any" ? "einem davon (ODER)" : "allen (UND)"}
-            </button>
-            {tagFilter.length > 0 && (
-              <button type="button" className="chip" onClick={() => setTagFilter([])}>
-                × aus
-              </button>
-            )}
-            <button type="button" className="mode-btn" onClick={() => setTagFilterOpen(false)}>
-              ×
-            </button>
-          </div>
-          <TagChips
-            compact
-            selected={tagFilter}
-            onToggle={(t) =>
-              setTagFilter((f) => (f.includes(t) ? f.filter((x) => x !== t) : [...f, t]))
-            }
-          />
-          <div className="tagfilter-count">{browseKeys.length} Presets in der Rotation</div>
-        </div>
       )}
       {toast && (
         <div className="toast" role="status">
@@ -2710,6 +2715,7 @@ function App() {
       )}
       <InfoOverlay
         nonce={infoNonce}
+        onSongChange={params.get("ui", "infoOnSong") >= 0.5}
         picture={
           mode === "milkdrop"
             ? presetLabel(presetKey)
@@ -2796,6 +2802,22 @@ function App() {
           }}
           target={libTarget}
           onToggleFavorite={toggleFavorite}
+          onDeleteUser={removeUserPreset}
+          rotation={{
+            favOnly,
+            onFavOnly: setFavOnly,
+            tags: tagFilter,
+            onTags: setTagFilter,
+            mode: tagFilterMode,
+            onMode: setTagFilterMode,
+            count: browseKeys.length,
+            favCount: favorites.length,
+            tagMatches: tagFilter.length
+              ? allPresetKeys.filter(
+                  (k) => !quarantine.includes(k) && tagStore.matches(k, tagFilter, tagFilterMode, favorites),
+                ).length
+              : null,
+          }}
           onClose={() => {
             setPresetLibOpen(false);
             setLibTarget("a");

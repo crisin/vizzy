@@ -78,6 +78,7 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
     toggle("hideCursor", "Mauszeiger mit ausblenden", 1),
     toggle("showFps", "FPS-Anzeige im Bild", 1),
     toggle("showBrand", "VIZZY-Schriftzug zeigen", 1),
+    toggle("infoOnSong", "Info bei jedem Songwechsel einblenden", 0),
   ],
   bars: [
     { key: "height", label: "Höhe", min: 0.3, max: 1, step: 0.05, default: 0.72 },

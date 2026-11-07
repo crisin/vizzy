@@ -16,6 +16,13 @@ struct AudioState {
     shared: audio::SharedAnalysis,
     control: mpsc::Sender<audio::SourceSpec>,
     params: audio::SharedParams,
+    fallbacks: audio::Fallbacks,
+}
+
+/// How many times capture fell back to the default loopback since start.
+#[tauri::command]
+fn audio_fallbacks(state: tauri::State<'_, AudioState>) -> u32 {
+    state.fallbacks.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Returns the latest analysis frame as raw little-endian f32 bytes:
@@ -79,7 +86,8 @@ pub fn run() {
     let params: audio::SharedParams =
         Arc::new(Mutex::new(audio::AnalysisParams::default()));
     let (tx, rx) = mpsc::channel();
-    audio::spawn_capture(shared.clone(), rx, params.clone());
+    let fallbacks: audio::Fallbacks = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    audio::spawn_capture(shared.clone(), rx, params.clone(), fallbacks.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -101,6 +109,7 @@ pub fn run() {
             shared,
             control: tx,
             params,
+            fallbacks,
         })
         .invoke_handler(tauri::generate_handler![
             get_analysis_frame,
@@ -108,6 +117,7 @@ pub fn run() {
             list_apps,
             set_source,
             set_beat_sensitivity,
+            audio_fallbacks,
             frontend_log,
             comfy::comfy_ping,
             comfy::comfy_bake,

@@ -269,6 +269,10 @@ body {
     margin-right: calc(min(var(--drawer-open-w, 440px), 100vw - 28px) + 14px);
   }
 
+  .stage:has(#help-panel) .hud-sub {
+    margin-right: calc(min(420px, 100vw - 28px) + 14px);
+  }
+
   .stage:has(.cockpit) .hud-sub {
     margin-left: calc(min(var(--ui-panel-w), 100vw - 28px) + 14px);
   }
