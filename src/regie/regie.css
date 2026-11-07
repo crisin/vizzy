@@ -4,10 +4,11 @@
 .cockpit {
   position: fixed;
   z-index: 15;
-  top: calc(var(--ui-btn-h) + 30px);
+  /* below both toolbar rows — the second one holds library and preset picker */
+  top: calc(2 * var(--ui-btn-h) + 40px);
   left: 14px;
   width: min(var(--ui-panel-w), calc(100vw - 28px));
-  max-height: calc(100vh - var(--ui-btn-h) - 58px);
+  max-height: calc(100vh - 2 * var(--ui-btn-h) - 68px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -170,4 +171,78 @@
 .cockpit-history .h-artist,
 .cockpit-history .h-ago {
   color: #64748b;
+}
+
+.np-context {
+  margin-top: 4px;
+  font-size: var(--ui-font-sub);
+  color: #a78bfa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cockpit-spacer {
+  flex: 1 1 auto;
+}
+
+/* Spotify connect */
+.sp-steps {
+  margin: 0;
+  padding-left: 1.3em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--ui-font-sub);
+  color: #94a3b8;
+  line-height: 1.45;
+}
+.sp-steps b {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.sp-uri {
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #7dd3fc;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: copy;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.sp-ok {
+  color: #4ade80;
+}
+
+.sp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--ui-btn-h);
+  padding: var(--ui-pad-y) var(--ui-pad-x);
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--ui-radius);
+}
+
+.sp-dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: #1ed760;
+  vertical-align: middle;
+}
+
+.sp-error {
+  font-size: var(--ui-font-sub);
+  color: #fda4af;
+  overflow-wrap: anywhere;
 }

@@ -4,8 +4,8 @@
 // queue land here in the next phases.
 
 import { useEffect, useState } from "react";
-import { nowPlaying, positionNow, useNowPlaying, type MediaSession } from "./nowPlaying";
-import { appLabel } from "./nowPlaying";
+import { appLabel, contextLabel, nowPlaying, positionNow, useNowPlaying, type MediaSession } from "./nowPlaying";
+import { SpotifySection } from "./SpotifySection";
 import "./regie.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -79,6 +79,11 @@ export function Cockpit({ presetLabel, autoSwitch, onClose }: Props) {
               {track.artist}
               {track.album && <span className="np-album"> · {track.album}</span>}
             </div>
+            {track.context && (
+              <div className="np-context" title={track.context.uri}>
+                ▸ {contextLabel(track.context)}
+              </div>
+            )}
             <div className="np-progress" aria-hidden>
               <div className="np-progress-fill" style={{ width: `${pct}%` }} />
             </div>
@@ -86,7 +91,11 @@ export function Cockpit({ presetLabel, autoSwitch, onClose }: Props) {
               <span>
                 {fmt(pos)} / {fmt(dur)}
               </span>
-              <span className="np-app">via {track.appLabel}</span>
+              <span className="np-app" title={track.key}>
+                via {track.appLabel}
+                {track.via === "both" && " + API"}
+                {track.via === "spotify" && " (Web API)"}
+              </span>
             </div>
           </>
         ) : (
@@ -135,12 +144,14 @@ export function Cockpit({ presetLabel, autoSwitch, onClose }: Props) {
         </div>
       </section>
 
+      <SpotifySection />
+
       {history.length > 0 && (
         <section className="cockpit-sec cockpit-history">
           <div className="cockpit-label">Zuletzt</div>
           <ol>
             {history.slice(track ? 1 : 0, 9).map((h) => (
-              <li key={h.key} title={`${h.artist} — ${h.title} (${h.app})`}>
+              <li key={h.key} title={`${h.artist} — ${h.title} (${h.app}${h.ctx ? ` · ${h.ctx}` : ""})`}>
                 <span className="h-title">{h.title}</span>
                 <span className="h-artist">{h.artist}</span>
                 <span className="h-ago">{ago(h.at)}</span>

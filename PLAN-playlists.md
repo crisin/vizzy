@@ -1,6 +1,6 @@
 # vizzy – Pools, Zuordnungen, Choreografien, Queue & Now Playing
 
-Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1 umgesetzt
+Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1–2 umgesetzt
 
 ## Ziel
 
@@ -163,7 +163,7 @@ type QueueItem = { ref: string; kind: "preset" | "combo"; until?: "boundary" | "
 1. ✅ **SMTC Now Playing** (`src-tauri/src/nowplaying.rs`, `src/regie/nowPlaying.ts`, `src/regie/Cockpit.tsx`, Taste C) – `nowplaying/smtc.rs` (crate `windows`, `GlobalSystemMediaTransportControlsSessionManager`,
    Media-/Timeline-Events), Tauri-Event, `nowPlaying`-Store, Songwechsel → `live.trackStartAt`.
    Cockpit-Gerüst zeigt den Song.
-2. **Spotify PKCE** – Client-ID in Settings, Loopback-Callback (bridge-HTTP-Server mitnutzen),
+2. ✅ **Spotify PKCE** (`src-tauri/src/spotify.rs`, `src/regie/spotify.ts`, `SpotifySection.tsx`; Redirect `http://127.0.0.1:43821/callback`) – Client-ID in Settings, Loopback-Callback (bridge-HTTP-Server mitnutzen),
    Tokens im App-Data, Poll `currently-playing` (5/15 s, 429-Backoff, Interpolation),
    `context.uri` → Playlist-Name (`GET /playlists/{id}`, gecacht). Merge mit SMTC.
 3. **Pools + Regeln + Director** – `pools.json`, `rules.json`, Director vor `pickAuto`,

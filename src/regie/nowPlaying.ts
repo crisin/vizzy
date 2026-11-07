@@ -1,16 +1,23 @@
-// What song is playing — fed by the Rust side (`src-tauri/src/nowplaying.rs`,
-// Windows media session for now; Spotify Web API comes next and will merge
-// in here). Everything that wants to react to songs listens to this store:
-// the cockpit, later the rule engine ("Regie").
+// What song is playing — merged from two sources:
+//  - the OS media session (`src-tauri/src/nowplaying.rs`): instant, no login,
+//    any player — but only title/artist/position;
+//  - the Spotify Web API (`src-tauri/src/spotify.rs`, see `spotify.ts`):
+//    polled, needs login — adds a stable track id and the context
+//    (which playlist/album it plays from), and works across devices.
+// When both describe the same song they merge into one `Track` whose `key`
+// is the Spotify id. Without a media session (another device, the Mac)
+// Spotify alone is the source.
 //
-// A song change is the moment the identity (`trackKey`) changes, or the same
-// track restarts from the top. It also replaces the silence heuristic in
-// `live` as the "new track" signal while metadata is flowing.
+// A song change is the moment the song identity (`baseKey`, from title +
+// main artist) changes, or the same song restarts from the top. The upgrade
+// from `smtc:` to `spotify:track:` key a moment later is NOT a new song.
+// It also replaces the silence heuristic in `live` as the "new track" signal.
 
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { live } from "../milkdrop/live";
+import { spotify, type SpotifyContext, type SpotifyNow } from "./spotify";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 const LS = "vizzy.nowplaying.v1";
@@ -29,16 +36,30 @@ export type RawNowPlaying = {
 };
 
 export type Track = RawNowPlaying & {
-  /** stable identity: `smtc:<artist>|<title>`; `spotify:track:<id>` once the API is in */
+  /** best identity: `spotify:track:<id>` when known, else `baseKey` */
   key: string;
+  /** source-independent identity: `smtc:<main artist>|<title>` */
+  baseKey: string;
   /** "Spotify", "Chrome", … for display */
   appLabel: string;
+  /** where it came from: media session, Spotify API, or both merged */
+  via: "media" | "spotify" | "both";
+  spotifyId: string | null;
+  context: SpotifyContext | null;
 };
 
 export type MediaSession = { app: string; title: string; artist: string; status: string };
 
+export type HistoryEntry = {
+  key: string;
+  title: string;
+  artist: string;
+  app: string;
+  at: number;
+  /** Spotify context name, e.g. the playlist */
+  ctx?: string;
+};
 type Persisted = { prefer: string | null; history: HistoryEntry[] };
-export type HistoryEntry = { key: string; title: string; artist: string; app: string; at: number };
 
 type Snapshot = {
   track: Track | null;
@@ -56,8 +77,13 @@ const norm = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/** "Dr. Dre, Snoop Dogg" / "A feat. B" / "A & B" → "dr. dre" */
+function mainArtist(artist: string): string {
+  return norm(artist.split(/\s*(?:,|;|&|\bfeat\.?|\bft\.?|\bx\b)\s*/i)[0] ?? artist);
+}
+
 export function trackKeyOf(artist: string, title: string): string {
-  return `smtc:${norm(artist)}|${norm(title)}`;
+  return `smtc:${mainArtist(artist)}|${norm(title)}`;
 }
 
 /** "Spotify.exe" → "Spotify", "Microsoft.ZuneMusic_8wekyb3d8bbwe!…" → "ZuneMusic" */
@@ -75,8 +101,25 @@ function isAd(np: RawNowPlaying): boolean {
   return /spotify/i.test(np.app) && (!np.artist || /^(advertisement|spotify)$/i.test(np.title));
 }
 
+function sameSong(np: RawNowPlaying, sp: SpotifyNow): boolean {
+  return norm(np.title) === norm(sp.title) && mainArtist(np.artist) === mainArtist(sp.artists[0] ?? "");
+}
+
+const CONTEXT_LABEL: Record<string, string> = {
+  playlist: "Playlist",
+  album: "Album",
+  artist: "Artist",
+  collection: "Bibliothek",
+  show: "Podcast",
+};
+export function contextLabel(c: SpotifyContext): string {
+  return `${CONTEXT_LABEL[c.kind] ?? c.kind}: ${c.name ?? "?"}`;
+}
+
 class NowPlayingStore {
   private snap: Snapshot;
+  private media: RawNowPlaying | null = null;
+  private sp: SpotifyNow | null = null;
   private listeners = new Set<() => void>();
   private songListeners = new Set<(t: Track) => void>();
 
@@ -89,16 +132,23 @@ class NowPlayingStore {
     }
     this.snap = { track: null, changedAt: 0, prefer: saved.prefer, history: saved.history ?? [] };
     if (inTauri) {
-      void listen<RawNowPlaying | null>("nowplaying", (e) => this.ingest(e.payload));
+      void listen<RawNowPlaying | null>("nowplaying", (e) => this.ingestMedia(e.payload));
+      void listen<SpotifyNow | null>("spotify", (e) => this.ingestSpotify(e.payload));
       void invoke("nowplaying_prefer", { app: saved.prefer }).catch(() => {});
       void invoke<RawNowPlaying | null>("nowplaying_get")
-        .then((np) => this.ingest(np))
+        .then((np) => this.ingestMedia(np))
+        .catch(() => {});
+      void invoke<SpotifyNow | null>("spotify_now")
+        .then((sp) => this.ingestSpotify(sp))
         .catch(() => {});
     }
     if (import.meta.env.DEV) {
-      // browser preview / manual testing: window.__vizzyNowPlaying({...})
-      (window as unknown as Record<string, unknown>).__vizzyNowPlaying = (np: Partial<RawNowPlaying> | null) =>
-        this.ingest(
+      // browser preview / manual testing:
+      //   window.__vizzyNowPlaying({title, artist, …})  — media session
+      //   window.__vizzySpotify({trackId, title, artists, context, …})
+      const w = window as unknown as Record<string, unknown>;
+      w.__vizzyNowPlaying = (np: Partial<RawNowPlaying> | null) =>
+        this.ingestMedia(
           np && {
             app: "Spotify.exe",
             title: "",
@@ -109,6 +159,22 @@ class NowPlayingStore {
             durationMs: 200_000,
             sampledAt: Date.now(),
             ...np,
+          },
+        );
+      w.__vizzySpotify = (sp: Partial<SpotifyNow> | null) =>
+        this.ingestSpotify(
+          sp && {
+            trackId: "dev",
+            uri: "spotify:track:dev",
+            title: "",
+            artists: [],
+            album: "",
+            durationMs: 200_000,
+            progressMs: 0,
+            isPlaying: true,
+            sampledAt: Date.now(),
+            context: null,
+            ...sp,
           },
         );
     }
@@ -123,7 +189,7 @@ class NowPlayingStore {
 
   getSnapshot = () => this.snap;
 
-  /** Called once per song change (not on pause/seek). */
+  /** Called once per song change (not on pause/seek, not on the id upgrade). */
   onSongChange(fn: (t: Track) => void): () => void {
     this.songListeners.add(fn);
     return () => {
@@ -143,35 +209,111 @@ class NowPlayingStore {
     return invoke<MediaSession[]>("nowplaying_sessions").catch(() => []);
   }
 
-  private ingest(np: RawNowPlaying | null) {
+  private ingestMedia(np: RawNowPlaying | null) {
+    const prevBase = this.media && trackKeyOf(this.media.artist, this.media.title);
+    this.media = np;
+    // a new song in the media session: don't wait 4–15 s for the next poll
+    if (np?.title && trackKeyOf(np.artist, np.title) !== prevBase) spotify.pollNow();
+    this.recompute();
+  }
+
+  private ingestSpotify(sp: SpotifyNow | null) {
+    this.sp = sp;
+    this.recompute();
+  }
+
+  /** The merged view of both sources. */
+  private merged(): Track | null {
+    const m = this.media && this.media.title && !isAd(this.media) ? this.media : null;
+    const sp = this.sp;
+    // a paused local player loses against Spotify playing something else
+    // (e.g. on the phone)
+    const mediaWins = m && !(m.status !== "playing" && sp?.isPlaying && !sameSong(m, sp));
+    if (m && mediaWins) {
+      const match = sp && sameSong(m, sp) ? sp : null;
+      const baseKey = trackKeyOf(m.artist, m.title);
+      return {
+        ...m,
+        // the media session's own timeline is often coarse — prefer Spotify's
+        ...(match && {
+          positionMs: match.progressMs,
+          sampledAt: match.sampledAt,
+          durationMs: match.durationMs || m.durationMs,
+        }),
+        baseKey,
+        key: match ? `spotify:track:${match.trackId}` : baseKey,
+        appLabel: appLabel(m.app),
+        via: match ? "both" : "media",
+        spotifyId: match?.trackId ?? null,
+        context: match?.context ?? null,
+      };
+    }
+    // nothing usable in the media session (other device, other OS, an ad):
+    // Spotify alone, as long as it actually plays
+    if (sp && sp.isPlaying && !(this.media && isAd(this.media))) {
+      const artist = sp.artists.join(", ");
+      return {
+        app: "Spotify (Web API)",
+        title: sp.title,
+        artist,
+        album: sp.album,
+        status: "playing",
+        positionMs: sp.progressMs,
+        durationMs: sp.durationMs,
+        sampledAt: sp.sampledAt,
+        baseKey: trackKeyOf(artist, sp.title),
+        key: `spotify:track:${sp.trackId}`,
+        appLabel: "Spotify",
+        via: "spotify",
+        spotifyId: sp.trackId,
+        context: sp.context,
+      };
+    }
+    return null;
+  }
+
+  private recompute() {
     const prev = this.snap.track;
-    if (!np || !np.title || isAd(np)) {
+    const track = this.merged();
+    if (!track) {
       live.metaActive = false;
-      // keep `track` for an ad so the cockpit doesn't flicker, but mark it idle
-      this.snap = { ...this.snap, track: np && prev ? { ...prev, status: "other" } : null };
+      // an ad: keep the last track so the cockpit doesn't flicker, but idle
+      const ad = this.media && isAd(this.media);
+      this.snap = { ...this.snap, track: ad && prev ? { ...prev, status: "other" } : null };
       this.emit();
       return;
     }
-    const track: Track = { ...np, key: trackKeyOf(np.artist, np.title), appLabel: appLabel(np.app) };
     const restarted =
-      prev?.key === track.key &&
+      prev?.baseKey === track.baseKey &&
       (positionNow(prev) ?? 0) > 20_000 &&
       track.positionMs !== null &&
       track.positionMs < 3_000;
-    const isNew = prev?.key !== track.key || restarted;
+    const isNew = prev?.baseKey !== track.baseKey || restarted;
+    // same song, but now we know more (Spotify id, playlist)
+    const upgraded = !isNew && (prev?.key !== track.key || prev?.context?.uri !== track.context?.uri);
 
     live.metaActive = track.status === "playing";
     let { changedAt, history } = this.snap;
+    const entry: HistoryEntry = {
+      key: track.key,
+      title: track.title,
+      artist: track.artist,
+      app: track.appLabel,
+      at: Date.now(),
+      ...(track.context?.name && { ctx: contextLabel(track.context) }),
+    };
     if (isNew) {
       changedAt = performance.now();
       live.markTrackStart();
+      history = [entry, ...history.filter((h) => h.key !== track.key && h.key !== track.baseKey)].slice(0, 50);
+    } else if (upgraded && history[0]) {
       history = [
-        { key: track.key, title: track.title, artist: track.artist, app: track.appLabel, at: Date.now() },
-        ...history.filter((h) => h.key !== track.key),
-      ].slice(0, 50);
+        { ...entry, at: history[0].at },
+        ...history.slice(1).filter((h) => h.key !== track.key),
+      ];
     }
     this.snap = { ...this.snap, track, changedAt, history };
-    if (isNew) this.persist();
+    if (isNew || upgraded) this.persist();
     this.emit();
     if (isNew) for (const fn of this.songListeners) fn(track);
   }

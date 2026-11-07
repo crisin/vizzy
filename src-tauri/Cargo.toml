@@ -32,8 +32,12 @@ reqwest = { version = "0.12", default-features = false, features = [
   "multipart",
   "rustls-tls",
 ] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync"] }
 base64 = "0.22"
+# Spotify PKCE login (src/spotify.rs)
+sha2 = "0.10"
+getrandom = "0.3"
+url = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wasapi = "0.23"

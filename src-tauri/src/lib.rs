@@ -5,6 +5,7 @@ mod nowplaying;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
 pub mod comfy;
 mod phrasing;
+mod spotify;
 mod store;
 mod tempo;
 
@@ -83,10 +84,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(bridge::new())
         .manage(nowplaying::new())
+        .manage(spotify::new())
         .setup(|app| {
             use tauri::Manager;
             let np = app.state::<nowplaying::Shared>().inner().clone();
             nowplaying::spawn(app.handle().clone(), np);
+            let sp = app.state::<spotify::Shared>().inner().clone();
+            spotify::spawn(app.handle().clone(), sp);
             Ok(())
         })
         .manage(AudioState {
@@ -117,7 +121,14 @@ pub fn run() {
             llm::llm_chat,
             nowplaying::nowplaying_get,
             nowplaying::nowplaying_prefer,
-            nowplaying::nowplaying_sessions
+            nowplaying::nowplaying_sessions,
+            spotify::spotify_status,
+            spotify::spotify_now,
+            spotify::spotify_set_client_id,
+            spotify::spotify_poll_now,
+            spotify::spotify_disconnect,
+            spotify::spotify_cancel_connect,
+            spotify::spotify_connect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
