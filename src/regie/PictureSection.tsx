@@ -4,7 +4,18 @@
 import { useState } from "react";
 import { MATCH_ICON, describeMatch, director, splitArtists, useActiveRule } from "./director";
 import { contextLabel, useNowPlaying, type Track } from "./nowPlaying";
+import { contextRatings, useContextRatings, type Scope } from "./contextRatings";
 import { regie, useRegie, type RuleMatch } from "./regieStore";
+
+const SCOPE_ICON: Record<Scope, string> = { song: "♪", artist: "☺", playlist: "▤" };
+
+/** "♪ +2 · ▤ -1" — what + / - taught for this picture here; "" if nothing. */
+export function fitLine(r: Record<Scope, number>): string {
+  return (["song", "artist", "playlist"] as Scope[])
+    .filter((s) => r[s] !== 0)
+    .map((s) => `${SCOPE_ICON[s]} ${r[s] > 0 ? "+" : ""}${r[s]}`)
+    .join(" · ");
+}
 
 type Props = {
   presetKey: string;
@@ -40,6 +51,7 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
   const { track } = useNowPlaying();
   const { enabled, pools } = useRegie();
   const active = useActiveRule();
+  useContextRatings(); // re-render when + / - learn something
   const [poolMenu, setPoolMenu] = useState(false);
   const [note, setNote] = useState("");
 
@@ -101,6 +113,15 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
           <>Keine Regel · {autoSwitch ? "Auto-Switch" : "manuell"}</>
         )}
       </div>
+
+      {track && track.status !== "other" && presetKey && (() => {
+        const line = fitLine(contextRatings.ratingsFor(track, presetKey));
+        return line ? (
+          <div className="cockpit-dim" title="Gelernt mit + / − während dieser Song lief">
+            Passt hier: <span className="cockpit-fit">{line}</span>
+          </div>
+        ) : null;
+      })()}
 
       {ctxs.length > 0 && (
         <div className="cockpit-assign">

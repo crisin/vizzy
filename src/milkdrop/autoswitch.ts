@@ -12,6 +12,14 @@ import { ENERGY_TAGS, NEVER_AUTO, tagStore } from "./tags";
 
 export type TagMode = 0 | 1 | 2; // aus | sanft | streng
 
+/** Learned fit for the running song / artist / playlist (see
+ *  `regie/contextRatings.ts`); 1 = nothing known. Registered from outside so
+ *  this module stays free of the now-playing machinery. */
+let contextWeight: (key: string) => number = () => 1;
+export function setContextWeight(fn: (key: string) => number) {
+  contextWeight = fn;
+}
+
 const recent: string[] = [];
 const RECENT_MAX = 8;
 
@@ -52,9 +60,23 @@ export function pickAuto(
   const pool = candidates.filter((k) => k !== current && !tagStore.has(k, NEVER_AUTO));
   if (pool.length === 0) return candidates[0] ?? current;
   if (mode === 0) {
-    const k = pool[Math.floor(Math.random() * pool.length)];
-    live.lastPick = `auto: zufällig → ${k}`;
-    return k;
+    // plain random — unless something was learned for this song, then that
+    // alone weights the draw
+    const cw = pool.map(contextWeight);
+    if (cw.every((w) => w === 1)) {
+      const k = pool[Math.floor(Math.random() * pool.length)];
+      live.lastPick = `auto: zufällig → ${k}`;
+      return k;
+    }
+    const total = cw.reduce((a, b) => a + b, 0);
+    let x = Math.random() * total;
+    let i = 0;
+    for (; i < pool.length - 1; i++) {
+      x -= cw[i];
+      if (x <= 0) break;
+    }
+    live.lastPick = `auto: gelernt → ${pool[i]} (ctx×${cw[i].toFixed(2)})`;
+    return pool[i];
   }
 
   const level = live.level;
@@ -72,6 +94,8 @@ export function pickAuto(
     if (r >= 0) w *= 0.1 + (0.9 * r) / RECENT_MAX;
     // + / - while listening: each step is a factor of 1.5
     w *= Math.pow(1.5, tagStore.rating(k));
+    // + / - for this song, artist, playlist
+    w *= contextWeight(k);
     return w;
   });
   let total = weights.reduce((a, b) => a + b, 0);
@@ -90,6 +114,7 @@ export function pickAuto(
   const why = [
     `energie ${ENERGY_TAGS[level]}`,
     section ? `abschnitt ${section}` : "",
+    contextWeight(k) !== 1 ? `ctx×${contextWeight(k).toFixed(2)}` : "",
     `w=${weights[i].toFixed(2)}`,
   ]
     .filter(Boolean)

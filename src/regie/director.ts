@@ -10,11 +10,14 @@
 // Without a matching rule nothing changes compared to before.
 
 import { useSyncExternalStore } from "react";
-import { pickAuto, type TagMode } from "../milkdrop/autoswitch";
+import { pickAuto, setContextWeight, type TagMode } from "../milkdrop/autoswitch";
 import { live } from "../milkdrop/live";
 import { comboStore, type Combo } from "../milkdrop/combos";
 import { params } from "../params";
 import { nowPlaying, type Track } from "./nowPlaying";
+import { artistsOf } from "./artists";
+import { LEARNED_START, contextRatings } from "./contextRatings";
+export { artistsOf, splitArtists } from "./artists";
 import { queue } from "./queue";
 import { COMBO_PREFIX, regie, type Pool, type Rule, type RuleMatch } from "./regieStore";
 
@@ -30,19 +33,6 @@ export type DirectorHost = {
 export type Active = { rule: Rule; index: number } | null;
 
 const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").trim();
-
-/** Artist names as written: "Dr. Dre, Snoop Dogg" → ["Dr. Dre", "Snoop Dogg"] */
-export function splitArtists(artist: string): string[] {
-  return artist
-    .split(/\s*(?:,|;|&|\bfeat\.?|\bft\.?|\bx\b)\s*/i)
-    .map((a) => a.trim())
-    .filter(Boolean);
-}
-
-/** All artist names in a media-session / Spotify artist string, normalised. */
-export function artistsOf(artist: string): string[] {
-  return splitArtists(artist).map(norm);
-}
 
 export function matches(m: RuleMatch, t: Track): boolean {
   switch (m.kind) {
@@ -70,6 +60,9 @@ class Director {
   private orderPos = new Map<string, number>();
   /** a queue entry is on screen — once the queue runs dry the rule comes back */
   private queueRan = false;
+  /** song (baseKey) the learned start was already decided for */
+  private learnedFor = "";
+  private songStartedAt = 0;
   /** the pool entry that is on screen (may be a combo) */
   private lastEntry = "";
   private listeners = new Set<() => void>();
@@ -108,14 +101,22 @@ class Director {
     const next = enabled ? firstMatch(rules, track) : null;
     const songChanged = !!track && track.baseKey !== this.lastBase;
     if (track) this.lastBase = track.baseKey;
-    if (songChanged) this.lastEntry = "";
+    if (songChanged) {
+      this.lastEntry = "";
+      this.songStartedAt = performance.now();
+    }
     this.setActive(next);
     const sig = next ? `${next.rule.id}|${JSON.stringify(next.rule.target)}` : "";
     // apply on a new song, or when a different/edited rule takes over
     // mid-song (Spotify's playlist arriving after the media session)
     const due = songChanged || (next !== null && sig !== this.appliedSig);
     this.appliedSig = sig;
-    if (!due) return;
+    if (!due) {
+      // no rule: Spotify's id / playlist may arrive a moment after the song
+      // started and reveal a learned favourite — still early enough to use
+      if (!next && track && !this.queueRan) this.learnedStart(track);
+      return;
+    }
     // the queue outranks every rule — a new song takes its next entry
     if (songChanged && queue.length > 0) {
       this.playQueued();
@@ -124,6 +125,25 @@ class Director {
     // mid-song rule change while a queue entry shows: let it finish its slot
     if (!songChanged && this.queueRan) return;
     if (next) this.apply(next.rule);
+    else if (track) this.learnedStart(track);
+  }
+
+  /**
+   * Without a rule: a song with a clear learned favourite (+ given while it
+   * played, here or under its artist / playlist) starts with it. Once per
+   * song, only within its first seconds.
+   */
+  private learnedStart(track: Track) {
+    if (!this.host || !contextRatings.enabled) return;
+    if (this.learnedFor === track.baseKey) return;
+    if (performance.now() - this.songStartedAt > 12_000) return;
+    const ok = this.host.playable();
+    const best = contextRatings
+      .known(track)
+      .find((k) => k.score >= LEARNED_START && ok.has(k.preset));
+    if (!best) return;
+    this.learnedFor = track.baseKey;
+    if (this.playEntry(best.preset)) live.lastPick = `gelernt: ${best.preset} (score ${best.score.toFixed(1)})`;
   }
 
   /** Puts a preset key or `combo:<name>` on screen. */
@@ -245,6 +265,8 @@ class Director {
 }
 
 export const director = new Director();
+
+setContextWeight((key) => contextRatings.weight(nowPlaying.getSnapshot().track, key));
 
 export function useActiveRule(): Active {
   return useSyncExternalStore(director.subscribe, director.getSnapshot);

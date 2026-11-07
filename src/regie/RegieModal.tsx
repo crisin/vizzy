@@ -21,6 +21,7 @@ import {
   type RuleTarget,
 } from "./regieStore";
 import { useSpotifyStatus } from "./spotify";
+import { LEARNED_START, contextRatings, useContextRatings, type Scope } from "./contextRatings";
 import "./regie.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -33,7 +34,9 @@ type Props = {
   onClose: () => void;
 };
 
-type Tab = "rules" | "pools";
+type Tab = "rules" | "pools" | "learned";
+
+const TAB_LABEL: Record<Tab, string> = { rules: "Regeln", pools: "Pools", learned: "Gelernt" };
 
 export function RegieModal(props: Props) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
@@ -51,7 +54,7 @@ export function RegieModal(props: Props) {
         <div className="modal-head">
           <h2 id="regie-title">REGIE</h2>
           <div className="seg" role="tablist">
-            {(["rules", "pools"] as const).map((t) => (
+            {(["rules", "pools", "learned"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -60,7 +63,7 @@ export function RegieModal(props: Props) {
                 className={`mode-btn ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
               >
-                {t === "rules" ? "Regeln" : "Pools"}
+                {TAB_LABEL[t]}
               </button>
             ))}
           </div>
@@ -68,7 +71,13 @@ export function RegieModal(props: Props) {
             ×
           </button>
         </div>
-        {tab === "rules" ? <RulesTab {...props} /> : <PoolsTab {...props} />}
+        {tab === "rules" ? (
+          <RulesTab {...props} />
+        ) : tab === "pools" ? (
+          <PoolsTab {...props} />
+        ) : (
+          <LearnedTab {...props} />
+        )}
       </div>
     </div>
   );
@@ -608,6 +617,136 @@ function PoolsTab({ presetKeys, label, currentKey, onPlay }: Props) {
           einen an.
         </p>
       )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- learned
+
+const SCOPE_ICON: Record<Scope, string> = { song: "♪", artist: "☺", playlist: "▤" };
+const SCOPE_NAME: Record<Scope, string> = { song: "Song", artist: "Artist", playlist: "Playlist" };
+
+function LearnedTab({ label, currentKey, onPlay }: Props) {
+  const data = useContextRatings();
+  const { track } = useNowPlaying();
+  const [confirmAll, setConfirmAll] = useState(false);
+  const counts = contextRatings.counts();
+  const known = track ? contextRatings.known(track) : [];
+
+  return (
+    <div className="regie-body">
+      <label className="regie-toggle">
+        <input
+          type="checkbox"
+          checked={data.enabled}
+          onChange={(e) => contextRatings.setEnabled(e.target.checked)}
+        />
+        Mitlernen
+        <span className="regie-dim">
+          — + / − merken sich auch Song, Artist und Playlist. Das gewichtet Auto-Switch und Smart-Pools; ein Song
+          mit klarem Favoriten (Wert ≥ {LEARNED_START}) startet damit.
+        </span>
+      </label>
+
+      <div className="regie-dim">
+        Gelernt für {counts.song} {counts.song === 1 ? "Song" : "Songs"} · {counts.artist}{" "}
+        {counts.artist === 1 ? "Artist" : "Artists"} · {counts.playlist}{" "}
+        {counts.playlist === 1 ? "Playlist" : "Playlists"}
+      </div>
+
+      {!track ? (
+        <p className="regie-empty">Kein Song erkannt – hier erscheint, was für den laufenden Song gelernt ist.</p>
+      ) : known.length === 0 ? (
+        <p className="regie-empty">
+          Für „{track.title}“ ist noch nichts gelernt. Drück + bei einem Bild, das passt, − bei einem, das nicht passt.
+        </p>
+      ) : (
+        <>
+          <div className="cockpit-label">
+            Für „{track.title}“ · {track.artist}
+            {track.context?.name ? ` · ${track.context.name}` : ""}
+          </div>
+          <ol className="learned-list">
+            {known.map((k) => (
+              <li key={k.preset} className={k.preset === currentKey ? "is-current" : ""}>
+                <span
+                  className={`learned-score ${k.score >= LEARNED_START ? "is-start" : ""}`}
+                  title={k.score >= LEARNED_START ? "startet den Song" : "Gewicht im Auto-Switch"}
+                >
+                  {k.score > 0 ? "+" : ""}
+                  {k.score.toFixed(1)}
+                </span>
+                <span className="learned-name" title={k.preset}>
+                  {label(k.preset)}
+                </span>
+                {(["song", "artist", "playlist"] as Scope[])
+                  .filter((s) => k.r[s] !== 0)
+                  .map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`fit-chip ${k.r[s] > 0 ? "pos" : "neg"}`}
+                      onClick={() => contextRatings.forget(track, k.preset, s)}
+                      title={`${SCOPE_NAME[s]}: vergessen`}
+                    >
+                      {SCOPE_ICON[s]} {k.r[s] > 0 ? "+" : ""}
+                      {k.r[s]}
+                    </button>
+                  ))}
+                <span className="rule-tools">
+                  <button type="button" className="icon-btn" onClick={() => onPlay(k.preset)} aria-label="Anspielen">
+                    ▶
+                  </button>
+                  {k.score > 0 && (
+                    <button
+                      type="button"
+                      className="mode-btn"
+                      onClick={() =>
+                        regie.upsertRule(
+                          {
+                            kind: "song",
+                            keys: [...new Set([track.key, track.baseKey])],
+                            label: `${track.artist} — ${track.title}`,
+                          },
+                          { kind: "preset", key: k.preset, hold: "song" },
+                        )
+                      }
+                      title="Als feste Regel für diesen Song"
+                    >
+                      → Regel
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+
+      <div className="regie-inline pool-danger">
+        {confirmAll ? (
+          <>
+            <span className="sp-error">Alles Gelernte vergessen? Regeln und Bewertungen bleiben.</span>
+            <button
+              type="button"
+              className="mode-btn danger"
+              onClick={() => {
+                contextRatings.forgetAll();
+                setConfirmAll(false);
+              }}
+            >
+              Ja, vergessen
+            </button>
+            <button type="button" className="mode-btn" onClick={() => setConfirmAll(false)}>
+              Abbrechen
+            </button>
+          </>
+        ) : (
+          <button type="button" className="mode-btn" onClick={() => setConfirmAll(true)}>
+            Alles vergessen …
+          </button>
+        )}
+      </div>
     </div>
   );
 }

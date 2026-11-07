@@ -681,3 +681,67 @@
 .queue-x:hover {
   color: #fda4af;
 }
+
+.cockpit-fit {
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+}
+
+/* learned tab */
+.learned-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.learned-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--ui-radius);
+  background: rgba(15, 23, 42, 0.6);
+}
+.learned-list li.is-current {
+  box-shadow: inset 3px 0 0 #38bdf8;
+}
+.learned-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.learned-score {
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #94a3b8;
+}
+.learned-score.is-start {
+  color: #4ade80;
+}
+.fit-chip {
+  font: inherit;
+  font-size: var(--ui-font-sub);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.fit-chip.pos {
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.14);
+}
+.fit-chip.neg {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.14);
+}
+.fit-chip:hover {
+  border-color: rgba(253, 164, 175, 0.6);
+  text-decoration: line-through;
+}

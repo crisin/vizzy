@@ -1,6 +1,6 @@
 # vizzy – Pools, Zuordnungen, Choreografien, Queue & Now Playing
 
-Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1–4 umgesetzt
+Stand: 2026-11-07 · Ergebnis des Interviews · Phase 1–5 umgesetzt
 
 ## Ziel
 
@@ -171,7 +171,7 @@ type QueueItem = { ref: string; kind: "preset" | "combo"; until?: "boundary" | "
 
 **Danach**
 4. ✅ **Live-Queue** (`src/regie/queue.ts`, `QueueBar.tsx`, `LibraryActions.tsx`; Q / Shift+Q / N) – Library-Buttons, Mini-Queue-Leiste, Hotkeys.
-5. **Kontext-Ratings** – `+`/`-` schreiben Song/Artist/Playlist-Ratings, Faktor in Pick-Gewichtung.
+5. ✅ **Kontext-Ratings** (`src/regie/contextRatings.ts`, Tab „Gelernt“; gelernter Start ab Score 2.5) – `+`/`-` schreiben Song/Artist/Playlist-Ratings, Faktor in Pick-Gewichtung.
 6. **Choreografie** – Analyse pro Song mitschneiden (Sections, Energie), Section-Liste → Aufnahme → Timeline.
 7. **new-helper als Quelle** – Lookup per Spotify-ID → Tags/Mood als Regel-Match `tag`.
    Braucht in new-helper einen Endpoint + Token-Auth für vizzy (dort ist Login heute JWT per Account).

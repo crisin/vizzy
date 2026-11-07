@@ -75,6 +75,8 @@ import { Cockpit } from "./regie/Cockpit";
 import { director } from "./regie/director";
 import { RegieModal } from "./regie/RegieModal";
 import { queue } from "./regie/queue";
+import { contextRatings, type Scope } from "./regie/contextRatings";
+import { nowPlaying } from "./regie/nowPlaying";
 import { QueueBar } from "./regie/QueueBar";
 import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
@@ -1553,12 +1555,22 @@ function App() {
       const child = isBreedKey(key) ? breedChild(key) : undefined;
       const target = child?.parent ?? key;
       const r = tagStore.rate(target, dir);
+      // also learn: this picture fits (or not) this song / artist / playlist
+      const track = nowPlaying.getSnapshot().track;
+      const rateCtx = (k: string): string => {
+        if (!track || track.status === "other") return "";
+        const scopes = contextRatings.rate(track, k, dir);
+        const name: Record<Scope, string> = { song: "Song", artist: "Artist", playlist: "Playlist" };
+        return scopes.length ? ` · gemerkt für ${scopes.map((s) => name[s]).join(", ")}` : "";
+      };
       if (child && dir > 0) {
         const vp = { ...child.preset, tags: tagStore.get(child.parent) };
         void presetStore.save(vp).then(() => tagStore.set(`user:${vp.name}`, vp.tags ?? []));
-        showToast(`♥ behalten als „${vp.name}“`);
+        showToast(`♥ behalten als „${vp.name}“${rateCtx(`user:${vp.name}`)}`);
       } else {
-        showToast(`${dir > 0 ? "♥" : "✕"} ${presetLabel(target)} · Bewertung ${r > 0 ? "+" : ""}${r}`);
+        showToast(
+          `${dir > 0 ? "♥" : "✕"} ${presetLabel(target)} · Bewertung ${r > 0 ? "+" : ""}${r}${rateCtx(target)}`,
+        );
       }
       if (dir < 0) autoPickRef.current("skip");
     },
