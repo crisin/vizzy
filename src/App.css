@@ -416,11 +416,11 @@ body {
 
 .settings-tabs {
   display: flex;
+  /* wrap instead of scrolling: every tab stays visible */
+  flex-wrap: wrap;
   gap: 2px;
   padding: 0 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 
 .settings-tabs::-webkit-scrollbar {
@@ -449,6 +449,40 @@ body {
 .settings-tab.active {
   color: #7dd3fc;
   border-bottom-color: #38bdf8;
+}
+
+/* does not apply in the current mode: still there, still clickable */
+.settings-tab.inactive {
+  color: #475569;
+}
+
+.settings-tab.inactive.active {
+  color: #64748b;
+  border-bottom-color: #475569;
+}
+
+.drawer-inactive {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border-radius: var(--ui-radius);
+  color: #94a3b8;
+}
+
+.drawer-inactive p,
+.drawer-inactive-note {
+  margin: 0;
+  color: #94a3b8;
+}
+
+/* a former tab, now a section further down in its tab */
+.drawer-sec {
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  scroll-margin-top: 8px;
 }
 
 .settings-body {

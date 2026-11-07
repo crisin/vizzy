@@ -108,14 +108,16 @@ export function ComfyPanel({
     <>
         <div className="modal-head">
           <h2 id="comfy-title">{copy.title}</h2>
-          <button
-            type="button"
-            className="mode-btn"
-            onClick={onClose}
-            title="Schließen (Esc)"
-          >
-            Schließen
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              className="mode-btn"
+              onClick={onClose}
+              title="Schließen (Esc)"
+            >
+              Schließen
+            </button>
+          )}
         </div>
 
         <div className="comfy-row" role="group" aria-label="Was gebacken wird">

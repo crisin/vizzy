@@ -34,15 +34,26 @@ function applySideEffects(group: string, key: string, value: number) {
   }
 }
 
+// Fixed tabs, always in the same order — what does not apply to the current
+// mode is greyed out with a hint, never removed (the bar must not rearrange
+// itself under the pointer).
 const TABS = [
   { id: "audio", label: "Audio" },
   { id: "bild", label: "Bild" },
-  { id: "milkdrop", label: "Milkdrop" },
+  { id: "auto", label: "Automatik" },
   { id: "ui", label: "Bedienung" },
   { id: "system", label: "System" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+/** Old tab ids that are now a section inside another tab. Opening one
+ *  shows that tab and scrolls to the section (`drawer-sec-<id>`). */
+const TAB_ALIAS: Record<string, string> = {
+  routing: "audio",
+  comfy: "bild",
+  milkdrop: "auto",
+};
 
 
 /** One parameter group rendered from its schema — sliders, checkboxes and
@@ -206,13 +217,12 @@ export type SettingsPanelProps = {
   favOnly: boolean;
   onFavOnly: (value: boolean) => void;
   favorites: string[];
-  onPickPreset: (key: string) => void;
-  onUnfavorite: (key: string) => void;
-  userPresets: { name: string; base: string }[];
-  onDeleteUserPreset: (name: string) => void;
 
-  onOpenRouting: () => void;
-  onOpenTweaks: () => void;
+  /** frequency routing, shown as a section of the Audio tab */
+  routing: ReactNode;
+  /** ComfyUI baking, a section of the Bild tab where a scene can use it */
+  comfy: ReactNode | null;
+
   onResetAll: () => void;
   onClose: () => void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
@@ -220,7 +230,7 @@ export type SettingsPanelProps = {
   /** controlled tab — the drawer is opened on a specific tab from outside */
   tab: string;
   onTab: (tab: string) => void;
-  /** tabs whose content lives elsewhere (tweaks, routing, ComfyUI, help) */
+  /** tabs whose content lives elsewhere (tweaks, layer B, help) */
   extraTabs: DrawerTab[];
 };
 
@@ -230,7 +240,12 @@ export type DrawerTab = {
   content: ReactNode;
   /** placed after this built-in tab; default: at the end */
   after?: TabId;
-};
+  /** set when the tab does not apply right now: why, shown instead */
+  inactive?: string;
+  /** offered next to the hint, e.g. "switch to Milkdrop" */
+  activate?: { label: string; run: () => void };
+  title?: string;
+}
 
 const WIDTH_KEY = "vizzy.drawer.width";
 const MIN_W = 340;
@@ -280,13 +295,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  const allTabs: { id: string; label: string }[] = [];
+  const allTabs: { id: string; label: string; inactive?: string; title?: string }[] = [];
   for (const t of TABS) {
     allTabs.push(t);
     for (const x of props.extraTabs) if (x.after === t.id) allTabs.push(x);
   }
   for (const x of props.extraTabs) if (!x.after) allTabs.push(x);
-  const extra = props.extraTabs.find((x) => x.id === tab);
+  const shown = TAB_ALIAS[tab] ?? tab;
+  const extra = props.extraTabs.find((x) => x.id === shown);
+  // an alias means "that section": bring it into view
+  useEffect(() => {
+    if (!TAB_ALIAS[tab]) return;
+    const id = window.setTimeout(() => {
+      document.getElementById(`drawer-sec-${tab}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 30);
+    return () => window.clearTimeout(id);
+  }, [tab]);
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [armed, setArmed] = useState(false);
   const armTimer = useRef<number | undefined>(undefined);
@@ -314,7 +338,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
         aria-hidden="true"
       />
       <div className="settings-head">
-        <h2 id="settings-title">{allTabs.find((t) => t.id === tab)?.label ?? "Einstellungen"}</h2>
+        <h2 id="settings-title">
+          {shown === "help" ? "Hilfe" : (allTabs.find((t) => t.id === shown)?.label ?? "Einstellungen")}
+        </h2>
         <button
           type="button"
           className="icon-btn"
@@ -333,9 +359,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
             type="button"
             role="tab"
             id={`settings-tab-${t.id}`}
-            aria-selected={tab === t.id}
+            aria-selected={shown === t.id}
             aria-controls="settings-body"
-            className={`settings-tab ${tab === t.id ? "active" : ""}`}
+            className={`settings-tab ${shown === t.id ? "active" : ""} ${t.inactive ? "inactive" : ""}`}
+            title={t.inactive ?? t.title}
             onClick={() => setTab(t.id)}
           >
             {t.label}
@@ -347,11 +374,23 @@ export function SettingsPanel(props: SettingsPanelProps) {
         className="settings-body"
         id="settings-body"
         role="tabpanel"
-        aria-labelledby={`settings-tab-${tab}`}
+        aria-labelledby={`settings-tab-${shown}`}
       >
-        {extra && <div className="drawer-embed">{extra.content}</div>}
+        {extra &&
+          (extra.inactive ? (
+            <div className="drawer-inactive">
+              <p>{extra.inactive}</p>
+              {extra.activate && (
+                <button type="button" className="mode-btn" onClick={extra.activate.run}>
+                  {extra.activate.label}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="drawer-embed">{extra.content}</div>
+          ))}
 
-        {tab === "audio" && (
+        {shown === "audio" && (
           <>
             {inTauri ? (
               <Field label="Audio-Quelle">
@@ -398,23 +437,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
               </p>
             )}
             <ParamGroup group="audio" onChanged={bump} />
-            <Field label="Frequenz-Routing">
-              <button
-                type="button"
-                className="mode-btn"
-                onClick={props.onOpenRouting}
-              >
-                Listener & Routing öffnen
-              </button>
-              <p className="set-note">
-                Frequenzbänder auf beliebige Parameter legen — z.&nbsp;B. Bass
-                auf Zoom.
-              </p>
-            </Field>
+            <div id="drawer-sec-routing" className="drawer-embed drawer-sec">
+              {props.routing}
+            </div>
           </>
         )}
 
-        {tab === "bild" && (
+        {shown === "bild" && (
           <>
             {props.paramGroups
               // the Milkdrop tab already shows this group
@@ -459,13 +488,23 @@ export function SettingsPanel(props: SettingsPanelProps) {
               </>
             )}
             <ParamGroup group="render" onChanged={bump} />
+            {props.comfy && (
+              <div id="drawer-sec-comfy" className="drawer-embed drawer-sec">
+                {props.comfy}
+              </div>
+            )}
           </>
         )}
 
-        {tab === "milkdrop" && (
+        {shown === "auto" && (
           <>
-            <ParamGroup group="milkdrop" onChanged={bump} />
-            <Field label="Automatik">
+            {!props.milkdropAvailable && (
+              <p className="set-note drawer-inactive-note">
+                Der Auto-Wechsel wählt Milkdrop-Presets — er wirkt, sobald
+                Milkdrop läuft (Taste 5).
+              </p>
+            )}
+            <Field label="Auto-Wechsel">
               <label className="set-row set-row-toggle">
                 <input
                   type="checkbox"
@@ -475,7 +514,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <span className="set-label">
                   Preset automatisch wechseln
                   <small className="set-hint">
-                    Wechselt auf einem Beat, frühestens nach der Wartezeit oben
+                    Wechselt im Takt, frühestens nach der Wartezeit unten · Taste A
                   </small>
                 </span>
               </label>
@@ -489,88 +528,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <span className="set-label">
                   Nur Favoriten verwenden
                   <small className="set-hint">
-                    Gilt für ←/→, Zufall und den Auto-Wechsel
+                    {props.favorites.length === 0
+                      ? "Noch keine Favoriten — in der Library oder mit S markieren"
+                      : `${props.favorites.length} Favoriten · gilt für ←/→, Zufall und Auto`}
                   </small>
                 </span>
               </label>
             </Field>
-
-            <Field label={`Favoriten (${props.favorites.length})`}>
-              {props.favorites.length === 0 ? (
-                <p className="set-note">
-                  Noch keine — im Milkdrop-Modus mit dem ★ neben der
-                  Preset-Auswahl oder mit der Taste S markieren.
-                </p>
-              ) : (
-                <ul className="set-list">
-                  {props.favorites.map((key) => (
-                    <li key={key}>
-                      <button
-                        type="button"
-                        className="set-list-name"
-                        onClick={() => props.onPickPreset(key)}
-                        title={`${key} laden`}
-                      >
-                        {key.startsWith("user:") ? key.slice(5) : key}
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn set-list-del"
-                        onClick={() => props.onUnfavorite(key)}
-                        title="Aus Favoriten entfernen"
-                        aria-label={`${key} aus Favoriten entfernen`}
-                      >
-                        ★
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Field>
-
-            <Field label={`Eigene Presets (${props.userPresets.length})`}>
-              {props.userPresets.length === 0 ? (
-                <p className="set-note">
-                  Über „Tweaks“ ein Preset verbiegen und speichern.
-                </p>
-              ) : (
-                <ul className="set-list">
-                  {props.userPresets.map((p) => (
-                    <li key={p.name}>
-                      <button
-                        type="button"
-                        className="set-list-name"
-                        onClick={() => props.onPickPreset(`user:${p.name}`)}
-                        title={`Basis: ${p.base}`}
-                      >
-                        {p.name}
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn set-list-del danger"
-                        onClick={() => props.onDeleteUserPreset(p.name)}
-                        title="Eigenes Preset löschen"
-                        aria-label={`${p.name} löschen`}
-                      >
-                        🗑
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <button
-                type="button"
-                className="mode-btn"
-                onClick={props.onOpenTweaks}
-                disabled={!props.milkdropAvailable}
-              >
-                Preset-Tweaks öffnen
-              </button>
-            </Field>
+            <ParamGroup group="milkdrop" title="Wann und wohin gewechselt wird" onChanged={bump} />
+            <p className="set-note">
+              Favoriten und eigene Presets verwaltest du in der Library (L), Regeln
+              pro Song oder Playlist in der Regie (G).
+            </p>
           </>
         )}
 
-        {tab === "ui" && (
+        {shown === "ui" && (
           <>
             <Field label="UI-Größe">
               <div className="set-seg">
@@ -635,7 +608,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </>
         )}
 
-        {tab === "system" && (
+        {shown === "system" && (
           <>
             <ParamGroup group="dev" onChanged={bump} />
             <BridgeStatus />

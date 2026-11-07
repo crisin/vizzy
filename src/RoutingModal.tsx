@@ -34,15 +34,17 @@ export function RoutingModal({
     <>
         <div className="modal-head">
           <h2 id="routing-title">Frequenz-Listener & Routing</h2>
-          <button
-            type="button"
-            className="mode-btn"
-            onClick={onClose}
-            title="Schließen (Esc)"
-            aria-label="Routing schließen"
-          >
-            Schließen
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              className="mode-btn"
+              onClick={onClose}
+              title="Schließen (Esc)"
+              aria-label="Routing schließen"
+            >
+              Schließen
+            </button>
+          )}
         </div>
 
         <div className="editor-group-head">

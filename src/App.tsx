@@ -553,10 +553,15 @@ function App() {
     notePlayed(presetKey);
   }, [presetKey]);
 
-  useEffect(() => {
-    // the tweaks tab only exists in Milkdrop mode
-    if (mode !== "milkdrop" && drawerTab === "tweaks") setDrawerTab("milkdrop");
-  }, [mode, drawerTab]);
+  // Drawer tabs that only apply to Milkdrop stay in place, greyed out, with a
+  // way to get there — the tab bar never rearranges itself.
+  const milkdropOnly =
+    mode === "milkdrop"
+      ? {}
+      : {
+          inactive: "Gilt nur im Milkdrop-Modus.",
+          activate: { label: "Zu Milkdrop wechseln", run: () => setMode("milkdrop") },
+        };
 
   const requestMilkdropRuntime = useCallback(async () => {
     if (milkdropRuntime) {
@@ -2553,28 +2558,53 @@ function App() {
           favOnly={favOnly}
           onFavOnly={setFavOnly}
           favorites={favorites}
-          onPickPreset={(k) => {
-            setPresetKey(k);
-            setMode("milkdrop");
-          }}
-          onUnfavorite={toggleFavorite}
-          userPresets={userPresets}
-          onDeleteUserPreset={removeUserPreset}
-          onOpenRouting={() => setDrawerTab("routing")}
-          onOpenTweaks={() => setDrawerTab("tweaks")}
+          routing={<RoutingModal embedded onClose={() => setSettingsOpen(false)} />}
+          comfy={
+            comfyOpen || (mode === "3d" && (scene3d === "parallax" || scene3d === "morph")) ? (
+              <ComfyPanel
+                kind={bakeKind}
+                onKindChange={(k) => {
+                  setBakeKind(k);
+                  setBakeState({ kind: "idle" });
+                }}
+                url={comfyUrl}
+                onUrlChange={(u) => {
+                  setComfyUrl(u);
+                  saveComfyUrl(u);
+                }}
+                axes={axes}
+                onAxesChange={(a) => {
+                  setAxes(a);
+                  saveAxes(a);
+                }}
+                workflow={workflows[bakeKind]}
+                onWorkflowChange={(json) => {
+                  setWorkflows((prev) => ({ ...prev, [bakeKind]: json }));
+                  saveWorkflow(bakeKind, json);
+                }}
+                imageName={
+                  images.find((i) => i.id === selectedImageId)?.name ?? null
+                }
+                bake={bakeState}
+                onBake={() => void runBake()}
+                onClose={() => setSettingsOpen(false)}
+                embedded
+              />
+            ) : null
+          }
           onResetAll={resetAll}
           onClose={() => setSettingsOpen(false)}
           returnFocusRef={settingsButtonRef}
           tab={drawerTab}
           onTab={setDrawerTab}
           extraTabs={[
-            ...(mode === "milkdrop"
-              ? [
-                  {
-                    id: "tweaks",
-                    label: "Tweaks",
-                    after: "milkdrop" as const,
-                    content: (
+            {
+              id: "tweaks",
+              label: "Tweaks",
+              after: "auto" as const,
+              title: "Laufendes Preset verbiegen und als eigenes speichern",
+              ...milkdropOnly,
+              content: (
                       <MdTweakPanel
                         key={presetKey}
                         presetKey={presetKey}
@@ -2594,17 +2624,15 @@ function App() {
                         onSave={saveTweaks}
                         onDeleteUser={removeUserPreset}
                       />
-                    ),
-                  },
-                ]
-              : []),
-            ...(mode === "milkdrop"
-              ? [
-                  {
-                    id: "layer",
-                    label: "Layer",
-                    after: "milkdrop" as const,
-                    content: (
+              ),
+            },
+            {
+              id: "layer",
+              label: "Layer B",
+              after: "auto" as const,
+              title: "Zweites Preset darüberlegen, Kombis",
+              ...milkdropOnly,
+              content: (
                       <LayerPanel
                         cfg={layerB}
                         onChange={setLayerB}
@@ -2627,59 +2655,12 @@ function App() {
                           setLayerB(b);
                         }}
                       />
-                    ),
-                  },
-                ]
-              : []),
-            {
-              id: "routing",
-              label: "Routing",
-              after: "audio" as const,
-              content: <RoutingModal embedded onClose={() => setSettingsOpen(false)} />,
+              ),
             },
-            ...(comfyOpen || (mode === "3d" && (scene3d === "parallax" || scene3d === "morph"))
-              ? [
-                  {
-                    id: "comfy",
-                    label: "ComfyUI",
-                    after: "bild" as const,
-                    content: (
-                      <ComfyPanel
-                              kind={bakeKind}
-                              onKindChange={(k) => {
-                                setBakeKind(k);
-                                setBakeState({ kind: "idle" });
-                              }}
-                              url={comfyUrl}
-                              onUrlChange={(u) => {
-                                setComfyUrl(u);
-                                saveComfyUrl(u);
-                              }}
-                              axes={axes}
-                              onAxesChange={(a) => {
-                                setAxes(a);
-                                saveAxes(a);
-                              }}
-                              workflow={workflows[bakeKind]}
-                              onWorkflowChange={(json) => {
-                                setWorkflows((prev) => ({ ...prev, [bakeKind]: json }));
-                                saveWorkflow(bakeKind, json);
-                              }}
-                              imageName={
-                                images.find((i) => i.id === selectedImageId)?.name ?? null
-                              }
-                              bake={bakeState}
-                              onBake={() => void runBake()}
-                              onClose={() => setSettingsOpen(false)}
-                              embedded
-                            />
-                    ),
-                  },
-                ]
-              : []),
             {
               id: "help",
-              label: "Hilfe",
+              label: "?",
+              title: withKey("Hilfe und Tastenkürzel", "help"),
               content: (
                 <HelpPanel
                   embedded
