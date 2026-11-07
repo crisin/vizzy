@@ -45,6 +45,11 @@ Quellenauswahl (System-Audio, einzelne Apps, Mikrofon/Line-In), Visuals von Wave
 Grundsatz: **FFT/Analyse in Rust**, Frontend bekommt fertige, kompakte Frames.
 Visualization-Manifest-Format (Name, Typ, Parameter) ab Tag 1 — das ist später das Fundament des Editors.
 
+## Milkdrop-Ausbau (2026-11)
+
+Crash-Fix, Preset-Bibliothek, Config-Drawer, Layering, Preset-Studio, Remix und
+Parallax-Kombination: siehe [PLAN-milkdrop.md](PLAN-milkdrop.md).
+
 ## Phasen
 
 ### Phase 0 — Pipeline-Spike (~1 Woche)
