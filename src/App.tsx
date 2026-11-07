@@ -275,6 +275,8 @@ type Persisted = {
   uiScale?: UiScalePref;
   favorites?: string[];
   favOnly?: boolean;
+  /** presets that kept trapping — skipped by ←/→, Zufall and auto */
+  quarantine?: string[];
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -317,6 +319,9 @@ function App() {
     () => saved.favorites ?? [],
   );
   const [favOnly, setFavOnly] = useState(saved.favOnly ?? false);
+  const [quarantine, setQuarantine] = useState<string[]>(
+    () => saved.quarantine ?? [],
+  );
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [debugOpen, setDebugOpen] = useState(saved.debug ?? false);
   const debugElRef = useRef<HTMLPreElement | null>(null);
@@ -637,6 +642,7 @@ function App() {
       uiScale,
       favorites,
       favOnly,
+      quarantine,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
@@ -659,6 +665,7 @@ function App() {
     uiScale,
     favorites,
     favOnly,
+    quarantine,
   ]);
 
   const isFavorite = favorites.includes(presetKey);
@@ -673,10 +680,25 @@ function App() {
   // Favourites-only browsing falls back to the full list while there is
   // nothing (or only one thing) starred — otherwise ←/→ would be a dead key.
   const browseKeys = useMemo(() => {
-    if (!favOnly) return allPresetKeys;
-    const list = favorites.filter((k) => allPresetKeys.includes(k));
-    return list.length > 1 ? list : allPresetKeys;
-  }, [favOnly, favorites, allPresetKeys]);
+    // A quarantined preset is one that trapped repeatedly; it stays in the
+    // picker (choosing it there releases it) but out of the rotation.
+    const pool = allPresetKeys.filter((k) => !quarantine.includes(k));
+    if (!favOnly) return pool;
+    const list = favorites.filter((k) => pool.includes(k));
+    return list.length > 1 ? list : pool;
+  }, [favOnly, favorites, allPresetKeys, quarantine]);
+
+  const quarantinePreset = useCallback((key: string) => {
+    setQuarantine((prev) => (prev.includes(key) ? prev : [...prev, key]));
+  }, []);
+
+  /** Picking a preset by hand gives it another chance. */
+  const pickPreset = useCallback((key: string) => {
+    setQuarantine((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : prev,
+    );
+    setPresetKey(key);
+  }, []);
 
   const stepPreset = useCallback(
     (dir: number) => {
@@ -1256,6 +1278,7 @@ function App() {
       autoRef,
       sceneRef,
       randomPreset,
+      quarantinePreset,
       bpmElRef,
       modelFileRef,
       imageFileRef,
@@ -1268,7 +1291,7 @@ function App() {
       debugElRef,
       freqCanvasRef,
     );
-  }, [randomPreset]);
+  }, [randomPreset, quarantinePreset]);
 
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
@@ -1575,7 +1598,7 @@ function App() {
             <select
               className="src-select preset-select"
               value={presetKey}
-              onChange={(e) => setPresetKey(e.target.value)}
+              onChange={(e) => pickPreset(e.target.value)}
               title={presetKey}
               aria-label="Milkdrop-Preset"
             >
@@ -1610,7 +1633,7 @@ function App() {
               <optgroup label="Butterchurn">
                 {PRESET_KEYS.map((k) => (
                   <option key={k} value={k}>
-                    {k}
+                    {quarantine.includes(k) ? `⛔ ${k}` : k}
                   </option>
                 ))}
               </optgroup>
@@ -2024,6 +2047,7 @@ function startVisualizer(
   autoRef: { current: boolean },
   sceneRef: { current: SceneName },
   onAutoSwitch: () => void,
+  onQuarantine: (key: string) => void,
   bpmEl: { current: HTMLSpanElement | null },
   modelRef: { current: ModelAction | null },
   imageRef: { current: ImageAction | null },
@@ -2177,7 +2201,10 @@ function startVisualizer(
       flog(`[md] render FAILED (${bcTrapKey}): ${e} — reloading preset`);
       bcLoadedPreset = ""; // same key, fresh state
     } else {
-      flog(`[md] render FAILED (${bcTrapKey}): ${e} — keeps failing, skipping`);
+      flog(
+        `[md] render FAILED (${bcTrapKey}): ${e} — keeps failing, quarantined`,
+      );
+      onQuarantine(bcTrapKey);
       lastAutoSwitch = now;
       bcSkipDeadline = now + 1500;
       onAutoSwitch();

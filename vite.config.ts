@@ -45,9 +45,50 @@ function buildInfo() {
   };
 }
 
+/**
+ * Butterchurn compiles preset equations to WASM (eel-wasm) and converts
+ * float→int with `i32.trunc_f64_s`, which *traps* on NaN or out-of-range
+ * values ("float unrepresentable in integer range"). Original Milkdrop casts
+ * in C and just carries on, and plenty of presets rely on that — a physics
+ * sim whose state has gone NaN would otherwise trap on every frame until it
+ * is reloaded. This swaps the opcode for the saturating `i32.trunc_sat_f64_s`
+ * (0xfc 0x02: NaN → 0, overflow clamped), which every WebView we target
+ * supports. The count is asserted so a Butterchurn update that moves the
+ * emission sites fails the build instead of silently reviving the traps.
+ */
+function butterchurnSaturatingTrunc() {
+  const needle = "encoding_1.op.i32_trunc_f64_s,";
+  const expected = 4;
+  return {
+    name: "vizzy:butterchurn-saturating-trunc",
+    transform(code: string, id: string) {
+      const file = id.replace(/\\/g, "/").split("?")[0];
+      if (!file.endsWith("/node_modules/butterchurn/dist/butterchurn.js")) {
+        return null;
+      }
+      const count = code.split(needle).length - 1;
+      if (count !== expected) {
+        throw new Error(
+          `butterchurn: expected ${expected} i32.trunc_f64_s emission sites, ` +
+            `found ${count} — check the patch in vite.config.ts against this ` +
+            `Butterchurn version`,
+        );
+      }
+      return {
+        code: code.replaceAll(needle, "0xfc, 0x02, /* i32.trunc_sat_f64_s */"),
+        map: null,
+      };
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [react(), butterchurnSaturatingTrunc()],
+
+  // Pre-bundled deps bypass plugin transforms, and the patch above has to
+  // apply in `tauri dev` too. The dist is a self-contained ES module.
+  optimizeDeps: { exclude: ["butterchurn"] },
 
   define: {
     __VIZZY_BUILD__: JSON.stringify(buildInfo()),
