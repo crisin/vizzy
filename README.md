@@ -50,6 +50,37 @@ See [PLAN.md](PLAN.md) for the roadmap.
   (`vite.config.ts`) switches it to the saturating instruction, the way
   original Milkdrop behaves. A preset that still fails three times is
   quarantined (⛔) and left out of the rotation until picked by hand.
+- **Layer B** (`B` in the toolbar, `Shift+B`, drawer tab "Layer"): a second
+  Milkdrop preset on its own canvas over the first, mixed by blend mode and
+  opacity. Each layer can listen to all, only the bass or only the highs
+  (split on the waveform Butterchurn analyses); B has its own level and
+  render scale and can follow the auto-switch one bar after A. A/B swap,
+  and good mixes can be kept as named "Kombis" (`combos.json`).
+- **Preset studio** (`P`, toolbar, or from the library): own presets are
+  made of *parts* — base values, init/frame/pixel equations, warp and comp
+  shaders, four waves, four shapes — each taken from any other preset or
+  written inline. *Bausteine* builds mashups by picking parts (or rolling
+  them); *Code* edits the EEL and shader text with live reload and shows
+  compile errors, shader errors with line numbers included; *Remix* mutates
+  (base values, optionally the decimal constants in the code) or crosses
+  with a partner and probe-renders every child, dropping the ones that
+  trap, stay black or flat; *KI* lets a local model (Ollama, LM Studio,
+  llama.cpp — any OpenAI-compatible server) edit the draft from an
+  instruction. Presets are JSON files in `<app data>/presets/`, polled, so
+  an edited file reloads in place; each remembers its lineage, shown as a
+  family tree in the library.
+- **Breeding** (Settings → Milkdrop → Zucht-Anteil): the auto-switch now and
+  then plays a fresh mutation of the preset it picked. `+` keeps a child as
+  an own preset, `-` drops it and moves on; both also rate presets (−3..3),
+  and the auto-switch favours what you rated up.
+- **Dev bridge** (Settings → System): a token-protected HTTP endpoint on
+  127.0.0.1 through which Claude Code (or any script) can preview a preset
+  JSON — image plus compile errors —, play it, save it and read the log.
+  See [docs/bridge.md](docs/bridge.md).
+- **Milkdrop in 3D**: the playing preset as background behind any 3D scene,
+  and inside the parallax and morph pictures as light, distortion or
+  reflection — weighted by depth in the parallax scene, so the foreground
+  can dance while the distance stays calm.
 - **Parallax**: a still image unfolded into 2.5D by a depth map and then
   moved by the audio — bass breathes the relief open, the beat kicks the
   camera, the spectrum ripples bottom (bass) to top (treble) through the

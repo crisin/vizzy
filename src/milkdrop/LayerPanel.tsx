@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { ParamRow } from "../ui/ParamRow";
+import { comboStore, useCombos } from "./combos";
 import {
   DEFAULT_LAYER_B,
   LAYER_BAND_LABELS,
@@ -16,6 +18,7 @@ export function LayerPanel({
   currentKey,
   onPickFromLibrary,
   onSwap,
+  onRestore,
   error,
 }: {
   cfg: LayerBConfig;
@@ -25,8 +28,12 @@ export function LayerPanel({
   currentKey: string;
   onPickFromLibrary: () => void;
   onSwap: () => void;
+  /** play a saved combo: preset A plus its layer B */
+  onRestore: (a: string, b: LayerBConfig) => void;
   error: string;
 }) {
+  const combos = useCombos();
+  const [comboName, setComboName] = useState("");
   const set = <K extends keyof LayerBConfig>(k: K, v: LayerBConfig[K]) => onChange({ ...cfg, [k]: v });
 
   return (
@@ -115,6 +122,50 @@ export function LayerPanel({
               </select>
             </label>
           ))}
+        </div>
+      </div>
+
+      <div className="set-field">
+        <span className="set-field-label">Kombis</span>
+        <div className="set-field-body">
+          <div className="layer-combo-save">
+            <input
+              className="routing-name"
+              value={comboName}
+              placeholder={`${label(currentKey)} + ${cfg.key ? label(cfg.key) : "…"}`}
+              onChange={(e) => setComboName(e.target.value)}
+              aria-label="Name der Kombi"
+            />
+            <button
+              type="button"
+              className="mode-btn"
+              disabled={!cfg.key}
+              onClick={() => {
+                const name = comboName.trim() || `${label(currentKey)} + ${label(cfg.key)}`;
+                comboStore.save({ name, a: currentKey, b: { ...cfg, enabled: true }, created: Date.now() });
+                setComboName("");
+              }}
+              title="A, B und die Mischung unter einem Namen merken"
+            >
+              Merken
+            </button>
+          </div>
+          {combos.length === 0 ? (
+            <p className="set-note">Noch keine — eine gute A/B-Mischung hier unter einem Namen merken.</p>
+          ) : (
+            <ul className="set-list">
+              {combos.map((c) => (
+                <li key={c.name}>
+                  <button type="button" className="set-list-name" onClick={() => onRestore(c.a, c.b)} title={`${c.a}\n+ ${c.b.key} (${c.b.blend})`}>
+                    {c.name}
+                  </button>
+                  <button type="button" className="icon-btn set-list-del danger" onClick={() => comboStore.remove(c.name)} aria-label={`${c.name} löschen`}>
+                    🗑
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 

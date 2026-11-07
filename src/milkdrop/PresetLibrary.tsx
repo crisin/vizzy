@@ -17,6 +17,7 @@ import {
 import { ENERGY_TAGS, tagStore, useTags } from "./tags";
 import { TagChips } from "./TagChips";
 import "./library.css";
+import { presetStore, useUserPresets } from "./presetStore";
 
 type SourceFilter = "all" | "fav" | "curated" | "user" | "untagged" | "quarantine";
 type SortBy = "name" | "author" | "energy";
@@ -316,6 +317,14 @@ export function PresetLibrary({
   };
 
   const entryOf = (key: string) => entries.find((e) => e.key === key);
+  // family tree of own presets: where it came from, what came from it
+  const own = useUserPresets();
+  const lineageOf = (key: string) => {
+    const self = key.startsWith("user:") ? presetStore.byName(key.slice(5)) : undefined;
+    const parents = self?.lineage?.parents ?? [];
+    const kids = own.filter((p) => p.lineage?.parents.includes(key)).map((p) => `user:${p.name}`);
+    return { op: self?.lineage?.op, parents, kids };
+  };
   const sel = entryOf(selected);
   const selPreview = previews.get(selected);
   const untaggedSuggestions = visible.filter(
@@ -476,6 +485,32 @@ export function PresetLibrary({
                   allowCreate
                 />
                 {tagStore.isSeeded(sel.key) && <div className="mdlib-hint">Tags aus dem Code — deine Änderungen haben Vorrang.</div>}
+                {(() => {
+                  const l = lineageOf(sel.key);
+                  if (!l.parents.length && !l.kids.length) return null;
+                  const chip = (k: string) => (
+                    <button key={k} type="button" className="chip" onClick={() => setSelected(k)} title={k}>
+                      {entryOf(k)?.title ?? k}
+                    </button>
+                  );
+                  return (
+                    <>
+                      <h4>Stammbaum</h4>
+                      {l.parents.length > 0 && (
+                        <div className="mdlib-family">
+                          <span className="mdlib-hint">{l.op ?? "aus"} von</span>
+                          {l.parents.map(chip)}
+                        </div>
+                      )}
+                      {l.kids.length > 0 && (
+                        <div className="mdlib-family">
+                          <span className="mdlib-hint">Kinder</span>
+                          {l.kids.map(chip)}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 {selPreview && (
                   <>
                     <h4>Clip</h4>

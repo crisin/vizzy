@@ -3,6 +3,37 @@
 Stand: 2026-11-07. Ergebnis des Interviews zu Crash, Preset-Bibliothek,
 Config-UI, Layering, Editor, Remix und Parallax-Kombination.
 
+## Umsetzungsstand (2026-11-07)
+
+| Phase | Stand | Commit |
+|---|---|---|
+| M0 Crash | erledigt: trunc_sat-Patch, Quarantäne | 6f71bb5 |
+| M1 Library + Tags | erledigt: Library, Clip-Vorschauen, Tags, Tag-Leiste, Tag-Filter, Auto-Switch nach Energie/Abschnitt, gemessene Energie-Seeds für alle 107 | fa98058 |
+| M2 Drawer | erledigt: ein Drawer mit Tabs, ParamRow mit Zahlfeld/Reset, einklappbare Gruppen, Tweaks gruppiert | 2a5ddb9 |
+| M3a Layer B | erledigt, inkl. Band-Split A/B, Nachziehen beim Auto-Wechsel | 7bd103e |
+| M3b/M4a–c Studio | erledigt: Bausteine-Modell, Dateien + Polling, Composer, Code-Editor mit EEL- und Shader-Fehlern, Import/Export | 135d8e7 |
+| M5 Remix | erledigt: Mutieren/Kreuzen mit Probelauf im Studio, Zucht-Modus, Bewertungen ±, Stammbaum | 135d8e7, ba4e20a |
+| M4d KI | erledigt: lokale Modelle im Studio, Dev-Brücke für Claude Code (docs/bridge.md) | 7688aa7 |
+| M3c/M6 | erledigt: Milkdrop als Hintergrund in jeder 3D-Szene, Licht/Verzerrung/Reflexion in Parallax (tiefengewichtet) und Morph | 75cd9fe |
+
+Bewusst abweichend oder offen:
+
+- **Engine-Entflechtung (M1.1):** Zweitinstanzen (Library, Studio, Layer B,
+  Vorschauen, Probe) laufen über `src/milkdrop/engine.ts`; das Hauptbild hat
+  seinen Render-Pfad mit Auto-Switch und Phrasen-Dynamik noch in App.tsx.
+- **Code-Editor:** Textarea mit Zeilennummern statt CodeMirror — kein neues
+  Paket nötig; Syntax-Highlighting fehlt deshalb.
+- **Vizzy-Variablen in Gleichungen** (`vz_bpm`, `vz_phrase` …): offen.
+  Butterchurn bietet keinen Weg, eigene Variablen pro Frame in die
+  kompilierten Gleichungen zu reichen; das braucht einen zweiten
+  Bundle-Patch wie den trunc_sat-Patch.
+- **Milkdrop als Material** auf Orb/Tunnel/Terrain: offen; umgesetzt sind
+  Hintergrund (alle Szenen) und Bild-Mischung (Parallax, Morph).
+- **Dev-Brücke:** gebaut und kompiliert, aber noch nicht gegen die laufende
+  Tauri-App getestet — die Browser-Vorschau hat keine Tauri-Befehle.
+- **Datei-Watcher:** Polling alle 1,5 s statt `notify`-Crate, ohne neue
+  Abhängigkeit.
+
 ## Entscheidungen aus dem Interview
 
 | Thema | Entscheidung |

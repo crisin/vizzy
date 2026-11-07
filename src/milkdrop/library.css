@@ -533,3 +533,33 @@
     transform: translate(-50%, -6px);
   }
 }
+
+.mdlib-family {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.layer-combo-save {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.layer-combo-save input {
+  flex: 1;
+  min-width: 0;
+}
+
+.layer-pick .layer-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.layer-blends {
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}

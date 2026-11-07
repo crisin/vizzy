@@ -2324,6 +2324,10 @@ function App() {
                           setPresetKey(layerB.key);
                           setLayerB((cfg) => ({ ...cfg, key: a }));
                         }}
+                        onRestore={(a, b) => {
+                          setPresetKey(a);
+                          setLayerB(b);
+                        }}
                       />
                     ),
                   },
