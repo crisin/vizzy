@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { GROUP_LABELS, PARAM_SCHEMAS, params, type ParamDef } from "./params";
 import { useDialogFocus } from "./useDialogFocus";
 import { ParamRow, Section } from "./ui/ParamRow";
+import { bridgeInfo, onBridgeChange } from "./milkdrop/bridgeClient";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -138,6 +139,25 @@ function ParamGroup({
         );
       })}
     </Section>
+  );
+}
+
+/** Where the dev bridge listens — refreshes when it starts or stops. */
+function BridgeStatus() {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const off = onBridgeChange(bump);
+    return () => {
+      off();
+    };
+  }, []);
+  const info = bridgeInfo();
+  if (!info) return null;
+  return (
+    <p className="set-note">
+      Brücke läuft auf <code>127.0.0.1:{info.port}</code>. Port und Token
+      stehen in <code>{info.file}</code> — Claude Code liest sie dort.
+    </p>
   );
 }
 
@@ -587,6 +607,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
         {tab === "system" && (
           <>
+            <ParamGroup group="dev" onChanged={bump} />
+            <BridgeStatus />
             <Field label="Zurücksetzen">
               <button
                 type="button"

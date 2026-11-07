@@ -307,6 +307,13 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
   ],
 };
 
+/** Dev tools — not tied to a visualization. */
+PARAM_SCHEMAS.dev = [
+  { key: "bridge", label: "Dev-Brücke für Claude Code", min: 0, max: 1, step: 1, default: 0, kind: "toggle",
+    hint: "Lokaler HTTP-Zugang (nur 127.0.0.1, mit Token) zum Laden, Vorschauen und Speichern von Presets — siehe docs/bridge.md" },
+];
+GROUP_LABELS.dev = "Entwicklung";
+
 export const PARAMS_STORAGE_KEY = "vizzy.params.v1";
 const STORAGE_KEY = PARAMS_STORAGE_KEY;
 

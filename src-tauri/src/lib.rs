@@ -1,4 +1,6 @@
 mod audio;
+mod bridge;
+mod llm;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
 pub mod comfy;
 mod phrasing;
@@ -63,8 +65,9 @@ fn set_beat_sensitivity(
 /// Lets the webview surface errors/status into the dev console output,
 /// since the webview's own console is not visible in `tauri dev` logs.
 #[tauri::command]
-fn frontend_log(msg: String) {
+fn frontend_log(msg: String, bridge: tauri::State<'_, bridge::Bridge>) {
     eprintln!("[vizzy-web] {msg}");
+    bridge::push_log(&bridge, msg);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -77,6 +80,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(bridge::new())
         .manage(AudioState {
             shared,
             control: tx,
@@ -96,7 +100,13 @@ pub fn run() {
             store::data_dir,
             store::data_list,
             store::data_delete,
-            store::data_open_dir
+            store::data_open_dir,
+            bridge::bridge_start,
+            bridge::bridge_stop,
+            bridge::bridge_set_state,
+            bridge::bridge_reply,
+            llm::llm_models,
+            llm::llm_chat
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

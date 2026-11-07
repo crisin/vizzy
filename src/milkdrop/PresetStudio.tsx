@@ -20,10 +20,11 @@ import {
   type VizzyPreset,
 } from "./vpreset";
 import { EEL_REFERENCE } from "./reference";
+import { askAgent, listModels, loadLlmConfig, saveLlmConfig, type LlmConfig } from "./agent";
 import "./studio.css";
 
 type Bc = Record<string, unknown> & { baseVals?: Record<string, unknown>; waves?: { baseVals?: Record<string, unknown> }[]; shapes?: { baseVals?: Record<string, unknown> }[] };
-type Tab = "parts" | "code" | "remix";
+type Tab = "parts" | "code" | "remix" | "ai";
 type Child = { preset: VizzyPreset; ok: boolean; reason: string; thumb: string };
 
 const SLOT_PARTS = ["baseVals", ...CODE_PARTS] as const;
@@ -213,6 +214,46 @@ export function PresetStudio({
     setBusy(false);
   };
 
+  /* ---------------------------------------------------------------- ai */
+  const [llm, setLlm] = useState<LlmConfig>(loadLlmConfig);
+  const [models, setModels] = useState<string[]>([]);
+  const [instruction, setInstruction] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState("");
+  const [aiResult, setAiResult] = useState<{ preset: VizzyPreset; note: string; ok: boolean; reason: string; raw: string } | null>(null);
+  const updateLlm = (c: LlmConfig) => {
+    setLlm(c);
+    saveLlmConfig(c);
+  };
+  const fetchModels = async () => {
+    try {
+      const m = await listModels(llm.url);
+      setModels(m);
+      if (!llm.model && m[0]) updateLlm({ ...llm, model: m[0] });
+      setAiMsg(m.length ? `${m.length} Modelle gefunden` : "Server erreichbar, aber keine Modelle");
+    } catch (e) {
+      setAiMsg(String(e));
+    }
+  };
+  const runAgent = async () => {
+    if (!composed || !instruction.trim()) return;
+    setAiBusy(true);
+    setAiMsg("Modell denkt…");
+    setAiResult(null);
+    try {
+      const parentKey = savedAs ? `user:${savedAs}` : initialKey;
+      const r = await askAgent(llm, draft, composed, instruction.trim(), parentKey);
+      const resolved = compose(r.preset, resolveAt);
+      const p = resolved ? await probe(resolved) : { ok: false, reason: "löst nicht auf", thumb: "", errors: "" };
+      setAiResult({ preset: r.preset, note: r.note, ok: p.ok, reason: p.errors || p.reason, raw: r.raw });
+      if (resolved) setPreviewOverride(resolved);
+      setAiMsg(p.ok ? "Vorschlag läuft in der Vorschau" : `Vorschlag verworfen: ${p.reason}`);
+    } catch (e) {
+      setAiMsg(String(e));
+    }
+    setAiBusy(false);
+  };
+
   /* -------------------------------------------------------------- save */
   const save = async (asNew: boolean) => {
     let name = draft.name.trim() || "Preset";
@@ -292,6 +333,7 @@ export function PresetStudio({
                 ["parts", "Bausteine"],
                 ["code", "Code"],
                 ["remix", "Remix"],
+                ["ai", "KI"],
               ] as [Tab, string][]
             ).map(([id, l]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={`mode-btn ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>
@@ -486,6 +528,93 @@ export function PresetStudio({
                     >
                       Zurück zum Entwurf
                     </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "ai" && (
+              <div className="studio-remix">
+                <p className="set-note">
+                  Ein lokales Sprachmodell ändert den Entwurf nach deiner
+                  Anweisung — über jeden Server mit OpenAI-kompatibler
+                  Schnittstelle (Ollama, LM Studio, llama.cpp). Kleine Modelle
+                  drehen vor allem an Werten und Konstanten; für neue
+                  Algorithmen ist ein großes Modell oder die Claude-Code-Brücke
+                  (Einstellungen → System) die bessere Wahl.
+                </p>
+                <label className="studio-row">
+                  <span>Server</span>
+                  <input className="studio-name" value={llm.url} onChange={(e) => updateLlm({ ...llm, url: e.target.value })} />
+                  <button type="button" className="mode-btn" onClick={() => void fetchModels()}>
+                    Verbinden
+                  </button>
+                </label>
+                <label className="studio-row">
+                  <span>Modell</span>
+                  {models.length ? (
+                    <select className="src-select" value={llm.model} onChange={(e) => updateLlm({ ...llm, model: e.target.value })}>
+                      {models.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input className="studio-name" value={llm.model} placeholder="z. B. qwen2.5-coder:14b" onChange={(e) => updateLlm({ ...llm, model: e.target.value })} />
+                  )}
+                  <span />
+                </label>
+                <textarea
+                  className="studio-instruction"
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void runAgent();
+                  }}
+                  placeholder="Was soll anders werden? z. B. „kälter und langsamer, die Spirale soll auf den Bass pumpen“"
+                  rows={4}
+                />
+                <div className="studio-actions">
+                  <button type="button" className="mode-btn active" disabled={aiBusy || !llm.model || !instruction.trim()} onClick={() => void runAgent()} title="Strg+Enter">
+                    {aiBusy ? "denkt…" : "Vorschlagen"}
+                  </button>
+                  <span className="mdlib-hint">{aiMsg}</span>
+                </div>
+                {aiResult && (
+                  <div className="studio-ai-result">
+                    {aiResult.note && <p className="set-note">„{aiResult.note}“</p>}
+                    {!aiResult.ok && <pre className="studio-err">{aiResult.reason}</pre>}
+                    <div className="studio-actions">
+                      <button
+                        type="button"
+                        className="mode-btn active"
+                        disabled={!aiResult.ok}
+                        onClick={() => {
+                          edit(() => ({ ...aiResult.preset, name: draft.name }));
+                          setPreviewOverride(null);
+                          setAiResult(null);
+                          setStatus("KI-Vorschlag übernommen — speichern nicht vergessen");
+                        }}
+                      >
+                        Übernehmen
+                      </button>
+                      <button
+                        type="button"
+                        className="mode-btn"
+                        onClick={() => {
+                          setPreviewOverride(null);
+                          setAiResult(null);
+                        }}
+                      >
+                        Verwerfen
+                      </button>
+                    </div>
+                    <details className="studio-ref">
+                      <summary>Rohe Antwort des Modells</summary>
+                      <pre className="studio-raw">{aiResult.raw}</pre>
+                    </details>
                   </div>
                 )}
               </div>

@@ -125,7 +125,7 @@ export function cross(
 let probeEngine: MilkdropEngine | null = null;
 let probeChain: Promise<unknown> = Promise.resolve();
 
-export type ProbeResult = { ok: boolean; reason: string; thumb: string };
+export type ProbeResult = { ok: boolean; reason: string; thumb: string; errors?: string };
 
 /**
  * Renders a candidate for ~2 s of simulated time at a small size and judges
@@ -142,7 +142,7 @@ export function probe(preset: unknown): Promise<ProbeResult> {
     }
     const eng = probeEngine;
     if (!(await eng.load("probe", preset, 0))) {
-      return { ok: false, reason: `kompiliert nicht: ${eng.error}`, thumb: "" };
+      return { ok: false, reason: `kompiliert nicht: ${eng.error}`, thumb: "", errors: eng.error };
     }
     const bytes = new Uint8Array(1024);
     let traps = 0;
@@ -174,11 +174,12 @@ export function probe(preset: unknown): Promise<ProbeResult> {
     const mean = sum / n;
     const sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
     const thumb = eng.canvas.toDataURL("image/webp", 0.7);
-    if (traps > 2) return { ok: false, reason: "trappt", thumb };
-    if (mean < 0.015) return { ok: false, reason: "schwarz", thumb };
-    if (mean > 0.97) return { ok: false, reason: "weiß", thumb };
-    if (sd < 0.01) return { ok: false, reason: "flach", thumb };
-    return { ok: true, reason: "", thumb };
+    const errors = eng.error;
+    if (traps > 2) return { ok: false, reason: "trappt", thumb, errors };
+    if (mean < 0.015) return { ok: false, reason: "schwarz", thumb, errors };
+    if (mean > 0.97) return { ok: false, reason: "weiß", thumb, errors };
+    if (sd < 0.01) return { ok: false, reason: "flach", thumb, errors };
+    return { ok: true, reason: "", thumb, errors };
   };
   const next = probeChain.then(run, run);
   probeChain = next.catch(() => undefined);

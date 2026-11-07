@@ -80,6 +80,7 @@ import { DEFAULT_LAYER_B, LayerB, shapeWave, type LayerBConfig } from "./milkdro
 import { LayerPanel } from "./milkdrop/LayerPanel";
 import { PresetStudio } from "./milkdrop/PresetStudio";
 import { breedChild, isBreedKey, resolveBreed, spawn } from "./milkdrop/breed";
+import { setBridgeHooks } from "./milkdrop/bridgeClient";
 import { presetStore, useUserPresets } from "./milkdrop/presetStore";
 import { compose, makePreset, type VizzyPreset } from "./milkdrop/vpreset";
 import {
@@ -1457,6 +1458,30 @@ function App() {
       setLayerBError,
     );
   }, [autoPick, quarantinePreset]);
+
+  // what the dev bridge may see and do (src/milkdrop/bridgeClient.ts)
+  useEffect(() => {
+    setBridgeHooks({
+      state: () => ({
+        mode: modeRef.current,
+        preset: presetKeyRef.current,
+        label: presetLabel(presetKeyRef.current),
+        tags: tagStore.get(presetKeyRef.current),
+        rating: tagStore.rating(presetKeyRef.current),
+        layerB: layerBRef.current,
+        energy: ENERGY_LEVELS[live.level],
+        bpm: Math.round(live.bpm),
+        lastPick: live.lastPick,
+        ownPresets: presetStore.getSnapshot().map((p) => `user:${p.name}`),
+      }),
+      play: (k) => {
+        setPresetKey(k);
+        setMode("milkdrop");
+      },
+      resolve: (k) => resolvePresetRef.current(k),
+      canvas: () => mdCanvasRef.current,
+    });
+  }, []);
 
   const [toast, setToast] = useState("");
   const toastTimer = useRef(0);
