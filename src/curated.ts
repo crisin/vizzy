@@ -15,6 +15,8 @@ export type CuratedPreset = {
   overrides: Record<string, number>;
   /** why this one, and what was changed — for the next person tuning it */
   note: string;
+  /** default tags (see milkdrop/tags.ts); the user's own tags win */
+  tags?: string[];
 };
 
 export const CURATED_PREFIX = "vizzy:";
@@ -29,6 +31,7 @@ export const CURATED: CuratedPreset[] = [
       "Longer decay so the glass glows instead of flickering, a visible " +
       "warm waveform threaded through the cool panes, and a touch more echo " +
       "for depth.",
+    tags: ["ruhig", "intro"],
     overrides: {
       decay: 0.98,
       wave_a: 0.45,

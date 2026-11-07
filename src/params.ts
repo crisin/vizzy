@@ -283,6 +283,21 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
         { value: 5, label: "Nur bei Sektionswechsel" },
       ],
     },
+    {
+      key: "tagMode",
+      label: "Auswahl nach Tags",
+      min: 0,
+      max: 2,
+      step: 1,
+      default: 1,
+      kind: "select",
+      hint: "Wählt beim Auto-Wechsel Presets, deren Energie- und Abschnitts-Tags zur Musik passen",
+      options: [
+        { value: 0, label: "Aus — reiner Zufall" },
+        { value: 1, label: "Sanft — Passendes bevorzugen" },
+        { value: 2, label: "Streng — nur Passendes" },
+      ],
+    },
   ],
 };
 

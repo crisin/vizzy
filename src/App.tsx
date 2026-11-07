@@ -69,6 +69,13 @@ import { routing } from "./listeners";
 import { RoutingModal } from "./RoutingModal";
 import { MdTweakPanel } from "./MdTweakPanel";
 import { HelpPanel } from "./HelpPanel";
+import { PresetLibrary } from "./milkdrop/PresetLibrary";
+import { TagBar } from "./milkdrop/TagBar";
+import { TagChips } from "./milkdrop/TagChips";
+import { buildCatalog } from "./milkdrop/catalog";
+import { live, liveTimeByte, ENERGY_LEVELS } from "./milkdrop/live";
+import { tagStore, useTags } from "./milkdrop/tags";
+import { notePlayed, pickAuto, type TagMode } from "./milkdrop/autoswitch";
 import {
   deleteUserPreset,
   loadUserPresets,
@@ -277,6 +284,8 @@ type Persisted = {
   favOnly?: boolean;
   /** presets that kept trapping — skipped by ←/→, Zufall and auto */
   quarantine?: string[];
+  tagFilter?: string[];
+  tagFilterMode?: "any" | "all";
 };
 
 const SETTINGS_KEY = "vizzy.settings.v1";
@@ -322,6 +331,16 @@ function App() {
   const [quarantine, setQuarantine] = useState<string[]>(
     () => saved.quarantine ?? [],
   );
+  const [tagFilter, setTagFilter] = useState<string[]>(() => saved.tagFilter ?? []);
+  const [tagFilterMode, setTagFilterMode] = useState<"any" | "all">(
+    () => saved.tagFilterMode ?? "any",
+  );
+  const [presetLibOpen, setPresetLibOpen] = useState(false);
+  const [tagBarOpen, setTagBarOpen] = useState(false);
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+  const tagsVersion = useTags();
+  /** overrides to apply right after the next preset switch (library variant) */
+  const pendingOverridesRef = useRef<Record<string, number> | null>(null);
   const [showBpm, setShowBpm] = useState(saved.showBpm ?? false);
   const [debugOpen, setDebugOpen] = useState(saved.debug ?? false);
   const debugElRef = useRef<HTMLPreElement | null>(null);
@@ -434,7 +453,9 @@ function App() {
 
   // switching presets discards unsaved tweaks
   useEffect(() => {
-    setMdOverrides({});
+    setMdOverrides(pendingOverridesRef.current ?? {});
+    pendingOverridesRef.current = null;
+    notePlayed(presetKey);
   }, [presetKey]);
 
   useEffect(() => {
@@ -458,7 +479,7 @@ function App() {
 
   useEffect(() => {
     const needed =
-      mode === "milkdrop" || bgLayer === "milkdrop" || tweakOpen;
+      mode === "milkdrop" || bgLayer === "milkdrop" || tweakOpen || presetLibOpen;
     if (needed && milkdropStatus === "idle") {
       void requestMilkdropRuntime();
     }
@@ -466,6 +487,7 @@ function App() {
     mode,
     bgLayer,
     tweakOpen,
+    presetLibOpen,
     milkdropStatus,
     requestMilkdropRuntime,
   ]);
@@ -539,6 +561,7 @@ function App() {
       const list = deleteUserPreset(name);
       setUserPresets(list);
       setFavorites((prev) => prev.filter((k) => k !== `user:${name}`));
+      tagStore.move(`user:${name}`, null);
       if (presetKey === `user:${name}`) {
         setPresetKey(up && PRESETS[up.base] ? up.base : (PRESET_KEYS[0] ?? ""));
       }
@@ -643,6 +666,8 @@ function App() {
       favorites,
       favOnly,
       quarantine,
+      tagFilter,
+      tagFilterMode,
     };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
@@ -666,6 +691,8 @@ function App() {
     favorites,
     favOnly,
     quarantine,
+    tagFilter,
+    tagFilterMode,
   ]);
 
   const isFavorite = favorites.includes(presetKey);
@@ -682,11 +709,51 @@ function App() {
   const browseKeys = useMemo(() => {
     // A quarantined preset is one that trapped repeatedly; it stays in the
     // picker (choosing it there releases it) but out of the rotation.
-    const pool = allPresetKeys.filter((k) => !quarantine.includes(k));
+    // Tag filter narrows first; favourites-only narrows further. Either one
+    // leaving fewer than two presets is ignored rather than killing the keys.
+    let pool = allPresetKeys.filter((k) => !quarantine.includes(k));
+    if (tagFilter.length) {
+      const tagged = pool.filter((k) =>
+        tagStore.matches(k, tagFilter, tagFilterMode, favorites),
+      );
+      if (tagged.length > 1) pool = tagged;
+    }
     if (!favOnly) return pool;
     const list = favorites.filter((k) => pool.includes(k));
     return list.length > 1 ? list : pool;
-  }, [favOnly, favorites, allPresetKeys, quarantine]);
+    // tagsVersion: re-filter when tags change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favOnly, favorites, allPresetKeys, quarantine, tagFilter, tagFilterMode, tagsVersion]);
+
+  const catalog = useMemo(
+    () => buildCatalog(PRESET_KEYS, CURATED, CURATED_PREFIX, userPresets),
+    [userPresets],
+  );
+
+  // The auto-switch picks through a ref so the render loop never has to be
+  // restarted when the browse list or the tags change.
+  const autoPickRef = useRef(() => {});
+  useEffect(() => {
+    autoPickRef.current = () => {
+      setPresetKey((current) =>
+        pickAuto(browseKeys, current, (params.get("milkdrop", "tagMode") | 0) as TagMode),
+      );
+    };
+  }, [browseKeys]);
+  const autoPick = useCallback(() => autoPickRef.current(), []);
+
+  const applyFromLibrary = useCallback(
+    (key: string, overrides?: Record<string, number>) => {
+      setQuarantine((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : prev));
+      if (key === presetKeyRef.current) {
+        setMdOverrides(overrides ?? {});
+      } else {
+        pendingOverridesRef.current = overrides ?? null;
+        setPresetKey(key);
+      }
+    },
+    [],
+  );
 
   const quarantinePreset = useCallback((key: string) => {
     setQuarantine((prev) => (prev.includes(key) ? prev : [...prev, key]));
@@ -1277,7 +1344,7 @@ function App() {
       presetKeyRef,
       autoRef,
       sceneRef,
-      randomPreset,
+      autoPick,
       quarantinePreset,
       bpmElRef,
       modelFileRef,
@@ -1291,7 +1358,7 @@ function App() {
       debugElRef,
       freqCanvasRef,
     );
-  }, [randomPreset, quarantinePreset]);
+  }, [autoPick, quarantinePreset]);
 
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
@@ -1308,6 +1375,8 @@ function App() {
     settingsOpen ||
     helpOpen ||
     libraryOpen ||
+    presetLibOpen ||
+    tagBarOpen ||
     routingOpen ||
     (tweakOpen && mode === "milkdrop");
 
@@ -1335,7 +1404,10 @@ function App() {
       const key = e.key.toLowerCase();
 
       if (e.key === "Escape") {
-        if (libraryOpen) setLibraryOpen(false);
+        if (presetLibOpen) setPresetLibOpen(false);
+        else if (tagFilterOpen) setTagFilterOpen(false);
+        else if (tagBarOpen) setTagBarOpen(false);
+        else if (libraryOpen) setLibraryOpen(false);
         else if (comfyOpen) setComfyOpen(false);
         else if (routingOpen) setRoutingOpen(false);
         else if (tweakOpen) setTweakOpen(false);
@@ -1347,7 +1419,7 @@ function App() {
 
       // Modal dialogs own the keyboard until they are dismissed. Prevent
       // shortcuts from changing the app behind their backdrop.
-      if (libraryOpen || routingOpen || comfyOpen) return;
+      if (libraryOpen || routingOpen || comfyOpen || presetLibOpen) return;
 
       // Global shortcuts must never fire while somebody is typing or using a
       // native select/range control.
@@ -1376,6 +1448,12 @@ function App() {
         else if (key === "r") randomPreset();
         else if (key === "a") setAutoSwitch((v) => !v);
         else if (key === "s") toggleFavorite(presetKeyRef.current);
+        else if (key === "l") {
+          // otherwise the keystroke lands in the library's search box
+          e.preventDefault();
+          setPresetLibOpen(true);
+        }
+        else if (key === "t") setTagBarOpen((v) => !v);
       } else if (modeRef.current === "3d") {
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           setScene3d((s) => {
@@ -1402,6 +1480,9 @@ function App() {
     settingsOpen,
     helpOpen,
     pokeHud,
+    presetLibOpen,
+    tagFilterOpen,
+    tagBarOpen,
   ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
@@ -1595,6 +1676,15 @@ function App() {
             >
               Zurück
             </button>
+            <button
+              type="button"
+              className="mode-btn"
+              onClick={() => setPresetLibOpen(true)}
+              title="Preset-Library mit Vorschauen (L)"
+              aria-keyshortcuts="L"
+            >
+              Library
+            </button>
             <select
               className="src-select preset-select"
               value={presetKey}
@@ -1697,6 +1787,25 @@ function App() {
               aria-pressed={favOnly}
             >
               nur ★
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${tagFilter.length ? "active" : ""}`}
+              onClick={() => setTagFilterOpen((v) => !v)}
+              title="Nur Presets mit bestimmten Tags spielen — gilt für ←/→, Zufall und Auto"
+              aria-expanded={tagFilterOpen}
+            >
+              {tagFilter.length ? `Tags: ${tagFilter.join(tagFilterMode === "all" ? " + " : " | ")}` : "Tags ▾"}
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${tagBarOpen ? "active" : ""}`}
+              onClick={() => setTagBarOpen((v) => !v)}
+              title="Laufendes Preset taggen (T)"
+              aria-pressed={tagBarOpen}
+              aria-keyshortcuts="T"
+            >
+              🏷
             </button>
             <button
               type="button"
@@ -2018,6 +2127,60 @@ function App() {
           bake={bakeState}
           onBake={() => void runBake()}
           onClose={() => setComfyOpen(false)}
+        />
+      )}
+      {tagFilterOpen && mode === "milkdrop" && (
+        <div className="tagfilter-pop" role="dialog" aria-label="Tag-Filter">
+          <div className="tagfilter-head">
+            <span>Nur Presets mit</span>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setTagFilterMode((m) => (m === "any" ? "all" : "any"))}
+              title="ODER: irgendeiner der Tags · UND: alle"
+            >
+              {tagFilterMode === "any" ? "einem davon (ODER)" : "allen (UND)"}
+            </button>
+            {tagFilter.length > 0 && (
+              <button type="button" className="chip" onClick={() => setTagFilter([])}>
+                × aus
+              </button>
+            )}
+            <button type="button" className="mode-btn" onClick={() => setTagFilterOpen(false)}>
+              ×
+            </button>
+          </div>
+          <TagChips
+            compact
+            selected={tagFilter}
+            onToggle={(t) =>
+              setTagFilter((f) => (f.includes(t) ? f.filter((x) => x !== t) : [...f, t]))
+            }
+          />
+          <div className="tagfilter-count">{browseKeys.length} Presets in der Rotation</div>
+        </div>
+      )}
+      {tagBarOpen && mode === "milkdrop" && (
+        <TagBar
+          presetKey={presetKey}
+          label={presetLabel(presetKey)}
+          onClose={() => setTagBarOpen(false)}
+        />
+      )}
+      {presetLibOpen && (
+        <PresetLibrary
+          entries={catalog}
+          currentKey={presetKey}
+          favorites={favorites}
+          quarantine={quarantine}
+          runtimeReady={milkdropStatus === "ready"}
+          resolvePreset={resolvePreset}
+          onApply={(k, ov) => {
+            applyFromLibrary(k, ov);
+            if (mode !== "milkdrop") setMode("milkdrop");
+          }}
+          onToggleFavorite={toggleFavorite}
+          onClose={() => setPresetLibOpen(false)}
         />
       )}
       {tweakOpen && mode === "milkdrop" && (
@@ -2635,6 +2798,17 @@ function startVisualizer(
     if (inTauri) fetchFrame();
     else mockFrame(now / 1000);
 
+    // shared with the library tile and the tag-driven auto-switch
+    live.update(rms, section, phrasePhase, gridConf, dt);
+    {
+      const g = params.get("audio", "gain");
+      const n = Math.min(wave.length, liveTimeByte.length);
+      for (let j = 0; j < n; j++) {
+        const v = Math.max(-1, Math.min(1, wave[j] * g));
+        liveTimeByte[j] = (v * 127 + 128) | 0;
+      }
+    }
+
     // frequency listeners → parameter modulation
     routing.update(bands, dt);
 
@@ -2799,6 +2973,9 @@ function startVisualizer(
           `${(Math.round(phrasePhase * 32) % 32) + 1}/32 · ` +
           `grid ${gridConf.toFixed(2)}${section > 0.05 ? " · SEKTION" : ""}`
         : `grid nicht eingerastet (${gridConf.toFixed(2)})`,
+      `energie ${ENERGY_LEVELS[live.level]} (${live.norm.toFixed(2)}) · ` +
+        `tags ${["aus", "sanft", "streng"][params.get("milkdrop", "tagMode") | 0]}`,
+      live.lastPick || "auto: noch keine Wahl",
     ];
     if (debugErrors.length) {
       lines.push("", "— letzte Fehler —", ...debugErrors);

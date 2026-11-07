@@ -6,6 +6,8 @@ const SHORTCUTS = [
   ["← / →", "Preset oder 3D-Szene wechseln"],
   ["R", "Zufälliges Milkdrop-Preset"],
   ["S", "Preset als Favorit markieren (★)"],
+  ["L", "Preset-Library mit Vorschauen"],
+  ["T", "Tag-Leiste: laufendes Preset taggen (dort 1–9)"],
   ["A", "Automatischen Preset-Wechsel umschalten"],
   ["B", "Tempoanzeige ein- oder ausblenden"],
   ["D", "Diagnoseanzeige ein- oder ausblenden"],

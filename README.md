@@ -18,6 +18,38 @@ See [PLAN.md](PLAN.md) for the roadmap.
   cubes, blocky critters, surf, flora, parallax, morph, and your own
   glTF/GLB/ZIP models with a thumbnail library (IndexedDB) and a
   bass/beat-driven explode effect.
+- **Preset library** (`L`): every Milkdrop preset as a card with a
+  generated preview — a still, or a 12-frame clip that tells the same
+  story for each preset (quiet → loud → drop → later → two tweak
+  variants), so they compare at a glance. The selected or hovered preset
+  runs live in a large tile on the side, fed the real audio; a variant
+  frame can be tried there and applied with its tweaks. Previews render
+  in the background while the library is open (a few ms per frame, so the
+  main picture keeps running) and are cached in IndexedDB per preset
+  content, so an edited preset gets a fresh one. Search covers name,
+  author and tags; filters for favourites, curated, own, quarantined.
+- **Tags**: free labels on presets, set in the library (Ctrl/Shift-click
+  for many at once), live with `T` (a chip bar over the picture, `1`–`9`
+  toggle) or in code (`src/milkdrop/tagSeeds.ts`, `tags` on curated
+  presets — defaults the user's own tags override). Stored in `tags.json`
+  in the app data directory. "Tags ▾" in the toolbar restricts ←/→,
+  random and auto to presets with given tags (any/all). Three groups mean
+  something to the auto-switch: energy (`ruhig`/`mittel`/`hoch`), song
+  section (`intro`/`build`/`drop`/`break`/`outro`) and `nie-auto`. With
+  "Auswahl nach Tags" on (Settings → Milkdrop), the auto-switch weights its
+  draw towards presets whose energy matches the smoothed level of the
+  track (adaptive, so a quiet album still spans all three) and whose
+  section tag matches what just happened — energy jumping up at a section
+  boundary asks for `drop`, falling for `break`, the first half minute
+  after silence for `intro`. Recently played presets are pushed down. The
+  debug HUD shows the level and why the last preset was chosen. The
+  preview generator measures motion and brightness and offers an energy
+  tag per preset as a dashed suggestion.
+- **Trap-proof presets**: Butterchurn compiles preset equations to WASM,
+  where a float→int conversion of NaN traps. A build-time patch
+  (`vite.config.ts`) switches it to the saturating instruction, the way
+  original Milkdrop behaves. A preset that still fails three times is
+  quarantined (⛔) and left out of the rotation until picked by hand.
 - **Parallax**: a still image unfolded into 2.5D by a depth map and then
   moved by the audio — bass breathes the relief open, the beat kicks the
   camera, the spectrum ripples bottom (bass) to top (treble) through the
@@ -105,8 +137,8 @@ See [PLAN.md](PLAN.md) for the roadmap.
 
 ### Keys
 
-`1`–`5` modes · `←`/`→` preset/scene · `R` random preset · `A` preset
-auto-switch · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
+`1`–`5` modes · `←`/`→` preset/scene · `R` random preset · `L` preset
+library · `T` tag bar · `S` favourite · `A` preset auto-switch · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
 latency, audio stats, recent errors) · `E` parameter editor ·
 `F` fullscreen · `Esc` close/leave
 

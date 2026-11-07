@@ -3,11 +3,13 @@
 // shared: opening one database at two different versions throws.
 
 const DB_NAME = "vizzy";
-const VERSION = 4;
+const VERSION = 5;
 
 export const MODEL_STORE = "models";
 export const IMAGE_STORE = "images";
 export const MORPH_STORE = "morphs";
+/** Milkdrop preview stills/clips, keyed by preset + content hash */
+export const MD_PREVIEW_STORE = "mdpreviews";
 
 const STORES = [MODEL_STORE, IMAGE_STORE, MORPH_STORE];
 
@@ -24,6 +26,9 @@ export function withStore<T>(
         if (!db.objectStoreNames.contains(name)) {
           db.createObjectStore(name, { keyPath: "id", autoIncrement: true });
         }
+      }
+      if (!db.objectStoreNames.contains(MD_PREVIEW_STORE)) {
+        db.createObjectStore(MD_PREVIEW_STORE, { keyPath: "key" });
       }
       // v1 kept a single model in a "files" store — superseded
       if (db.objectStoreNames.contains("files")) {
