@@ -76,7 +76,8 @@ import { director } from "./regie/director";
 import { RegieModal } from "./regie/RegieModal";
 import { queue } from "./regie/queue";
 import { contextRatings, type Scope } from "./regie/contextRatings";
-import { nowPlaying } from "./regie/nowPlaying";
+import { nowPlaying, positionNow } from "./regie/nowPlaying";
+import { choreos } from "./regie/choreo";
 import { QueueBar } from "./regie/QueueBar";
 import { TagChips } from "./milkdrop/TagChips";
 import { buildCatalog } from "./milkdrop/catalog";
@@ -864,6 +865,13 @@ function App() {
     (reason: "auto" | "trap" | "skip" = "auto") => autoPickRef.current(reason),
     [],
   );
+
+  // Choreo recording: every picture change while the song plays is a cue.
+  useEffect(() => {
+    if (!choreos.getRec()) return;
+    const t = nowPlaying.getSnapshot().track;
+    if (t) choreos.record(t, positionNow(t) ?? 0, presetKey);
+  }, [presetKey]);
 
   // Regie: rules apply presets/combos on song changes. A picture the
   // director just put up gets a full cooldown before the auto-switch may
@@ -3226,6 +3234,8 @@ function startVisualizer(
 
     // shared with the library tile and the tag-driven auto-switch
     live.update(rms, section, phrasePhase, gridConf, dt);
+    // song choreos fire their cues, the song analysis records (Regie)
+    director.tick();
     {
       const g = params.get("audio", "gain");
       const n = Math.min(wave.length, liveTimeByte.length);

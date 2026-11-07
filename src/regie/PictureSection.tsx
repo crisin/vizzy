@@ -2,7 +2,8 @@
 // one-click binding of it to the running song / artist / playlist or a pool.
 
 import { useState } from "react";
-import { MATCH_ICON, describeMatch, director, splitArtists, useActiveRule } from "./director";
+import { MATCH_ICON, describeMatch, director, splitArtists, useActiveRule, useChoreoState } from "./director";
+import { choreos, useRecording } from "./choreo";
 import { contextLabel, useNowPlaying, type Track } from "./nowPlaying";
 import { contextRatings, useContextRatings, type Scope } from "./contextRatings";
 import { regie, useRegie, type RuleMatch } from "./regieStore";
@@ -51,6 +52,8 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
   const { track } = useNowPlaying();
   const { enabled, pools } = useRegie();
   const active = useActiveRule();
+  const choreo = useChoreoState();
+  const rec = useRecording();
   useContextRatings(); // re-render when + / - learn something
   const [poolMenu, setPoolMenu] = useState(false);
   const [note, setNote] = useState("");
@@ -97,8 +100,29 @@ export function PictureSection({ presetKey, presetLabel, autoSwitch, canAssign, 
           {presetLabel}
         </span>
       </div>
+      {rec && (
+        <div className="cockpit-rec">
+          ● Aufnahme: {rec.title}
+          <button type="button" className="mode-btn" onClick={() => choreos.stopRecording()}>
+            ■ Stopp
+          </button>
+        </div>
+      )}
       <div className="cockpit-dim cockpit-rule">
-        {!enabled ? (
+        {choreo ? (
+          <>
+            <span className="cockpit-rule-on">
+              Choreo · Cue {Math.min(choreo.fired, choreo.total)}/{choreo.total}
+            </span>
+            {choreo.nextAt !== null && (
+              <>
+                {" "}
+                · nächster bei {Math.floor(choreo.nextAt / 60000)}:
+                {String(Math.floor((choreo.nextAt % 60000) / 1000)).padStart(2, "0")}
+              </>
+            )}
+          </>
+        ) : !enabled ? (
           <>Regeln aus · {autoSwitch ? "Auto-Switch" : "manuell"}</>
         ) : active ? (
           <>

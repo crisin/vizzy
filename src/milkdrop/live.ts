@@ -39,6 +39,8 @@ class LiveState {
   /** last section boundary and which way the energy went there */
   lastSectionAt = -1e9;
   lastMove: SectionMove = "flat";
+  /** section boundaries since the track started (choreo section anchors) */
+  sectionCount = 0;
   private prevSection = 0;
   phrasePhase = 0;
   gridConf = 0;
@@ -90,6 +92,7 @@ class LiveState {
 
     if (section >= 0.7 && this.prevSection < 0.7) {
       this.lastSectionAt = now;
+      this.sectionCount++;
       const r = this.short / Math.max(1e-4, this.long);
       this.lastMove = r > 1.15 ? "up" : r < 0.85 ? "down" : "flat";
     }
@@ -99,6 +102,7 @@ class LiveState {
   /** A song change reported by the media session. */
   markTrackStart() {
     this.trackStartAt = performance.now();
+    this.sectionCount = 0;
   }
 
   /** Seconds since the current track started. */

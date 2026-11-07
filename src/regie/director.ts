@@ -1,20 +1,24 @@
 // The director decides what plays, between the music (now playing) and the
 // auto-switch. Order of authority (PLAN-playlists.md):
-//   (queue — phase 4) > song choreo (phase 6) > first matching rule > auto-switch
+//   live queue > song choreo > first matching rule > learned start > auto-switch
 //
-// Two touch points with App:
+// Touch points with App:
 //  - on a song change (or when Spotify adds the playlist a moment later, or
-//    a rule is edited) it applies the matching rule's target via `host`;
+//    a rule is edited) it applies what is in charge via `host`;
+//  - `tick()` every frame: fires choreo cues on time / beat / bar / section,
+//    and feeds the song analysis recorder;
 //  - the auto-switch asks `override()` before it picks: hold the current
 //    picture, pick from a pool, or carry on as usual.
-// Without a matching rule nothing changes compared to before.
+// Without queue, choreo or rule nothing changes compared to before.
 
 import { useSyncExternalStore } from "react";
 import { pickAuto, setContextWeight, type TagMode } from "../milkdrop/autoswitch";
 import { live } from "../milkdrop/live";
 import { comboStore, type Combo } from "../milkdrop/combos";
 import { params } from "../params";
-import { nowPlaying, type Track } from "./nowPlaying";
+import { nowPlaying, positionNow, type Track } from "./nowPlaying";
+import { analysisRecorder } from "./analysis";
+import { choreos, type Choreo, type Cue } from "./choreo";
 import { artistsOf } from "./artists";
 import { LEARNED_START, contextRatings } from "./contextRatings";
 export { artistsOf, splitArtists } from "./artists";
@@ -31,6 +35,9 @@ export type DirectorHost = {
 };
 
 export type Active = { rule: Rule; index: number } | null;
+
+/** What the cockpit shows about a running choreo. */
+export type ChoreoState = { key: string; title: string; fired: number; total: number; nextAt: number | null } | null;
 
 const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "").trim();
 
@@ -67,9 +74,21 @@ class Director {
   private lastEntry = "";
   private listeners = new Set<() => void>();
 
+  // ---- choreo playback
+  private choreo: Choreo | null = null;
+  /** index of the next cue to fire */
+  private cursor = 0;
+  /** a time cue whose time has come, waiting for its beat / bar */
+  private armed: { idx: number; beat: number; bar: number; since: number } | null = null;
+  private lastPos: number | null = null;
+  private choreoState: ChoreoState = null;
+  private choreoListeners = new Set<() => void>();
+
   constructor() {
     nowPlaying.subscribe(() => this.evaluate());
     regie.subscribe(() => this.evaluate());
+    choreos.subscribe(() => this.refreshChoreo());
+    choreos.subscribeRec(() => this.refreshChoreo());
   }
 
   attach(host: DirectorHost): () => void {
@@ -104,6 +123,10 @@ class Director {
     if (songChanged) {
       this.lastEntry = "";
       this.songStartedAt = performance.now();
+      // recording belongs to the song it started on
+      const rec = choreos.getRec();
+      if (rec && rec.key !== track!.baseKey) choreos.stopRecording();
+      this.loadChoreo(track!);
     }
     this.setActive(next);
     const sig = next ? `${next.rule.id}|${JSON.stringify(next.rule.target)}` : "";
@@ -112,6 +135,7 @@ class Director {
     const due = songChanged || (next !== null && sig !== this.appliedSig);
     this.appliedSig = sig;
     if (!due) {
+      if (this.choreo) return;
       // no rule: Spotify's id / playlist may arrive a moment after the song
       // started and reveal a learned favourite — still early enough to use
       if (!next && track && !this.queueRan) this.learnedStart(track);
@@ -122,6 +146,8 @@ class Director {
       this.playQueued();
       return;
     }
+    // a choreo outranks rules; its first cue fires from tick()
+    if (this.choreo) return;
     // mid-song rule change while a queue entry shows: let it finish its slot
     if (!songChanged && this.queueRan) return;
     if (next) this.apply(next.rule);
@@ -234,13 +260,19 @@ class Director {
     if (queue.length > 0 && this.playQueued()) return true;
     const a = this.active;
     if (this.queueRan) {
-      // queue ran dry: back to what the rule wants
+      // queue ran dry: back to what the choreo / rule wants
       this.queueRan = false;
+      if (this.choreo) {
+        this.resync(this.lastPos ?? 0, true);
+        return true;
+      }
       if (a) {
         this.apply(a.rule);
         return true;
       }
     }
+    // a choreo decides on its own cues; only a broken or rejected picture escapes
+    if (this.choreo) return reason === "auto";
     if (!a) return false;
     const t = a.rule.target;
     if (t.kind === "pool") {
@@ -254,6 +286,142 @@ class Director {
       return true;
     }
     return false;
+  }
+
+  // ---------------------------------------------------------------- choreo
+
+  subscribeChoreo = (fn: () => void) => {
+    this.choreoListeners.add(fn);
+    return () => {
+      this.choreoListeners.delete(fn);
+    };
+  };
+  getChoreoState = () => this.choreoState;
+
+  private publishChoreo() {
+    const c = this.choreo;
+    const next: ChoreoState = c
+      ? {
+          key: c.key,
+          title: c.title,
+          fired: this.cursor,
+          total: c.cues.length,
+          nextAt: c.cues[this.cursor]?.t ?? null,
+        }
+      : null;
+    const p = this.choreoState;
+    if (p?.key === next?.key && p?.fired === next?.fired && p?.total === next?.total && p?.nextAt === next?.nextAt)
+      return;
+    this.choreoState = next;
+    for (const fn of this.choreoListeners) fn();
+  }
+
+  /** The choreo for this song, if it should play (enabled, has cues, not being recorded). */
+  private choreoFor(track: Track | null): Choreo | null {
+    if (!track) return null;
+    const c = choreos.find(track);
+    if (!c || !c.enabled || c.cues.length === 0) return null;
+    if (choreos.getRec()?.key === c.key) return null;
+    return c;
+  }
+
+  private loadChoreo(track: Track) {
+    this.choreo = this.choreoFor(track);
+    this.cursor = 0;
+    this.armed = null;
+    this.lastPos = null;
+    this.publishChoreo();
+  }
+
+  /** Store changed (edit in the editor, recording on/off): follow it mid-song. */
+  private refreshChoreo() {
+    const track = nowPlaying.getSnapshot().track;
+    const c = this.choreoFor(track);
+    const was = this.choreo;
+    this.choreo = c;
+    if (c && was !== c) this.resync(positionNow(track) ?? 0, queue.length === 0);
+    this.publishChoreo();
+  }
+
+  /** Position jumped (seek, edit): the cue in charge at `pos` takes over. */
+  private resync(pos: number, applyNow: boolean) {
+    const c = this.choreo;
+    if (!c) return;
+    let i = 0;
+    while (i < c.cues.length && c.cues[i].t <= pos) i++;
+    this.cursor = i;
+    this.armed = null;
+    if (applyNow && i > 0 && this.playEntry(c.cues[i - 1].ref)) {
+      this.queueRan = false;
+      live.lastPick = `choreo (sprung): ${c.cues[i - 1].ref}`;
+    }
+    this.publishChoreo();
+  }
+
+  private due(cue: Cue, pos: number): boolean {
+    if (cue.anchor === "section") {
+      // the n-th section change — or, if detection missed it, well past
+      // where it was heard
+      return live.sectionCount >= (cue.section ?? 0) || pos > cue.t + 12_000;
+    }
+    return pos >= cue.t;
+  }
+
+  private fire(idx: number) {
+    const c = this.choreo!;
+    const cue = c.cues[idx];
+    this.cursor = idx + 1;
+    this.armed = null;
+    if (this.playEntry(cue.ref)) {
+      this.queueRan = false;
+      live.lastPick = `choreo ${idx + 1}/${c.cues.length}: ${cue.ref}`;
+    }
+    this.publishChoreo();
+  }
+
+  /** Every frame, from the render loop. */
+  tick() {
+    const track = nowPlaying.getSnapshot().track;
+    const pos = positionNow(track);
+    analysisRecorder.tick(track, pos);
+
+    const c = this.choreo;
+    if (!c || !track || pos === null || track.status !== "playing") {
+      this.lastPos = pos;
+      return;
+    }
+    if (this.lastPos !== null && (pos < this.lastPos - 1500 || pos > this.lastPos + 4000)) {
+      this.lastPos = pos;
+      this.resync(pos, queue.length === 0);
+      return;
+    }
+    this.lastPos = pos;
+    // waiting queue entries go first; due cues wait for them
+    if (queue.length > 0) return;
+
+    // the furthest cue that is due (later time cues overtake a section cue
+    // whose section hasn't come)
+    let idx = -1;
+    for (let j = this.cursor; j < c.cues.length; j++) {
+      if (this.due(c.cues[j], pos)) idx = j;
+      else if (c.cues[j].anchor === "time") break;
+    }
+    if (idx < 0) return;
+    const cue = c.cues[idx];
+    if (cue.anchor === "section" || cue.snap === "none" || live.gridConf < 0.5) {
+      this.fire(idx);
+      return;
+    }
+    const beat = Math.floor(live.phrasePhase * 32);
+    const bar = Math.floor(live.phrasePhase * 8);
+    const now = performance.now();
+    if (!this.armed || this.armed.idx !== idx) {
+      this.armed = { idx, beat, bar, since: now };
+      return;
+    }
+    const hit = cue.snap === "beat" ? beat !== this.armed.beat : bar !== this.armed.bar;
+    // never later than one bar plus a little
+    if (hit || now - this.armed.since > live.barSeconds() * 1000 + 300) this.fire(idx);
   }
 
   describeTarget(rule: Rule): string {
@@ -270,6 +438,10 @@ setContextWeight((key) => contextRatings.weight(nowPlaying.getSnapshot().track, 
 
 export function useActiveRule(): Active {
   return useSyncExternalStore(director.subscribe, director.getSnapshot);
+}
+
+export function useChoreoState(): ChoreoState {
+  return useSyncExternalStore(director.subscribeChoreo, director.getChoreoState);
 }
 
 export function describeMatch(m: RuleMatch): string {

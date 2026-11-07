@@ -3,7 +3,7 @@
 //   Pools  — curated preset lists a rule can point to
 // Choreos get their own tab in phase 6.
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useDialogFocus } from "../useDialogFocus";
 import { useCombos } from "../milkdrop/combos";
@@ -22,6 +22,8 @@ import {
 } from "./regieStore";
 import { useSpotifyStatus } from "./spotify";
 import { LEARNED_START, contextRatings, useContextRatings, type Scope } from "./contextRatings";
+import { PresetPicker, entryLabel } from "./PresetPicker";
+import { ChoreoTab } from "./ChoreoTab";
 import "./regie.css";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -34,9 +36,9 @@ type Props = {
   onClose: () => void;
 };
 
-type Tab = "rules" | "pools" | "learned";
+type Tab = "rules" | "pools" | "songs" | "learned";
 
-const TAB_LABEL: Record<Tab, string> = { rules: "Regeln", pools: "Pools", learned: "Gelernt" };
+const TAB_LABEL: Record<Tab, string> = { rules: "Regeln", pools: "Pools", songs: "Songs", learned: "Gelernt" };
 
 export function RegieModal(props: Props) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
@@ -54,7 +56,7 @@ export function RegieModal(props: Props) {
         <div className="modal-head">
           <h2 id="regie-title">REGIE</h2>
           <div className="seg" role="tablist">
-            {(["rules", "pools", "learned"] as const).map((t) => (
+            {(["rules", "pools", "songs", "learned"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -75,6 +77,8 @@ export function RegieModal(props: Props) {
           <RulesTab {...props} />
         ) : tab === "pools" ? (
           <PoolsTab {...props} />
+        ) : tab === "songs" ? (
+          <ChoreoTab {...props} />
         ) : (
           <LearnedTab {...props} />
         )}
@@ -84,65 +88,6 @@ export function RegieModal(props: Props) {
 }
 
 // ------------------------------------------------------------- pickers
-
-/** Text field with suggestions over all presets (and combos). */
-function PresetPicker({
-  presetKeys,
-  label,
-  withCombos,
-  placeholder,
-  current,
-  onPick,
-}: {
-  presetKeys: string[];
-  label: (k: string) => string;
-  withCombos?: boolean;
-  placeholder: string;
-  /** shown as the field's resting text, so the field doubles as the display */
-  current?: string;
-  onPick: (key: string) => void;
-}) {
-  const combos = useCombos();
-  const [text, setText] = useState("");
-  const [listId] = useState(() => `pp-${Math.random().toString(36).slice(2)}`);
-  const options = useMemo(() => {
-    const m = new Map<string, string>();
-    if (withCombos) for (const c of combos) m.set(`Kombi: ${c.name}`, COMBO_PREFIX + c.name);
-    for (const k of presetKeys) {
-      const l = label(k);
-      m.set(m.has(l) ? `${l} (${k})` : l, k);
-    }
-    return m;
-  }, [presetKeys, label, combos, withCombos]);
-  return (
-    <>
-      <input
-        className={`regie-input ${current ? "has-current" : ""}`}
-        list={listId}
-        value={text}
-        placeholder={current ?? placeholder}
-        title={current ? `${current} — tippen zum Ändern` : undefined}
-        onChange={(e) => {
-          const v = e.target.value;
-          const key = options.get(v);
-          if (key) {
-            onPick(key);
-            setText("");
-          } else setText(v);
-        }}
-      />
-      <datalist id={listId}>
-        {[...options.keys()].map((l) => (
-          <option key={l} value={l} />
-        ))}
-      </datalist>
-    </>
-  );
-}
-
-function entryLabel(e: string, label: (k: string) => string): string {
-  return e.startsWith(COMBO_PREFIX) ? `Kombi: ${e.slice(COMBO_PREFIX.length)}` : label(e);
-}
 
 // ------------------------------------------------------------- rules
 
