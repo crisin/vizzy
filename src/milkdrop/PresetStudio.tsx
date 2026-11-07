@@ -303,8 +303,28 @@ export function PresetStudio({
   };
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  /* ------------------------------------------------------------- close */
+  // Unsaved work never disappears silently: closing asks first. A click on
+  // the backdrop does nothing at all — too easy to hit by accident.
+  const [confirmClose, setConfirmClose] = useState(false);
+  const requestClose = () => (dirty ? setConfirmClose(true) : onClose());
+  const escRef = useRef(() => {});
+  // Esc on the question = back to editing
+  escRef.current = confirmClose ? () => setConfirmClose(false) : requestClose;
+  useEffect(() => {
+    // capture phase: runs before the app's global Esc handling
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      escRef.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop">
       <div
         ref={dialogRef}
         className="modal studio"
@@ -341,10 +361,32 @@ export function PresetStudio({
               </button>
             ))}
           </div>
-          <button type="button" className="mode-btn" onClick={onClose}>
+          <button type="button" className="mode-btn" onClick={requestClose}>
             Schließen
           </button>
         </div>
+        {confirmClose && (
+          <div className="studio-confirm" role="alertdialog" aria-label="Ungespeicherte Änderungen">
+            <span>Ungespeicherte Änderungen an „{draft.name.trim() || "Preset"}“.</span>
+            <button
+              type="button"
+              className="mode-btn active"
+              autoFocus
+              onClick={async () => {
+                await save(false);
+                onClose();
+              }}
+            >
+              Speichern & schließen
+            </button>
+            <button type="button" className="mode-btn danger" onClick={onClose}>
+              Verwerfen
+            </button>
+            <button type="button" className="mode-btn" onClick={() => setConfirmClose(false)}>
+              Weiter bearbeiten
+            </button>
+          </div>
+        )}
 
         <div className="studio-body">
           <div className="studio-main">

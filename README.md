@@ -168,8 +168,9 @@ See [PLAN.md](PLAN.md) for the roadmap.
 
 ### Keys
 
-`1`–`5` modes · `←`/`→` preset/scene · `R` random preset · `L` preset
-library · `T` tag bar · `S` favourite · `A` preset auto-switch · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
+`1`–`6` modes · `←`/`→` preset/scene · `R` random preset · `L` preset
+library · `P` preset studio · `T` tag bar · `S` favourite · `+`/`-` rate ·
+`A` preset auto-switch · `Shift+B` layer B · `B` BPM badge · `D` debug HUD (fps, render sizes, IPC
 latency, audio stats, recent errors) · `E` parameter editor ·
 `F` fullscreen · `Esc` close/leave
 

@@ -20,6 +20,7 @@ import {
   addModel,
   clearAllModels,
   deleteModel,
+  restoreModel,
   getModel,
   listModels,
   updateThumb,
@@ -30,6 +31,7 @@ import {
   addImage,
   clearAllImages,
   deleteImage,
+  restoreImage,
   getImage,
   listImages,
   setImageDepth,
@@ -45,6 +47,7 @@ import {
   addMorphSet,
   clearAllMorphSets,
   deleteMorphSet,
+  restoreMorphSet,
   getMorphSet,
   listMorphSets,
   updateMorphThumb,
@@ -651,17 +654,51 @@ function App() {
     [presetKey, userPresets, mdOverrides],
   );
 
+  /* ---- undo for deletions: delete right away, offer to take it back ---- */
+  const [undo, setUndo] = useState<{ msg: string; run: () => void } | null>(null);
+  const undoTimer = useRef(0);
+  const undoRef = useRef<(() => void) | null>(null);
+  const offerUndo = useCallback((msg: string, run: () => void) => {
+    window.clearTimeout(undoTimer.current);
+    undoRef.current = run;
+    setUndo({ msg, run });
+    undoTimer.current = window.setTimeout(() => {
+      undoRef.current = null;
+      setUndo(null);
+    }, 8000);
+  }, []);
+  const runUndo = useCallback(() => {
+    window.clearTimeout(undoTimer.current);
+    const run = undoRef.current;
+    undoRef.current = null;
+    setUndo(null);
+    run?.();
+  }, []);
+
   const removeUserPreset = useCallback(
     (name: string) => {
       const up = userPresets.find((p) => p.name === name);
+      const key = `user:${name}`;
+      const wasFav = favorites.includes(key);
+      const tags = tagStore.get(key);
+      const wasPlaying = presetKey === key;
       void presetStore.remove(name);
-      setFavorites((prev) => prev.filter((k) => k !== `user:${name}`));
-      tagStore.move(`user:${name}`, null);
-      if (presetKey === `user:${name}`) {
+      setFavorites((prev) => prev.filter((k) => k !== key));
+      tagStore.move(key, null);
+      if (wasPlaying) {
         setPresetKey(up && PRESETS[up.base] ? up.base : (PRESET_KEYS[0] ?? ""));
       }
+      if (up) {
+        offerUndo(`„${name}“ gelöscht`, () => {
+          void presetStore.save(up).then(() => {
+            tagStore.set(key, tags);
+            if (wasFav) setFavorites((prev) => (prev.includes(key) ? prev : [...prev, key]));
+            if (wasPlaying) setPresetKey(key);
+          });
+        });
+      }
     },
-    [userPresets, presetKey],
+    [userPresets, presetKey, favorites, offerUndo],
   );
 
   const loadLists = useCallback(() => {
@@ -1022,18 +1059,31 @@ function App() {
 
   const removeModel = useCallback(
     async (id: number) => {
+      // keep the record so the deletion can be taken back
+      const record = await getModel(id).catch(() => undefined);
+      const wasSelected = selectedModelId === id;
       try {
         await deleteModel(id);
       } catch (err) {
         flog(`[cfg] model delete FAILED: ${err}`);
       }
-      if (selectedModelId === id) {
+      if (wasSelected) {
         setSelectedModelId(null);
         modelFileRef.current = { action: "clear", seq: nextModelSeq() };
       }
       refreshModels();
+      if (record) {
+        offerUndo(`Modell „${record.name}“ gelöscht`, () => {
+          void restoreModel(record)
+            .then(() => {
+              refreshModels();
+              if (wasSelected) void pickModel(id);
+            })
+            .catch((err) => flog(`[cfg] model restore FAILED: ${err}`));
+        });
+      }
     },
-    [selectedModelId, nextModelSeq, refreshModels],
+    [selectedModelId, nextModelSeq, refreshModels, pickModel, offerUndo],
   );
 
   /* ---- parallax: image + depth-map pairs for the 2.5D scene ---- */
@@ -1148,18 +1198,31 @@ function App() {
 
   const removeImage = useCallback(
     async (id: number) => {
+      // keep the record so the deletion can be taken back
+      const record = await getImage(id).catch(() => undefined);
+      const wasSelected = selectedImageId === id;
       try {
         await deleteImage(id);
       } catch (err) {
         flog(`[cfg] image delete FAILED: ${err}`);
       }
-      if (selectedImageId === id) {
+      if (wasSelected) {
         setSelectedImageId(null);
         imageFileRef.current = { action: "clear", seq: nextImageSeq() };
       }
       refreshImages();
+      if (record) {
+        offerUndo(`Bild „${record.name}“ gelöscht`, () => {
+          void restoreImage(record)
+            .then(() => {
+              refreshImages();
+              if (wasSelected) void pickImage(id);
+            })
+            .catch((err) => flog(`[cfg] image restore FAILED: ${err}`));
+        });
+      }
     },
-    [selectedImageId, nextImageSeq, refreshImages],
+    [selectedImageId, nextImageSeq, refreshImages, pickImage, offerUndo],
   );
 
   /* ---- morph: sets of variants for the 2D control surface ---- */
@@ -1261,18 +1324,31 @@ function App() {
 
   const removeMorphSet = useCallback(
     async (id: number) => {
+      // keep the record so the deletion can be taken back
+      const record = await getMorphSet(id).catch(() => undefined);
+      const wasSelected = selectedMorphId === id;
       try {
         await deleteMorphSet(id);
       } catch (err) {
         flog(`[cfg] morph delete FAILED: ${err}`);
       }
-      if (selectedMorphId === id) {
+      if (wasSelected) {
         setSelectedMorphId(null);
         morphFileRef.current = { action: "clear", seq: nextMorphSeq() };
       }
       refreshMorphSets();
+      if (record) {
+        offerUndo(`Varianten-Satz „${record.name}“ gelöscht`, () => {
+          void restoreMorphSet(record)
+            .then(() => {
+              refreshMorphSets();
+              if (wasSelected) void pickMorphSet(id);
+            })
+            .catch((err) => flog(`[cfg] morph restore FAILED: ${err}`));
+        });
+      }
     },
-    [selectedMorphId, nextMorphSeq, refreshMorphSets],
+    [selectedMorphId, nextMorphSeq, refreshMorphSets, pickMorphSet, offerUndo],
   );
 
   /**
@@ -1631,7 +1707,8 @@ function App() {
 
       if (e.key === "Escape") {
         if (regieOpen) setRegieOpen(false);
-        else if (studioKey !== null) setStudioKey(null);
+        // the studio handles its own Esc (it may ask about unsaved work)
+        else if (studioKey !== null) return;
         else if (presetLibOpen) setPresetLibOpen(false);
         else if (tagFilterOpen) setTagFilterOpen(false);
         else if (tagBarOpen) setTagBarOpen(false);
@@ -1695,7 +1772,11 @@ function App() {
         } else if (key === "n") {
           if (!director.playNextQueued()) showToast("Queue ist leer");
         }
-        else if (key === "p") setStudioKey(presetKeyRef.current);
+        else if (key === "p") {
+          // otherwise the keystroke lands in the studio's name field
+          e.preventDefault();
+          setStudioKey(presetKeyRef.current);
+        }
         else if (e.key === "+" || e.key === "=") ratePreset(1);
         else if (e.key === "-") ratePreset(-1);
       } else if (modeRef.current === "3d") {
@@ -2419,6 +2500,7 @@ function App() {
                         label={presetLabel}
                         currentKey={presetKey}
                         error={layerBError}
+                        offerUndo={offerUndo}
                         onPickFromLibrary={() => {
                           setLibTarget("b");
                           setPresetLibOpen(true);
@@ -2541,6 +2623,50 @@ function App() {
       {toast && (
         <div className="toast" role="status">
           {toast}
+        </div>
+      )}
+      {mode === "3d" && scene3d === "morph" && selectedMorphId == null && (
+        <div className="scene-empty" role="note">
+          <span>Noch kein Varianten-Satz — das hier ist der Platzhalter.</span>
+          <button type="button" className="mode-btn" onClick={() => morphInputRef.current?.click()}>
+            Varianten laden
+          </button>
+          <button
+            type="button"
+            className="mode-btn"
+            disabled={selectedImageId == null}
+            title={selectedImageId == null ? "Erst in der Parallax-Szene ein Bild laden" : undefined}
+            onClick={() => {
+              setBakeKind("variants");
+              setBakeState({ kind: "idle" });
+              setComfyOpen(true);
+            }}
+          >
+            Aus Parallax-Bild backen ✨
+          </button>
+        </div>
+      )}
+      {mode === "3d" && scene3d === "model" && selectedModelId == null && (
+        <div className="scene-empty" role="note">
+          <span>Noch kein Modell gewählt.</span>
+          <button
+            type="button"
+            className="mode-btn"
+            onClick={() => {
+              refreshModels();
+              setLibraryOpen(true);
+            }}
+          >
+            Modell-Library öffnen
+          </button>
+        </div>
+      )}
+      {undo && (
+        <div className="toast toast-undo" role="status">
+          <span>{undo.msg}</span>
+          <button type="button" className="mode-btn" onClick={runUndo}>
+            Rückgängig
+          </button>
         </div>
       )}
       {cockpitOpen && (

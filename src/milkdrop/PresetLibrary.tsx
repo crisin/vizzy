@@ -103,6 +103,8 @@ export function PresetLibrary({
   /* --------------------------------------------------------- previews */
   const [previews, setPreviews] = useState<Map<string, Preview>>(new Map());
   const [genStatus, setGenStatus] = useState<GeneratorStatus>({ done: 0, total: 0, current: "" });
+  // true until the cached previews are read — the grid is empty meanwhile
+  const [cacheLoading, setCacheLoading] = useState(true);
   const genRef = useRef<PreviewGenerator | null>(null);
   const urlsRef = useRef<string[]>([]);
 
@@ -133,6 +135,7 @@ export function PresetLibrary({
       .catch(() => [] as PreviewRecord[])
       .then((recs) => {
         if (cancelled) return;
+        setCacheLoading(false);
         const byKey = new Map(recs.map((r) => [r.key, r]));
         const jobs = [];
         // grid order (by title), so the visible cards fill in top to bottom
@@ -546,7 +549,11 @@ export function PresetLibrary({
             ) : null}
 
             <div className="mdlib-foot">
-              {genStatus.total > 0 && genStatus.done < genStatus.total ? (
+              {!runtimeReady ? (
+                <span>Milkdrop wird geladen…</span>
+              ) : cacheLoading ? (
+                <span>Vorschauen werden geladen…</span>
+              ) : genStatus.total > 0 && genStatus.done < genStatus.total ? (
                 <span>Vorschauen: {genStatus.done}/{genStatus.total}</span>
               ) : (
                 <span>{previews.size} Vorschauen</span>

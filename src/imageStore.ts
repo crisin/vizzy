@@ -97,6 +97,11 @@ export function deleteImage(id: number): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.delete(id));
 }
 
+/** Puts a deleted record back under its old id (undo). */
+export function restoreImage(record: ImageRecord): Promise<IDBValidKey> {
+  return withStore<IDBValidKey>("readwrite", (s) => s.put(record));
+}
+
 export function clearAllImages(): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.clear());
 }

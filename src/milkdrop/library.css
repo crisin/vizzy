@@ -161,8 +161,31 @@
   overflow: hidden;
 }
 
+/* also wins over .anim, which would otherwise run the clip steps */
+.mdthumb.pending,
+.mdthumb.pending.anim,
+.mdthumb.pending[data-hover] {
+  background-image: linear-gradient(
+    100deg,
+    rgba(148, 163, 184, 0) 30%,
+    rgba(148, 163, 184, 0.09) 50%,
+    rgba(148, 163, 184, 0) 70%
+  );
+  background-size: 250% 100%;
+  animation: mdthumb-wait 1.6s linear infinite;
+}
+
+@keyframes mdthumb-wait {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
 .mdthumb.pending span {
-  color: #475569;
+  color: #94a3b8;
   font-size: 11px;
 }
 
@@ -525,6 +548,18 @@
   font-size: var(--ui-font);
   pointer-events: none;
   animation: toast-in 0.15s ease-out;
+}
+
+/* deletion with undo: clickable, bottom centre, above drawers and modals */
+.toast.toast-undo {
+  top: auto;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 18px;
+  pointer-events: auto;
 }
 
 @keyframes toast-in {

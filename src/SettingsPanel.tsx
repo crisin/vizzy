@@ -405,9 +405,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
 
         {tab === "bild" && (
           <>
-            {props.paramGroups.map((g) => (
-              <ParamGroup key={g} group={g} onChanged={bump} />
-            ))}
+            {props.paramGroups
+              // the Milkdrop tab already shows this group
+              .filter((g) => g !== "milkdrop")
+              .map((g) => (
+                <ParamGroup key={g} group={g} onChanged={bump} />
+              ))}
             {props.showLayerControls && (
               <>
                 <Field label="Hintergrund-Layer">

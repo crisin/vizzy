@@ -67,6 +67,11 @@ export function deleteModel(id: number): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.delete(id));
 }
 
+/** Puts a deleted record back under its old id (undo). */
+export function restoreModel(record: ModelRecord): Promise<IDBValidKey> {
+  return withStore<IDBValidKey>("readwrite", (s) => s.put(record));
+}
+
 export function clearAllModels(): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.clear());
 }

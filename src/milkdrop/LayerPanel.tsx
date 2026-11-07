@@ -20,6 +20,7 @@ export function LayerPanel({
   onSwap,
   onRestore,
   error,
+  offerUndo,
 }: {
   cfg: LayerBConfig;
   onChange: (cfg: LayerBConfig) => void;
@@ -31,6 +32,8 @@ export function LayerPanel({
   /** play a saved combo: preset A plus its layer B */
   onRestore: (a: string, b: LayerBConfig) => void;
   error: string;
+  /** shows "deleted · undo" after a combo is removed */
+  offerUndo?: (msg: string, undo: () => void) => void;
 }) {
   const combos = useCombos();
   const [comboName, setComboName] = useState("");
@@ -159,7 +162,10 @@ export function LayerPanel({
                   <button type="button" className="set-list-name" onClick={() => onRestore(c.a, c.b)} title={`${c.a}\n+ ${c.b.key} (${c.b.blend})`}>
                     {c.name}
                   </button>
-                  <button type="button" className="icon-btn set-list-del danger" onClick={() => comboStore.remove(c.name)} aria-label={`${c.name} löschen`}>
+                  <button type="button" className="icon-btn set-list-del danger" onClick={() => {
+                    comboStore.remove(c.name);
+                    offerUndo?.(`Kombi „${c.name}“ gelöscht`, () => comboStore.save(c));
+                  }} aria-label={`${c.name} löschen`}>
                     🗑
                   </button>
                 </li>

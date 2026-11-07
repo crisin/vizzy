@@ -750,6 +750,41 @@ body {
   white-space: nowrap;
 }
 
+/* empty scene: what to do next, bottom centre over the placeholder */
+.scene-empty {
+  position: fixed;
+  left: 50%;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 9;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  background: rgba(10, 12, 20, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  color: #e2e8f0;
+  font-size: var(--ui-font);
+}
+
+/* settings drawer open on the right: keep clear of it */
+.stage:has(.settings-panel) .scene-empty {
+  left: 16px;
+  transform: none;
+  max-width: calc(100vw - 500px);
+  justify-content: flex-start;
+}
+
+.stage.idle .scene-empty {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

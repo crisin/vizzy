@@ -82,6 +82,11 @@ export function deleteMorphSet(id: number): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.delete(id));
 }
 
+/** Puts a deleted record back under its old id (undo). */
+export function restoreMorphSet(record: MorphRecord): Promise<IDBValidKey> {
+  return withStore<IDBValidKey>("readwrite", (s) => s.put(record));
+}
+
 export function clearAllMorphSets(): Promise<undefined> {
   return withStore<undefined>("readwrite", (s) => s.clear());
 }
