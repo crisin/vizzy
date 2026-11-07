@@ -79,6 +79,7 @@ import { notePlayed, pickAuto, type TagMode } from "./milkdrop/autoswitch";
 import { DEFAULT_LAYER_B, LayerB, shapeWave, type LayerBConfig } from "./milkdrop/layerB";
 import { LayerPanel } from "./milkdrop/LayerPanel";
 import { PresetStudio } from "./milkdrop/PresetStudio";
+import { breedChild, isBreedKey, resolveBreed, spawn } from "./milkdrop/breed";
 import { presetStore, useUserPresets } from "./milkdrop/presetStore";
 import { compose, makePreset, type VizzyPreset } from "./milkdrop/vpreset";
 import {
@@ -255,6 +256,9 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 /** Human-readable name for a preset key of any flavour. */
 function presetLabel(key: string): string {
+  if (key.startsWith("breed:")) {
+    return `🧬 ${breedChild(key)?.preset.name ?? key}`;
+  }
   if (key.startsWith(CURATED_PREFIX)) {
     return `✦ ${key.slice(CURATED_PREFIX.length)}`;
   }
@@ -546,6 +550,7 @@ function App() {
           const up = userPresets.find((p) => p.name === k.slice(5));
           return up ? compose(up, resolveAt, depth) : null;
         }
+        if (isBreedKey(k)) return resolveBreed(k, resolveAt, depth);
         return PRESETS[k] ?? null;
       };
       return resolveAt(key, 0);
@@ -805,7 +810,20 @@ function App() {
     autoPickRef.current = () => {
       const tagMode = (params.get("milkdrop", "tagMode") | 0) as TagMode;
       const nextA = pickAuto(browseKeys, presetKeyRef.current, tagMode);
-      setPresetKey(nextA);
+      const breedP = params.get("milkdrop", "breed");
+      if (breedP > 0 && Math.random() < breedP) {
+        // a mutated child of the chosen preset instead — probing takes a
+        // moment, the parent stands in if nothing usable comes out
+        void spawn(nextA, presetLabel(nextA).replace(/^✦ /, ""), (k) => resolvePresetRef.current(k), {
+          strength: params.get("milkdrop", "breedStrength"),
+          code: params.get("milkdrop", "breedCode") >= 0.5,
+        }).then((child) => {
+          setPresetKey(child ?? nextA);
+          if (child) live.lastPick += ` → Zucht ${child.slice(6)}`;
+        });
+      } else {
+        setPresetKey(nextA);
+      }
       const b = layerBRef.current;
       if (b.enabled && b.auto) {
         // one bar later, so the whole picture never changes at once
@@ -1440,6 +1458,34 @@ function App() {
     );
   }, [autoPick, quarantinePreset]);
 
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef(0);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 2200);
+  }, []);
+
+  /** + / - while listening. On a bred child, + keeps it as an own preset
+   *  and both count for the parent; - also moves on right away. */
+  const ratePreset = useCallback(
+    (dir: 1 | -1) => {
+      const key = presetKeyRef.current;
+      const child = isBreedKey(key) ? breedChild(key) : undefined;
+      const target = child?.parent ?? key;
+      const r = tagStore.rate(target, dir);
+      if (child && dir > 0) {
+        const vp = { ...child.preset, tags: tagStore.get(child.parent) };
+        void presetStore.save(vp).then(() => tagStore.set(`user:${vp.name}`, vp.tags ?? []));
+        showToast(`♥ behalten als „${vp.name}“`);
+      } else {
+        showToast(`${dir > 0 ? "♥" : "✕"} ${presetLabel(target)} · Bewertung ${r > 0 ? "+" : ""}${r}`);
+      }
+      if (dir < 0) autoPickRef.current();
+    },
+    [showToast],
+  );
+
   const toggleFullscreen = useCallback(async () => {
     if (inTauri) {
       const win = getCurrentWindow();
@@ -1535,6 +1581,8 @@ function App() {
         }
         else if (key === "t") setTagBarOpen((v) => !v);
         else if (key === "p") setStudioKey(presetKeyRef.current);
+        else if (e.key === "+" || e.key === "=") ratePreset(1);
+        else if (e.key === "-") ratePreset(-1);
       } else if (modeRef.current === "3d") {
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           setScene3d((s) => {
@@ -1566,6 +1614,7 @@ function App() {
     tagBarOpen,
     drawerTab,
     studioKey,
+    ratePreset,
   ]);
 
   const loopbacks = sources.filter((s) => s.kind === "loopback");
@@ -2353,6 +2402,11 @@ function App() {
             }
           />
           <div className="tagfilter-count">{browseKeys.length} Presets in der Rotation</div>
+        </div>
+      )}
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
         </div>
       )}
       {tagBarOpen && mode === "milkdrop" && (

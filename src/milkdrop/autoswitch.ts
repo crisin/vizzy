@@ -70,6 +70,8 @@ export function pickAuto(
     if (section && tagStore.has(k, section)) w *= mode === 2 ? 4 : 3;
     const r = recent.indexOf(k);
     if (r >= 0) w *= 0.1 + (0.9 * r) / RECENT_MAX;
+    // + / - while listening: each step is a factor of 1.5
+    w *= Math.pow(1.5, tagStore.rating(k));
     return w;
   });
   let total = weights.reduce((a, b) => a + b, 0);

@@ -508,3 +508,28 @@
   font-size: 11px;
   margin-top: 8px;
 }
+
+/* ------------------------------------------------------------------ toast */
+
+.toast {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  top: calc(var(--ui-btn-h) * 2 + 44px);
+  transform: translateX(-50%);
+  background: rgba(10, 12, 20, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  padding: 8px 18px;
+  color: #e2e8f0;
+  font-size: var(--ui-font);
+  pointer-events: none;
+  animation: toast-in 0.15s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+}

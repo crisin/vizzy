@@ -298,6 +298,12 @@ export const PARAM_SCHEMAS: Record<string, ParamDef[]> = {
         { value: 2, label: "Streng — nur Passendes" },
       ],
     },
+    { key: "breed", label: "Zucht-Anteil", min: 0, max: 0.6, step: 0.05, default: 0,
+      hint: "So oft spielt der Auto-Wechsel statt eines Presets ein frisch mutiertes Kind davon. + behält es, - verwirft" },
+    { key: "breedStrength", label: "Zucht-Stärke", min: 0.1, max: 1.5, step: 0.05, default: 0.5,
+      hint: "Wie weit sich ein Kind von seinem Elternteil entfernt" },
+    { key: "breedCode", label: "Zucht ändert auch Gleichungen", min: 0, max: 1, step: 1, default: 0, kind: "toggle",
+      hint: "Wilder, öfter verworfen" },
   ],
 };
 

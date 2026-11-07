@@ -10,6 +10,7 @@ const SHORTCUTS = [
   ["T", "Tag-Leiste: laufendes Preset taggen (dort 1–9)"],
   ["P", "Preset-Studio: mischen, Code, Remix"],
   ["Shift+B", "Layer B an/aus"],
+  ["+ / −", "Preset bewerten; − wechselt sofort weiter, + behält ein Zucht-Kind"],
   ["A", "Automatischen Preset-Wechsel umschalten"],
   ["B", "Tempoanzeige ein- oder ausblenden"],
   ["D", "Diagnoseanzeige ein- oder ausblenden"],

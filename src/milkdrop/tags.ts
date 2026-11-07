@@ -42,6 +42,8 @@ type FileShape = {
   tags: TagDef[];
   /** per preset key; presence means "the user owns this preset's tags" */
   presets: Record<string, string[]>;
+  /** per preset key, -3..3, from + / - while listening */
+  ratings?: Record<string, number>;
 };
 
 const LS_KEY = "vizzy.tags.v1";
@@ -99,7 +101,11 @@ class TagStore {
         if (Array.isArray(v)) presets[k] = v.filter((t) => typeof t === "string");
       }
     }
-    return { version: 1, tags, presets };
+    const ratings: Record<string, number> = {};
+    if (d.ratings && typeof d.ratings === "object") {
+      for (const [k, v] of Object.entries(d.ratings)) if (typeof v === "number") ratings[k] = v;
+    }
+    return { version: 1, tags, presets, ratings };
   }
 
   subscribe = (fn: () => void) => {
@@ -240,6 +246,20 @@ class TagStore {
       }
     }
     this.emit();
+  }
+
+  rating(key: string): number {
+    return this.data.ratings?.[key] ?? 0;
+  }
+
+  /** Nudges a preset's rating, clamped to -3..3. Returns the new value. */
+  rate(key: string, delta: number): number {
+    this.data.ratings ??= {};
+    const v = Math.max(-3, Math.min(3, (this.data.ratings[key] ?? 0) + delta));
+    if (v === 0) delete this.data.ratings[key];
+    else this.data.ratings[key] = v;
+    this.emit();
+    return v;
   }
 
   /** Matches a tag filter. `★` stands for favourites. */
