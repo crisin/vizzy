@@ -13,6 +13,7 @@ sich vor allem in der **Latenz**, und daraus folgt, welcher Effekt wohin gehört
 | **A · Stimm-Signal** (DSP in Rust, neu) | ~20–50 ms | *dass* und *wie hoch* gesungen wird | alles, auch Twitch |
 | **B · Whisper live** (steht) | 1–3 s danach | *was* gesungen wurde | alles, auch unbekannte Songs |
 | **C · Synchron-Lyrics** aus Lyrics Helper | 0 s, sogar **vorher** | was *gleich* kommt, Abschnitte (Strophe/Refrain) | Songs, die Lyrics Helper kennt |
+| **D · Stimm-Fingerabdruck** (Speaker-Embedding, neu, Baustein 5) | 1–2 s danach | *wer* singt oder spricht | Sprache gut, Gesang im Mix ungeklärt |
 
 Faustregel: **Pro Frame** (Puls, Farbe, Form) nur A. **Pro Zeile** (Text,
 Bildwechsel, Stimmung) B oder C. Effekte, die *auf* dem Wort sitzen sollen
@@ -104,6 +105,58 @@ Pro Zeile oder Strophe, nicht pro Frame:
   (Parallax/Morph). Beim ersten Refrain backen, bei jedem weiteren zeigen.
   Mit Synchron-Lyrics vorab für den ganzen Song.
 
+### 5 · Stimm-Fingerabdruck: wer singt oder spricht (D)
+
+Idee vom 2026-11-14, noch nichts gemessen. Effekte sollen davon abhängen,
+**wer** gerade dran ist (Feature-Part, Duett, zweiter Sprecher im Stream).
+
+**Whisper liefert das nicht.** whisper.cpp kennt Text und Zeiten, keine
+Sprecher. `tinydiarize` erkennt nur Sprecherwechsel, nur auf Englisch und
+nicht mit `large-v3-turbo`. Es braucht ein zweites, kleines Modell daneben.
+
+**Der Fingerabdruck ist ein Speaker-Embedding.** Ein Modell wie ECAPA-TDNN,
+CAM++ oder TitaNet (je 5–25 MB als ONNX) macht aus 1–3 s Audio einen Vektor
+mit rund 192 Zahlen. Gleiche Stimme ergibt ähnliche Vektoren, verglichen wird
+per Cosinus-Ähnlichkeit. Das Modell braucht mindestens etwa 1 s Stimme, also
+ist D eine Quelle **pro Zeile** wie B, nie pro Frame.
+
+Erwartung je Quelle (Einschätzung, keine Messung):
+
+| Quelle | Erwartung |
+|---|---|
+| Sprache (Twitch, Podcast, Mikro, mehrere Leute im Raum) | gut, dafür sind die Modelle trainiert; zwei bis fünf Sprecher trennbar |
+| Rap, Sprechgesang, Feature-Parts | vermutlich brauchbar, nah an Sprache |
+| Gesang im vollen Mix | unsicher: das Instrumental färbt den Vektor, er beschreibt dann eher den Song als die Stimme. Mann/Frau oder Duett-Wechsel im selben Song könnten trotzdem gehen |
+| Zwei Stimmen gleichzeitig | geht nicht, es gibt einen Vektor pro Fenster |
+
+Warnzeichen: Silero VAD (auch auf Sprache trainiert) hat ganze gesungene
+Zeilen verworfen (`docs/learnings.md`).
+
+Einbau:
+
+- **Rust, neben `lyrics.rs`:** Derselbe 16-kHz-Puffer geht pro Schritt
+  zusätzlich durch das Embedding-Modell, über die `ort`-Crate oder als zweiter
+  Endpunkt im Whisper-Container (`tools/whisper-server`). Die Analyse bleibt
+  in Rust.
+- **Zuordnung im Lauf:** Online-Clustering gibt jedem Vektor den nächsten
+  bekannten Sprecher oder legt einen neuen an. Ereignis pro Zeile:
+  `speaker: {id, confidence}`.
+- **Zwei Modi:** anonym pro Song („Stimme 1/2/3“, ohne Einrichtung) und
+  benannte Profile (einmal 10 s aufnehmen, Vektor als JSON über `store.rs`
+  im App-Datenordner).
+- **Effekte:** Sprecher als Routing-Quelle und als Regie-/Choreo-Auslöser
+  („Stimme wechselt“, „Stimme 2 aktiv“): Farbpalette pro Stimme, Layer B
+  oder Presetwechsel beim Feature-Part, Untertitel in Sprecherfarbe.
+- **Zusammenspiel mit A:** Der Sprecher wählt die Palette, `voice` und
+  `pitch` bewegen sie pro Frame.
+
+**Zuerst ein Offline-Spike** (etwa ein halber Tag), bevor etwas in die App
+wandert: Über die `.f32`-Mitschnitte aus dem Lyrics-Log ein ECAPA-ONNX laufen
+lassen und prüfen, ob die Vektoren bei einem Duett, einem Rap-Feature und
+einem Twitch-Mitschnitt sauber in Gruppen zerfallen. Dafür braucht es zwei
+oder drei Mitschnitte, bei denen bekannt ist, wer wann dran ist. Trägt es nur
+für Sprache, bleibt es ein Feature für Twitch und Mikro.
+
 ## Reihenfolge (Vorschlag)
 
 | Phase | Was | Aufwand | Sichtbar |
@@ -113,6 +166,7 @@ Pro Zeile oder Strophe, nicht pro Frame:
 | **S3** | Lyrics Helper liefert Zeilen; Whisper-Abgleich als Uhr; Overlay pünktlich mit Vorschau | mittel, zwei Repos | groß |
 | **S4** | 3D-Szene „Text“ (Kinetic Typography) | mittel | Showcase |
 | **S5** | LLM-Stimmung → Tags; ComfyUI-Bild pro Refrain | mittel | Wow, langsam |
+| **S6** | Stimm-Fingerabdruck: erst Offline-Spike, dann Embedding-Worker, Ereignis `speaker`, Routing-Quelle und Regie-Auslöser. Setzt S2 voraus (Text-Ereignisse, Auslöser), nicht S3–S5 | Spike klein, Einbau mittel | bei Sprache groß, bei Gesang offen |
 
 Nicht vorgesehen: **Echtzeit-Stimmtrennung** (Demucs/MDX). Die Modelle
 arbeiten auf Blöcken von Sekunden; das bringt Latenz, die A vermeiden soll,
@@ -128,3 +182,6 @@ Schritt, nicht die Trennung.
 - Wann geht `feat/vizzy-integration` in Lyrics Helper nach `main`?
 - Sollen Lyrics und Stimm-Effekte eigene Regie-Regeln bekommen oder nur
   Choreo-Auslöser?
+- Stimm-Fingerabdruck: Trennt ein Speaker-Embedding Sänger im vollen Mix,
+  oder nur Sprache? Klärt der Offline-Spike (Baustein 5).
+- Stimm-Fingerabdruck: Modell in Rust (`ort`) oder im Whisper-Container?
