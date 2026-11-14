@@ -13,6 +13,9 @@ import type { BCVisualizer } from "butterchurn";
 import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
 import { matchKey, withKey } from "./keys";
 import { InfoOverlay } from "./ui/InfoOverlay";
+import { LyricsOverlay } from "./lyrics/LyricsOverlay";
+import { LyricsSettings } from "./lyrics/LyricsSettings";
+import { lyrics } from "./lyrics/store";
 import { rememberFullscreen, restoreFullscreen } from "./ui/fullscreenMemory";
 import { SCENE_DESCS, SCENE_LABELS, SCENE_NAMES, type SceneName } from "./sceneCatalog";
 import { ModeSwitch } from "./ui/ModeSwitch";
@@ -1834,6 +1837,12 @@ function App() {
         case "info":
           setInfoNonce((n) => n + 1);
           break;
+        case "lyrics": {
+          const on = !lyrics.getSnapshot().cfg.enabled;
+          lyrics.configure({ enabled: on });
+          showToast(on ? "Lyrics an" : "Lyrics aus");
+          break;
+        }
         case "settings":
           toggleDrawer();
           break;
@@ -2563,6 +2572,13 @@ function App() {
           onTab={setDrawerTab}
           extraTabs={[
             {
+              id: "lyrics",
+              label: "Lyrics",
+              after: "ui" as const,
+              title: "Live-Lyrics: Whisper-Server, Anzeige, Erkennung",
+              content: <LyricsSettings />,
+            },
+            {
               id: "layer",
               label: "Layer B",
               after: "auto" as const,
@@ -2650,6 +2666,13 @@ function App() {
           </button>
         </div>
       )}
+      <LyricsOverlay
+        onOpenSettings={() => {
+          if (presentation) setPresentation(false);
+          setDrawerTab("lyrics");
+          setSettingsOpen(true);
+        }}
+      />
       <InfoOverlay
         nonce={infoNonce}
         onSongChange={params.get("ui", "infoOnSong") >= 0.5}

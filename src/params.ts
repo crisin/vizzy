@@ -360,6 +360,71 @@ PARAM_SCHEMAS.dev = [
 ];
 GROUP_LABELS.dev = "Entwicklung";
 
+/** How live lyrics look on the stage (`src/lyrics/`). What Whisper hears and
+ *  when a line counts as final is the engine's business (lyrics.json). */
+PARAM_SCHEMAS.lyrics = [
+  { key: "position", label: "Position", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Unten mittig" },
+      { value: 1, label: "Oben mittig" },
+      { value: 2, label: "Bildmitte" },
+      { value: 3, label: "Unten links" },
+    ] },
+  { key: "size", label: "Schriftgröße", min: 1.5, max: 12, step: 0.1, default: 4.2, unit: "vh",
+    hint: "Relativ zur Bildhöhe — wirkt auf dem TV wie am Laptop" },
+  { key: "lines", label: "Zeilen", min: 1, max: 6, step: 1, default: 2,
+    hint: "Wie viele fertige Zeilen stehen bleiben (die neueste unten)" },
+  { key: "olderFade", label: "Ältere Zeilen abdunkeln", min: 0, max: 1, step: 0.05, default: 0.45 },
+  toggle("tentative", "Vorläufigen Text zeigen", 1,
+    "Was Whisper gerade hört, bevor zwei Durchläufe übereinstimmen — schneller, aber wackelig"),
+  { key: "tentativeAlpha", label: "Deckkraft vorläufig", min: 0.1, max: 1, step: 0.05, default: 0.45 },
+  { key: "hideAfter", label: "Ausblenden nach", min: 0, max: 60, step: 1, default: 10, unit: "s",
+    hint: "So lange ohne neuen Text, dann verschwindet alles · 0 = nie" },
+  { key: "anim", label: "Neue Zeile", min: 0, max: 3, step: 1, default: 1, kind: "select",
+    options: [
+      { value: 0, label: "Sofort" },
+      { value: 1, label: "Einblenden" },
+      { value: 2, label: "Von unten schieben" },
+      { value: 3, label: "Wort für Wort" },
+    ] },
+  { key: "animMs", label: "Animationsdauer", min: 50, max: 3000, step: 50, default: 350, unit: "ms" },
+  { key: "style", label: "Stil", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Schatten" },
+      { value: 1, label: "Dunkle Box" },
+      { value: 2, label: "Kontur" },
+      { value: 3, label: "Leuchten" },
+    ] },
+  { key: "boxAlpha", label: "Box-Deckkraft", min: 0, max: 1, step: 0.05, default: 0.55,
+    hint: "Nur beim Stil „Dunkle Box“" },
+  { key: "color", label: "Farbe", min: 0, max: 4, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Weiß" },
+      { value: 1, label: "Warmgelb" },
+      { value: 2, label: "Cyan" },
+      { value: 3, label: "Pink" },
+      { value: 4, label: "Regenbogen (wandert)" },
+    ] },
+  { key: "font", label: "Schrift", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "System" },
+      { value: 1, label: "Serif" },
+      { value: 2, label: "Schmal (Condensed)" },
+      { value: 3, label: "Monospace" },
+    ] },
+  { key: "weight", label: "Strichstärke", min: 300, max: 900, step: 100, default: 700 },
+  toggle("upper", "GROSSBUCHSTABEN", 0),
+  { key: "width", label: "Maximale Breite", min: 30, max: 100, step: 1, default: 80, unit: "%" },
+  { key: "margin", label: "Abstand zum Rand", min: 0, max: 40, step: 0.5, default: 9, unit: "vh" },
+  { key: "pulse", label: "Puls mit der Lautstärke", min: 0, max: 0.4, step: 0.01, default: 0,
+    hint: "Die neueste Zeile wächst mit dem Pegel" },
+  toggle("resetOnSong", "Bei Songwechsel neu anfangen", 1,
+    "Vergisst Fenster und Zeilen, sobald die Media-Session einen neuen Song meldet"),
+  toggle("stats", "Messwerte unter dem Text", 0,
+    "Verzögerung, Whisper-Zeit und Fenster — zum Einstellen der Engine"),
+];
+GROUP_LABELS.lyrics = "Lyrics-Anzeige";
+
 export const PARAMS_STORAGE_KEY = "vizzy.params.v1";
 const STORAGE_KEY = PARAMS_STORAGE_KEY;
 

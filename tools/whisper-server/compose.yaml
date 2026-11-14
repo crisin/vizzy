@@ -1,0 +1,27 @@
+# Local Whisper for vizzy's live lyrics (src-tauri/src/lyrics.rs).
+#   docker compose up -d --build     first time (build takes a few minutes)
+#   docker compose up -d             afterwards
+# Serves on http://127.0.0.1:8178 — the default in lyrics.json.
+services:
+  whisper:
+    build: .
+    image: vizzy/whisper-server:cuda
+    container_name: vizzy-whisper
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8178:8080"
+    environment:
+      # any ggml model name from huggingface.co/ggerganov/whisper.cpp,
+      # e.g. large-v3 (slower, a little better), large-v3-turbo-q5_0 (less VRAM)
+      WHISPER_MODEL: large-v3-turbo
+    volumes:
+      - models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+volumes:
+  models:

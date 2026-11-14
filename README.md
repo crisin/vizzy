@@ -161,6 +161,26 @@ See [PLAN.md](PLAN.md) for the roadmap.
   suite against a real server:
   `VIZZY_COMFY_URL=http://127.0.0.1:8188 cargo test --test comfy_live --
   --ignored` — it skips without the variable.
+- **Live lyrics** (`U`): a local Whisper transcribes what is playing, from
+  the captured audio itself, and the stage shows it as subtitles. `src-tauri/src/lyrics.rs` sends
+  a sliding window (up to 12 s) to the server every half second; a line
+  counts once two runs agree on it, everything newer is the tentative tail.
+  Server: `cd tools/whisper-server && docker compose up -d` (whisper.cpp
+  with CUDA, `large-v3-turbo`, port 8178). Settings → *Lyrics* has the
+  switch, the server address with a connection test, language and prompt,
+  how the text looks (position, size, lines, style, animation, fade-out,
+  loudness pulse, a stats line) and every engine knob (step, window,
+  agreement, silence, filters) — the knobs live in `lyrics.json` and apply
+  on the next step. Lines also go to the dev bridge's `GET /log`. In the
+  browser preview a demo stream with invented lines stands in.
+  Measured on an RTX 5070: ~200 ms per request, lines appear 1–3 s after
+  they are sung (up to ~10 s after long held notes), German, English,
+  Spanish and fast rap all come out nearly word for word. Whisper invents
+  text over instrumentals and its `no_speech_prob` stays at ~0 there, so
+  the filters are our own (see the module comment).
+  Offline against a file: `VIZZY_LYRICS_FILE=clip.f32 cargo test --lib
+  lyrics_offline -- --ignored --nocapture` (raw 16 kHz mono f32, the
+  ffmpeg line is in the test).
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.
@@ -193,7 +213,7 @@ tooltips are generated from it.
 
 `1`–`6` modes · `←`/`→` preset/scene · `F` fullscreen · `H` presentation
 mode (toolbar and cursor stay away, keys keep working; persists) · `I` info
-overlay (song, picture, tempo) · `E` settings · `C` cockpit · `G` Regie ·
+overlay (song, picture, tempo) · `U` live lyrics · `E` settings · `C` cockpit · `G` Regie ·
 `D` debug HUD · `?` help · `Esc` closes panels only, never fullscreen.
 Milkdrop: `R` random · `A` auto-switch · `S` favourite · `L` library · `P`
 studio · `T` tag bar · `B` layer B on/off · `Shift+B` layer B settings ·

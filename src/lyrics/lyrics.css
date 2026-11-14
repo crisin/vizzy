@@ -1,0 +1,225 @@
+/* Live lyrics on the stage. Sizes are in vh so the text keeps its share of
+   the picture on any screen; everything tunable comes in as a variable
+   from LyricsOverlay. */
+
+.lyrics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  padding: var(--lyr-margin) 4vw;
+  /* an open drawer makes room, so the text stays visible while tuning it */
+  padding-right: calc(4vw + min(var(--drawer-open-w, 0px), 100vw - 28px));
+  box-sizing: border-box;
+  color: var(--lyr-color);
+  font-family: var(--lyr-font);
+  font-weight: var(--lyr-weight);
+  font-size: var(--lyr-size);
+  line-height: 1.22;
+  text-align: center;
+}
+
+.lyr-pos-bottom {
+  justify-content: flex-end;
+}
+.lyr-pos-top {
+  justify-content: flex-start;
+}
+.lyr-pos-middle {
+  justify-content: center;
+}
+.lyr-pos-bottom-left {
+  justify-content: flex-end;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.lyr-block {
+  max-width: var(--lyr-width);
+  display: flex;
+  flex-direction: column;
+  gap: 0.12em;
+}
+
+.lyr-line {
+  transition: opacity 0.4s ease;
+  overflow-wrap: anywhere;
+}
+
+.lyr-newest {
+  transform: scale(var(--lyr-pulse, 1));
+  transform-origin: center bottom;
+}
+.lyr-pos-bottom-left .lyr-newest {
+  transform-origin: left bottom;
+}
+
+.lyr-tentative {
+  opacity: var(--lyr-tent);
+  font-style: italic;
+  font-weight: calc(var(--lyr-weight) - 200);
+  font-size: 0.82em;
+}
+
+.lyr-upper .lyr-text {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ---- styles */
+
+.lyr-style-shadow .lyr-text {
+  text-shadow:
+    0 0.05em 0.22em rgba(0, 0, 0, 0.95),
+    0 0 0.08em rgba(0, 0, 0, 0.9);
+}
+
+.lyr-style-box .lyr-text {
+  background: rgba(6, 7, 12, var(--lyr-box));
+  padding: 0.04em 0.32em;
+  border-radius: 0.18em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.lyr-style-outline .lyr-text {
+  -webkit-text-stroke: 0.07em rgba(0, 0, 0, 0.95);
+  paint-order: stroke fill;
+}
+
+.lyr-style-glow .lyr-text {
+  text-shadow:
+    0 0 0.18em currentColor,
+    0 0 0.6em currentColor,
+    0 0 0.1em rgba(0, 0, 0, 0.8);
+}
+
+.lyr-rainbow .lyr-block {
+  animation: lyr-hue 14s linear infinite;
+}
+@keyframes lyr-hue {
+  to {
+    filter: hue-rotate(360deg);
+  }
+}
+
+/* ---- a new line arrives */
+
+.lyr-anim-fade .lyr-newest {
+  animation: lyr-fade var(--lyr-anim) ease-out;
+}
+.lyr-anim-rise .lyr-newest {
+  animation: lyr-rise var(--lyr-anim) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lyr-anim-words .lyr-newest .lyr-word {
+  animation: lyr-fade calc(var(--lyr-anim) * 0.6 + 80ms) ease-out backwards;
+}
+@keyframes lyr-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lyr-rise {
+  from {
+    opacity: 0;
+    translate: 0 0.6em;
+  }
+}
+
+/* ---- hints and numbers */
+
+.lyr-hint {
+  pointer-events: auto;
+  margin-top: 0.6em;
+  font: inherit;
+  font-family: system-ui, sans-serif;
+  font-weight: 500;
+  font-size: max(12px, 1.6vh);
+  color: #fecaca;
+  background: rgba(40, 8, 8, 0.75);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.lyr-stats {
+  margin-top: 0.5em;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 400;
+  font-size: max(11px, 1.4vh);
+  color: #cbd5e1;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-overlay * {
+    animation: none !important;
+  }
+}
+
+/* ---- settings tab */
+
+.lyr-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lyr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.lyr-row {
+  display: flex;
+  gap: 6px;
+}
+
+.lyr-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--ui-btn-h, 28px);
+  padding: 4px 8px;
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: var(--ui-radius, 6px);
+}
+
+.lyr-prompt {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.lyr-test {
+  font-size: var(--ui-font-sub);
+  color: #94a3b8;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.lyr-test.ok {
+  color: #4ade80;
+}
+.lyr-test.bad {
+  color: #fca5a5;
+}
+
+.lyr-dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: #4ade80;
+  vertical-align: middle;
+}

@@ -181,6 +181,8 @@ struct Analyzer {
     bpm_conf: f32,
     phrasing: crate::phrasing::Phrasing,
     published: u64,
+    /// samples waiting to go to the lyrics tap (see `crate::lyrics::Tap`)
+    tap_block: Vec<f32>,
 }
 
 impl Analyzer {
@@ -232,6 +234,7 @@ impl Analyzer {
             bpm_conf: 0.0,
             phrasing: crate::phrasing::Phrasing::new(NUM_BANDS),
             published: 0,
+            tap_block: Vec::with_capacity(sample_rate / 50),
         }
     }
 
@@ -241,6 +244,13 @@ impl Analyzer {
         }
         self.ring.push_back(sample);
         self.since_hop += 1;
+        // Branch for live lyrics: hand the mono signal on in ~10 ms blocks.
+        if crate::lyrics::TAP.enabled() {
+            self.tap_block.push(sample);
+            if self.tap_block.len() >= self.sample_rate / 100 {
+                crate::lyrics::TAP.feed(&mut self.tap_block, self.sample_rate);
+            }
+        }
     }
 
     fn maybe_publish(&mut self, shared: &SharedAnalysis) {

@@ -14,6 +14,7 @@ export type KeyId =
   | "help"
   | "presentation"
   | "info"
+  | "lyrics"
   | "debug"
   | "prev"
   | "next"
@@ -82,6 +83,13 @@ export const KEYS: KeyBinding[] = [
     does: "Info einblenden: Song, Preset, Tempo",
     scope: "global",
     match: letter("i"),
+  },
+  {
+    id: "lyrics",
+    label: "U",
+    does: "Live-Lyrics (Untertitel) an/aus",
+    scope: "global",
+    match: letter("u"),
   },
   {
     id: "settings",

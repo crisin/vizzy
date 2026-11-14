@@ -206,7 +206,7 @@ Neu:
 | `Q` / `N` / `Shift+Q` | — | Einreihen / Queue überspringen / leeren (geplant) |
 | `?` | Hilfe | bleibt |
 
-Freie Tasten danach noch: J K M O U V W X Y Z.
+Freie Tasten danach noch: J K M O V W X Y Z (`U` = Live-Lyrics, 2026-11-14).
 
 Eine Quelle der Wahrheit: die Tastenliste lebt an *einer* Stelle im Code
 (Tabelle mit Taste, Aktion, Modus), aus der Handler, Hilfe, Tooltips und
