@@ -587,6 +587,8 @@ struct Update {
     tentative: String,
     /// how long after it was sung the newest line appeared
     behind_s: Option<f32>,
+    /// how long ago the newest line started — synced lyrics set their clock by it
+    started_ago_s: Option<f32>,
     infer_ms: u32,
     window_s: f32,
     error: Option<String>,
@@ -788,11 +790,22 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     // running stats, logged every 30 runs
     let (mut runs, mut infer_sum, mut infer_max) = (0u32, 0u128, 0u128);
 
-    let emit = |eng: &Engine, tentative: String, behind: Option<f32>, infer_ms: u32, window_s: f32, error: Option<String>| {
+    // `behind`: (seconds since the newest line ended, since it started)
+    let emit = |eng: &Engine, tentative: String, behind: Option<(f32, f32)>, infer_ms: u32, window_s: f32, error: Option<String>| {
         let lines = eng.agr.lines.iter().cloned().collect();
         let repeats = eng.agr.repeats.iter().copied().collect();
         let committed = eng.agr.committed;
-        let _ = app.emit("lyrics", Update { lines, repeats, committed, tentative, behind_s: behind, infer_ms, window_s, error });
+        let _ = app.emit("lyrics", Update {
+            lines,
+            repeats,
+            committed,
+            tentative,
+            behind_s: behind.map(|b| b.0),
+            started_ago_s: behind.map(|b| b.1),
+            infer_ms,
+            window_s,
+            error,
+        });
     };
 
     loop {
@@ -878,7 +891,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
                         }),
                     ));
                 }
-                let behind = commit.last().map(|(_, b)| *b);
+                let behind = commit.last().map(|(s, b)| (*b, *b + (s.end - s.start)));
                 emit(&eng, tentative, behind, infer.as_millis() as u32, window, None);
                 runs += 1;
                 infer_sum += infer.as_millis();

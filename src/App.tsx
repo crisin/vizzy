@@ -18,6 +18,7 @@ import { LyricsOverlay } from "./lyrics/LyricsOverlay";
 import { LyricsSettings } from "./lyrics/LyricsSettings";
 import { lyrics } from "./lyrics/store";
 import { lyricEvents } from "./lyrics/events";
+import { synced } from "./lyrics/synced";
 import { attachReactions } from "./lyrics/reactions";
 import { rememberFullscreen, restoreFullscreen } from "./ui/fullscreenMemory";
 import { SCENE_DESCS, SCENE_LABELS, SCENE_NAMES, type SceneName } from "./sceneCatalog";
@@ -3471,8 +3472,9 @@ function startVisualizer(
 
     // shared with the library tile and the tag-driven auto-switch
     live.update(rms, section, phrasePhase, gridConf, dt);
-    // singing starts / stops (lyrics/events → reactions)
+    // singing starts / stops (lyrics/events → reactions); synced lyrics
     lyricEvents.tick(dt);
+    synced.tick();
     // song choreos fire their cues, the song analysis records (Regie)
     director.tick();
     {

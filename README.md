@@ -185,6 +185,12 @@ See [PLAN.md](PLAN.md) for the roadmap.
   after an instrumental and an instrumental starting can change the picture
   (through the auto-switch, so the Regie keeps priority), add layer B for
   the chorus or nudge Milkdrop. Words can also appear one per eighth note.
+  **Synced lyrics**: when Lyrics Helper has timed lines for the song
+  (`/integrations/vizzy/song` → `lines`), the overlay shows those on time
+  with the next line as a preview; Whisper keeps running as the clock —
+  each line it hears is located in the synced text and corrects the media
+  position (or stands in for a missing one). Settings → Lyrics → Text-Quelle.
+  Checks: `node src/lyrics/syncCore.test.ts`.
   **Transcript log** (Settings → Lyrics → Protokoll): JSON Lines in
   `<app_data>/lyrics-log/YYYY-MM-DD.jsonl` (UTC), each entry with `t`,
   `song` and `kind` — `session`, `song`, `line` (text, `behindS`,

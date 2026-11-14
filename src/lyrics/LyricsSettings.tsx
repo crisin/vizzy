@@ -7,6 +7,7 @@ import { ParamRow, Section } from "../ui/ParamRow";
 import { ParamGroup } from "../ui/ParamGroup";
 import { keyLabel } from "../keys";
 import { DEFAULT_CONFIG, PRESETS, lyrics, presetOf, useLyrics, type LyricsConfig } from "./store";
+import { useSynced } from "./synced";
 
 const LANGUAGES: [string, string][] = [
   ["auto", "Automatisch erkennen"],
@@ -100,6 +101,7 @@ export function LyricsSettings() {
       </label>
 
       <Status />
+      <SyncStatus />
 
       <div className="set-seg">
         <button type="button" className="mode-btn" onClick={() => lyrics.reset()} disabled={!cfg.enabled}>
@@ -311,6 +313,29 @@ export function LyricsSettings() {
         </label>
       </Section>
     </div>
+  );
+}
+
+/** Whether synced lines from Lyrics Helper are in play for this song. */
+function SyncStatus() {
+  const sy = useSynced();
+  if (!sy.song) return null;
+  if (!sy.available)
+    return (
+      <p className="set-note">
+        Synchron: Lyrics Helper hat für diesen Song keinen Text mit Zeiten — es zeigt, was Whisper hört.
+      </p>
+    );
+  const clock =
+    sy.clock === "media"
+      ? `Uhr: Media-Position${sy.matched ? `, von Whisper nachgestellt (${sy.matched}×, Versatz ${(sy.offsetMs / 1000).toFixed(1)} s)` : ""}`
+      : sy.clock === "whisper"
+        ? "Uhr: Whisper (keine Media-Position)"
+        : "wartet auf eine erkannte Zeile";
+  return (
+    <p className="set-note lyr-status">
+      <span className="lyr-dot" aria-hidden /> Synchron: {sy.lines.length} Zeilen aus Lyrics Helper · {clock}
+    </p>
   );
 }
 

@@ -20,6 +20,8 @@ export type NhSongInfo = {
   saved: boolean;
   isFavorite: boolean;
   sections: { label: string; startMs: number | null }[];
+  /** timed lyric lines (newer Lyrics Helper; missing on older ones) */
+  lines?: { text: string; startMs: number | null }[];
 };
 
 export type NhStatus = { baseUrl: string; hasToken: boolean };

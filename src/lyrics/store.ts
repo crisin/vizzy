@@ -12,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { nowPlaying } from "../regie/nowPlaying";
 import { params } from "../params";
 import { lyricEvents } from "./events";
+import { synced } from "./synced";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -126,6 +127,8 @@ type Update = {
   committed: number;
   tentative: string;
   behindS: number | null;
+  /** how long ago the newest line started (synced lyrics set their clock by it) */
+  startedAgoS?: number | null;
   inferMs: number;
   windowS: number;
   error: string | null;
@@ -238,7 +241,10 @@ class LyricsStore {
       behindAvg: this.behind.length ? this.behind.reduce((a, b) => a + b, 0) / this.behind.length : null,
       lastEventAt: now,
     });
-    for (const l of added) lyricEvents.line(l.text, l.repeat);
+    // synced lyrics tell the events themselves, on time; Whisper is their clock
+    if (!synced.active()) for (const l of added) lyricEvents.line(l.text, l.repeat);
+    const last = added[added.length - 1];
+    if (last) synced.heard(last.text, u.startedAgoS ?? null);
   }
 
   /** Changes the config; the worker picks it up on its next step. Saving to

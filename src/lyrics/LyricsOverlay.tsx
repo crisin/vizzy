@@ -2,7 +2,8 @@ import { useEffect, useReducer, useRef, useState, type CSSProperties } from "rea
 import { params } from "../params";
 import { live } from "../milkdrop/live";
 import { keyLabel } from "../keys";
-import { lyrics, useLyrics } from "./store";
+import { lyrics, useLyrics, type LyricLine } from "./store";
+import { synced, useSynced } from "./synced";
 import "./lyrics.css";
 
 const POSITIONS = ["bottom", "top", "middle", "bottom-left"] as const;
@@ -39,20 +40,39 @@ const pitchNorm = (hz: number) => Math.min(1, Math.max(0, Math.log2(hz / 80) / M
  */
 export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }) {
   const s = useLyrics();
+  const sy = useSynced();
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   useEffect(() => params.subscribe(rerender), []);
   useEffect(() => lyrics.startDemo(), []);
 
+  // synced lines (Lyrics Helper, on time) or what Whisper heard
+  const useSync = synced.mode() !== "whisper" && sy.usable;
+  const onlySynced = synced.mode() === "synced";
+  const sourceLines: LyricLine[] = useSync
+    ? sy.lines
+        .slice(0, sy.index + 1)
+        .slice(-12)
+        .map((l, i, arr) => {
+          const idx = sy.index - (arr.length - 1 - i);
+          return { n: 1_000_000 + idx, text: l.text, at: idx === sy.index ? sy.indexAt : 0, repeat: sy.repeats[idx] };
+        })
+    : onlySynced
+      ? []
+      : s.lines;
+  const newest = sourceLines[sourceLines.length - 1]?.n ?? 0;
+  // synced: the last line stays up while it is sung, so "stale" follows the line
+  const lastText = useSync ? sy.indexAt : s.lastTextAt;
+
   // hide after a while without new text — needs a timer, nothing else
   // re-renders when the time runs out
   const hideAfter = p("hideAfter") * 1000;
-  const sinceText = performance.now() - s.lastTextAt;
-  const stale = hideAfter > 0 && s.lastTextAt > 0 && sinceText > hideAfter;
+  const sinceText = performance.now() - lastText;
+  const stale = hideAfter > 0 && lastText > 0 && sinceText > hideAfter;
   useEffect(() => {
-    if (hideAfter <= 0 || s.lastTextAt === 0 || stale) return;
+    if (hideAfter <= 0 || lastText === 0 || stale) return;
     const id = window.setTimeout(rerender, hideAfter - sinceText + 20);
     return () => window.clearTimeout(id);
-  }, [hideAfter, s.lastTextAt, stale, sinceText]);
+  }, [hideAfter, lastText, stale, sinceText]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
@@ -68,7 +88,6 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
   const wavesMode = p("waves");
   const waveMs = p("waveMs");
   const wobble = p("wobble");
-  const newest = s.lines[s.lines.length - 1]?.n ?? 0;
 
   /** a ring from the centre of the text */
   const emitWave = useRef(() => {});
@@ -163,8 +182,10 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
   const showStats = p("stats") >= 0.5;
   const animMs = p("animMs");
 
-  const shownLines = stale ? [] : s.lines.slice(-Math.max(1, Math.round(p("lines"))));
-  const tentative = !stale && pt("show") >= 0.5 ? s.tentative : "";
+  const shownLines = stale ? [] : sourceLines.slice(-Math.max(1, Math.round(p("lines"))));
+  // synced: the slot of the tentative text previews the next line
+  const nextLine = useSync ? (sy.lines[sy.index + 1]?.text ?? "") : onlySynced ? "" : s.tentative;
+  const tentative = !stale && pt("show") >= 0.5 ? nextLine : "";
   const detach = pt("detach") >= 0.5;
   const tentStyle = pt("style") === 0 ? style : STYLES[pt("style") - 1];
   const tentCss = {
@@ -263,6 +284,9 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
       {showStats && (
         <div className="lyr-stats">
           {s.demo ? "Demo · " : ""}
+          {useSync
+            ? `synchron (${sy.clock === "media" ? "Media-Position" : "Whisper-Uhr"}, Versatz ${(sy.offsetMs / 1000).toFixed(1)} s, ${sy.matched} Treffer) · `
+            : ""}
           {s.behindS != null ? `+${s.behindS.toFixed(1)} s` : "—"}
           {s.behindAvg != null ? ` (Ø ${s.behindAvg.toFixed(1)} s)` : ""} · Whisper {s.inferMs} ms · Fenster{" "}
           {s.windowS.toFixed(1)} s · {keyLabel("lyrics")} aus

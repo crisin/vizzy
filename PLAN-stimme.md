@@ -100,7 +100,24 @@ Effekte:
 Regie: neue Regel-/Choreo-Auslöser `refrain`, `stimme an`, `stimme aus`
 neben den heutigen Section-Ankern (`choreo.ts`).
 
-### 3 · Synchron-Lyrics aus Lyrics Helper, Whisper als Uhr (C + B)
+### 3 · Synchron-Lyrics aus Lyrics Helper, Whisper als Uhr (C + B) — ✅ umgesetzt (vizzy), wartet auf Deploy (Lyrics Helper)
+
+> **Stand 2026-11-14:** Lyrics Helper liefert in `/integrations/vizzy/song`
+> jetzt `lines: {text, startMs}[]` (Branch `feat/vizzy-integration`, Commit
+> `e255297`, weder gepusht noch deployt — vizzy spricht mit der
+> Railway-Instanz, bis dahin fehlen die Zeilen und vizzy bleibt bei
+> Whisper). vizzy: `src/lyrics/syncCore.ts` (Abgleich, Uhr; Checks mit
+> `node src/lyrics/syncCore.test.ts`), `src/lyrics/synced.ts` (folgt Song,
+> zeigt die fällige Zeile, die nächste als Vorschau). Uhr = Media-Position
+> + Versatz; jede Whisper-Zeile wird im Synchrontext gesucht (±25 s um die
+> erwartete Stelle, Refrains: die nähere gewinnt) und stellt den Versatz
+> nach (Median, ein Sprung erst, wenn zwei Treffer ihn bestätigen). Ohne
+> Media-Position startet ein Treffer eine eigene Uhr (45 s ohne Treffer:
+> aus). Refrain-Ereignisse kommen dann pünktlich aus dem Synchrontext
+> (wiederholte Zeilen und Abschnitte namens Chorus/Refrain/Hook).
+> Text-Quelle in den Einstellungen: synchron wenn möglich / immer Whisper /
+> nur synchron.
+
 
 Lyrics Helper hat für viele Songs **zeitgestempelte Zeilen** (LRCLIB, Feld
 `LyricsLine.timestampMs`) und **Abschnitte** (`LyricsSection`, Strophe,
@@ -191,7 +208,7 @@ für Sprache, bleibt es ein Feature für Twitch und Mikro.
 |---|---|---|---|
 | **S1** ✅ | Stimm-Signal in Rust (Stereo zum Analyzer, Mitte-Maske + YIN), Routing-Quellen, Debug-HUD-Zeile | mittel | sofort, überall |
 | **S2** ✅ | Text-Ereignisse (`line`, `repeat`), Overlay im Beat-Raster, Regie-Auslöser `refrain` / `stimme an/aus` | klein | ja |
-| **S3** | Lyrics Helper liefert Zeilen; Whisper-Abgleich als Uhr; Overlay pünktlich mit Vorschau | mittel, zwei Repos | groß |
+| **S3** ✅ | Lyrics Helper liefert Zeilen; Whisper-Abgleich als Uhr; Overlay pünktlich mit Vorschau | mittel, zwei Repos | groß |
 | **S4** | 3D-Szene „Text“ (Kinetic Typography) | mittel | Showcase |
 | **S5** | LLM-Stimmung → Tags; ComfyUI-Bild pro Refrain | mittel | Wow, langsam |
 | **S6** | Stimm-Fingerabdruck: erst Offline-Spike, dann Embedding-Worker, Ereignis `speaker`, Routing-Quelle und Regie-Auslöser. Setzt S2 voraus (Text-Ereignisse, Auslöser), nicht S3–S5 | Spike klein, Einbau mittel | bei Sprache groß, bei Gesang offen |

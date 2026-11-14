@@ -2,6 +2,18 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-14 — Chorus and synced lyrics
+
+- **A chorus is just a line the song had before.** Word-LCS ≥ 0.7 against
+  every earlier committed line (≥ 3 words, so "oh yeah" never counts) found
+  both choruses of "Take On Me" end to end and left verse 2 alone.
+- **Whisper as a clock:** a heard line located in the LRC text gives the
+  offset to the media position. Take the median and only jump after two
+  agreeing matches — a single chorus line matched to the wrong chorus is the
+  usual error, so search near the expected time first.
+- **Pure logic in its own file runs under plain Node 26** (type stripping):
+  checks without adding a test framework; `tsconfig` excludes `*.test.ts`.
+
 ## 2026-11-14 — Overlay mode
 
 - **A click-through window needs a way out that is not the window.** With

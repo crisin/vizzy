@@ -363,6 +363,13 @@ GROUP_LABELS.dev = "Entwicklung";
 /** How live lyrics look on the stage (`src/lyrics/`). What Whisper hears and
  *  when a line counts as final is the engine's business (lyrics.json). */
 PARAM_SCHEMAS.lyrics = [
+  { key: "source", label: "Text-Quelle", min: 0, max: 2, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Synchron, wenn Lyrics Helper den Song kennt — sonst Whisper" },
+      { value: 1, label: "Immer Whisper (was gerade gehört wurde)" },
+      { value: 2, label: "Nur synchron (sonst nichts)" },
+    ],
+    hint: "Synchron: pünktlich, die nächste Zeile als Vorschau; Whisper stellt dabei die Uhr" },
   { key: "place", label: "Platzierung", min: 0, max: 4, step: 1, default: 0, kind: "select",
     options: [
       { value: 0, label: "Statisch (Position unten)" },
