@@ -2,6 +2,22 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-14 — Singing voice without a model
+
+- **Pitch trackers don't find voices in a mix.** YIN periodicity on the
+  vocal band of the full mix scored AUC ~0.5 (chance) on three of four
+  songs against Demucs vocals: synths and guitars are just as periodic.
+- **The stereo image does.** Per FFT bin, keep only what sits dead centre
+  (side < 0.1 × mid): its share of the band is 0.7–0.8 while singing,
+  0.25–0.4 otherwise. Its level alone matched the four-feature logistic
+  fit. Pure relative loudness needs that absolute anchor — a constantly
+  empty centre otherwise normalizes to "always singing".
+- **Demucs on CPU in a throwaway `python:3.11-slim` container** is enough
+  for 60 s calibration clips (a few minutes, no CUDA build, no VM OOM).
+  Ground truth: vocals stem above −26 dBFS per 512-sample hop.
+- Rap over a centred beat is the hard case (gate 65 %); speech streams are
+  "voice" too, which is fine for effects.
+
 ## 2026-11-14 — Lyrics profiles and transcript log
 
 - **Shorter isn't just faster, it's wronger.** Offline over five songs:

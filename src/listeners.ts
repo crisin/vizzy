@@ -3,15 +3,29 @@
 // route those values onto any editor parameter as an offset.
 
 import { PARAM_SCHEMAS, params } from "./params";
+import { live } from "./milkdrop/live";
 
 // must match the Rust analyzer's band layout
 const NUM_BANDS = 64;
 const F_MIN = 40;
 const F_MAX = 16000;
 
+/** What a listener hears: a frequency range of the mix, or the singing
+ *  voice from the analyzer (src-tauri/src/voice.rs). */
+export type ListenerSource = "bands" | "voice" | "gate" | "pitch";
+
+export const SOURCE_LABELS: Record<ListenerSource, string> = {
+  bands: "Frequenzband",
+  voice: "Stimme (Lautstärke)",
+  gate: "Gesang an/aus",
+  pitch: "Tonhöhe",
+};
+
 export type Listener = {
   id: number;
   name: string;
+  /** default "bands" (listeners saved before there was a choice) */
+  source?: ListenerSource;
   from: number; // Hz
   to: number; // Hz
   gain: number;
@@ -27,7 +41,7 @@ export type Assignment = {
   amount: number; // -1..1 of the target's full range
 };
 
-type Stored = { listeners: Listener[]; assignments: Assignment[]; nextId: number };
+type Stored = { listeners: Listener[]; assignments: Assignment[]; nextId: number; voiceAdded?: boolean };
 
 const STORAGE_KEY = "vizzy.routing.v1";
 
@@ -41,10 +55,21 @@ const DEFAULTS: Stored = {
     { id: 1, name: "Bass", from: 40, to: 140, gain: 1.2, attack: 30, release: 200 },
     { id: 2, name: "Mitten", from: 400, to: 2000, gain: 1, attack: 40, release: 250 },
     { id: 3, name: "Höhen", from: 6000, to: 16000, gain: 1.5, attack: 20, release: 180 },
+    VOICE_LISTENER(4),
   ],
   assignments: [],
-  nextId: 4,
+  nextId: 5,
+  voiceAdded: true,
 };
+
+function VOICE_LISTENER(id: number): Listener {
+  return { id, name: "Stimme", source: "voice", from: 250, to: 4000, gain: 1, attack: 20, release: 150 };
+}
+
+/** 80 Hz … 1 kHz on a log scale → 0..1 */
+function pitchNorm(hz: number): number {
+  return Math.min(1, Math.max(0, Math.log2(hz / 80) / Math.log2(1000 / 80)));
+}
 
 class ListenerEngine {
   listeners: Listener[];
@@ -63,17 +88,44 @@ class ListenerEngine {
     this.listeners = stored?.listeners ?? DEFAULTS.listeners;
     this.assignments = stored?.assignments ?? DEFAULTS.assignments;
     this.nextId = stored?.nextId ?? DEFAULTS.nextId;
+    // routings saved before the voice existed get one "Stimme" listener, once
+    this.voiceAdded = stored ? !!stored.voiceAdded : true;
+    if (!this.voiceAdded) {
+      this.listeners = [...this.listeners, VOICE_LISTENER(this.nextId++)];
+      this.voiceAdded = true;
+      this.save();
+    }
+  }
+
+  private voiceAdded: boolean;
+  private lastPitch = 0;
+
+  /** The raw 0..1(+) value a listener's source delivers right now. */
+  private raw(l: Listener, bands: Float32Array): number {
+    switch (l.source ?? "bands") {
+      case "voice":
+        return live.voice;
+      case "gate":
+        return live.voiceGate ? 1 : 0;
+      case "pitch":
+        // hold the last trusted pitch, so a gap does not drop to the bottom
+        if (live.pitchConf > 0.4 && live.pitch > 0) this.lastPitch = pitchNorm(live.pitch);
+        return this.lastPitch;
+      default: {
+        const b0 = bandForHz(Math.min(l.from, l.to));
+        const b1 = Math.max(b0, bandForHz(Math.max(l.from, l.to)));
+        let sum = 0;
+        for (let b = b0; b <= b1; b++) sum += bands[b] ?? 0;
+        return sum / (b1 - b0 + 1);
+      }
+    }
   }
 
   /** Called once per animation frame with the raw normalized bands. */
   update(bands: Float32Array, dt: number) {
     params.clearMods();
     for (const l of this.listeners) {
-      const b0 = bandForHz(Math.min(l.from, l.to));
-      const b1 = Math.max(b0, bandForHz(Math.max(l.from, l.to)));
-      let sum = 0;
-      for (let b = b0; b <= b1; b++) sum += bands[b] ?? 0;
-      const target = Math.min(1.5, (sum / (b1 - b0 + 1)) * l.gain);
+      const target = Math.min(1.5, this.raw(l, bands) * l.gain);
 
       const current = this.values.get(l.id) ?? 0;
       const tau = (target > current ? l.attack : l.release) / 1000;
@@ -134,6 +186,7 @@ class ListenerEngine {
         listeners: this.listeners,
         assignments: this.assignments,
         nextId: this.nextId,
+        voiceAdded: this.voiceAdded,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {

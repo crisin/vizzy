@@ -48,6 +48,15 @@ class LiveState {
   lastPick = "";
   /** current tempo estimate (0 = unknown) */
   bpm = 0;
+  /** singing voice (src-tauri/src/voice.rs): 0..1 relative to the song */
+  voice = 0;
+  /** someone sings right now (hysteresis) */
+  voiceGate = false;
+  /** Hz, holds the last pitch through gaps; trust it as far as `pitchConf` */
+  pitch = 0;
+  pitchConf = 0;
+  /** share of the vocal band that sits dead centre (debug) */
+  centreShare = 0;
 
   /** Seconds per bar at the current tempo, 2 s when the tempo is unknown. */
   barSeconds(): number {

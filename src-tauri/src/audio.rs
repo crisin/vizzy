@@ -85,11 +85,13 @@ pub struct AppInfo {
 
 /// Frame header layout:
 /// `[rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf,
-///   beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf]`
+///   beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf,
+///   voice, voice_gate, pitch, pitch_conf, centre_share]`
 ///
 /// Indices 0–7 are the raw per-hop analysis, 8–13 the musical position
-/// tracked by [`crate::phrasing`]. Keep in sync with `HEADER` in `App.tsx`.
-pub const HEADER: usize = 14;
+/// tracked by [`crate::phrasing`], 14–18 the singing voice from
+/// [`crate::voice`]. Keep in sync with `HEADER` in `App.tsx`.
+pub const HEADER: usize = 19;
 const FLUX_HISTORY: usize = 188; // ~2 s of hops for the adaptive threshold
 const BEAT_REFRACTORY_HOPS: usize = 11; // ~120 ms
 
@@ -183,6 +185,7 @@ struct Analyzer {
     published: u64,
     /// samples waiting to go to the lyrics tap (see `crate::lyrics::Tap`)
     tap_block: Vec<f32>,
+    voice: crate::voice::Voice,
 }
 
 impl Analyzer {
@@ -235,10 +238,14 @@ impl Analyzer {
             phrasing: crate::phrasing::Phrasing::new(NUM_BANDS),
             published: 0,
             tap_block: Vec::with_capacity(sample_rate / 50),
+            voice: crate::voice::Voice::new(sample_rate, HOP as f32 / sample_rate as f32),
         }
     }
 
-    fn push(&mut self, sample: f32) {
+    /// One stereo sample; without stereo pass the same value twice.
+    fn push(&mut self, left: f32, right: f32) {
+        self.voice.push(left, right);
+        let sample = 0.5 * (left + right);
         if self.ring.len() == FFT_SIZE {
             self.ring.pop_front();
         }
@@ -368,12 +375,16 @@ impl Analyzer {
         if cfg!(not(test)) && self.published % 470 == 0 {
             // ~every 5 s at 94 frames/s
             eprintln!(
-                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={} bpm={:.1} conf={:.2} grid={:.2}",
+                "[vizzy-audio] frames={} rms={rms:.4} peak={peak:.4} beats={} bpm={:.1} conf={:.2} grid={:.2} voice={:.2}{} pitch={:.0} centre={:.2}",
                 self.published,
                 self.beats,
                 self.bpm,
                 self.bpm_conf,
-                self.phrasing.grid_conf()
+                self.phrasing.grid_conf(),
+                self.voice.level,
+                if self.voice.gate { "*" } else { "" },
+                self.voice.pitch,
+                self.voice.feat.cmask
             );
         }
 
@@ -390,6 +401,14 @@ impl Analyzer {
         frame[11] = self.phrasing.phrase_phase();
         frame[12] = self.phrasing.section();
         frame[13] = self.phrasing.grid_conf();
+        drop(frame);
+        self.voice.hop();
+        let mut frame = shared.lock().unwrap();
+        frame[14] = self.voice.level;
+        frame[15] = if self.voice.gate { 1.0 } else { 0.0 };
+        frame[16] = self.voice.pitch;
+        frame[17] = self.voice.pitch_conf;
+        frame[18] = self.voice.feat.cmask;
         for (i, b) in self.bands.iter().enumerate() {
             frame[HEADER + i] = *b;
         }
@@ -413,6 +432,9 @@ impl Analyzer {
         frame[5] *= 0.8;
         frame[12] = self.phrasing.section();
         frame[13] = self.phrasing.grid_conf();
+        frame[14] *= 0.8;
+        frame[15] = 0.0;
+        frame[17] *= 0.8;
         for (i, b) in self.bands.iter().enumerate() {
             frame[HEADER + i] = *b;
         }
@@ -604,7 +626,7 @@ fn capture_loop(
                 *byte = bytes.pop_front().unwrap();
             }
             let right = f32::from_le_bytes(b);
-            analyzer.push(0.5 * (left + right));
+            analyzer.push(left, right);
         }
         analyzer.maybe_publish(shared);
 
@@ -819,7 +841,7 @@ mod pipeline_tests {
         let mut first: Option<(f32, f32)> = None;
         let mut last = (0.0f32, 0.0f32);
         for (i, &s) in audio.iter().enumerate() {
-            a.push(s);
+            a.push(s, s);
             let before = a.published;
             a.maybe_publish(&shared);
             if a.published == before {

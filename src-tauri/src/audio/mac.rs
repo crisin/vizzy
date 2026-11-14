@@ -776,7 +776,8 @@ pub(super) fn capture_loop(
         if session.ring.drain(&mut pending) > 0 {
             last_audio = Instant::now();
             for sample in pending.drain(..) {
-                analyzer.push(sample);
+                // mixed down to mono in the IOProc: no stereo for the voice cue
+                analyzer.push(sample, sample);
                 // Per sample rather than per batch: a batch can span more
                 // than one hop, and skipping hops would thin out the frames.
                 analyzer.maybe_publish(shared);

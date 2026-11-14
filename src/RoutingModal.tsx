@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import { GROUP_LABELS, PARAM_SCHEMAS } from "./params";
-import { routing } from "./listeners";
+import { routing, SOURCE_LABELS, type ListenerSource } from "./listeners";
 import { useDialogFocus } from "./useDialogFocus";
 
 const TARGETS: { value: string; label: string }[] = Object.entries(
@@ -72,6 +72,24 @@ export function RoutingModal({
                 bump();
               }}
             />
+            <select
+              className="routing-src"
+              value={l.source ?? "bands"}
+              aria-label={`${l.name}: Quelle`}
+              onChange={(e) => {
+                l.source = e.target.value as ListenerSource;
+                routing.save();
+                bump();
+              }}
+            >
+              {(Object.keys(SOURCE_LABELS) as ListenerSource[]).map((k) => (
+                <option key={k} value={k}>
+                  {SOURCE_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            {(l.source ?? "bands") === "bands" ? (
+              <>
             <label>
               von
               <input
@@ -105,6 +123,12 @@ export function RoutingModal({
               />
               Hz
             </label>
+              </>
+            ) : (
+              <span className="routing-note">
+                {l.source === "pitch" ? "80 Hz – 1 kHz → 0–1, hält den letzten Ton" : "aus der Gesangserkennung"}
+              </span>
+            )}
             <label>
               Gain
               <input

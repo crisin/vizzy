@@ -191,6 +191,17 @@ See [PLAN.md](PLAN.md) for the roadmap.
   lyrics_offline -- --ignored --nocapture` (raw 16 kHz mono f32, the
   ffmpeg line is in the test); `VIZZY_LYRICS_TUNING='{"stepMs":300}'`
   tries other knobs.
+- **Singing voice** as a modulation source (`src-tauri/src/voice.rs`): per
+  FFT bin of the vocal band the analyzer keeps what sits dead centre in the
+  stereo image (a vocal remover in reverse); its level, a sung/not-sung
+  gate and the pitch (YIN on that centre signal) come with every frame.
+  Settings → Audio → Listener: source *Stimme*, *Gesang an/aus* or
+  *Tonhöhe* routes them onto any parameter; the debug HUD (`D`) shows them.
+  Measured against Demucs-separated vocals on four songs: the gate is
+  right 65–84 % of the time, the pitch within a semitone 59–87 %. Without
+  stereo (macOS capture is mono) it falls back to the vocal band level.
+  Calibration: `VIZZY_VOICE_FILE=song.s48 VIZZY_VOICE_CSV=out.csv cargo
+  test --lib voice_features -- --ignored`.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.

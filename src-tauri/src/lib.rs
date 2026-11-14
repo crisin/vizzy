@@ -3,6 +3,7 @@ mod bridge;
 mod llm;
 mod lyrics;
 mod lyrics_log;
+mod voice;
 mod newhelper;
 mod nowplaying;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server

@@ -1,7 +1,7 @@
 # vizzy — Effekte aus Stimme und Text: Plan
 
 Stand: 2026-11-14, nach dem Lyrics-Spike (`src-tauri/src/lyrics.rs`, Overlay `U`).
-Noch nichts davon umgesetzt.
+S1 ist umgesetzt (siehe dort), der Rest noch nicht.
 
 ## Ausgangslage
 
@@ -21,7 +21,22 @@ Bildwechsel, Stimmung) B oder C. Effekte, die *auf* dem Wort sitzen sollen
 
 ## Bausteine
 
-### 1 · Stimm-Signal als Modulationsquelle (A)
+### 1 · Stimm-Signal als Modulationsquelle (A) — ✅ umgesetzt
+
+> **Stand 2026-11-14:** `src-tauri/src/voice.rs`. Anders als unten geplant:
+> Die Periodizität (YIN) auf dem Mix half kaum (AUC ~0,5 bei drei von vier
+> Songs, Synths und Gitarren sind genauso tonal). Was trägt, ist eine
+> **Mitte-Maske pro FFT-Bin** (250 Hz–4 kHz, Side ≪ Mid): ihr Pegel relativ
+> zum Song × ihr Anteil am Band. Gegen Demucs-Vocals auf vier Songs: AUC
+> 0,63–0,92, Gate 73 % richtig (Monsun 84 %, Candy Shop 65 %: Rap über
+> einem Beat, der auch in der Mitte sitzt). YIN läuft auf dem
+> zurücktransformierten Mitte-Signal: Tonhöhe in 59–87 % der Fälle auf
+> ±1 Halbton. Frame `[14..18]` = voice, gate, pitch, pitchConf, Mitte-Anteil;
+> Routing-Quellen „Stimme“, „Gesang an/aus“, „Tonhöhe“; Debug-HUD-Zeile.
+> **Milkdrop-`q` entfällt:** Butterchurn nimmt nur die Wellenform, eigene
+> Variablen gingen nur über einen Patch (CLAUDE.md, Regel 5). Milkdrop
+> erreicht die Stimme über das Routing auf Parameter.
+
 
 In `audio.rs` neben Beat und Flux, im selben Frame:
 
@@ -161,7 +176,7 @@ für Sprache, bleibt es ein Feature für Twitch und Mikro.
 
 | Phase | Was | Aufwand | Sichtbar |
 |---|---|---|---|
-| **S1** | Stimm-Signal in Rust (Stereo zum Analyzer, Mid/Side + YIN), Routing-Quellen, Milkdrop-`q`, Debug-HUD-Zeile | mittel | sofort, überall |
+| **S1** ✅ | Stimm-Signal in Rust (Stereo zum Analyzer, Mitte-Maske + YIN), Routing-Quellen, Debug-HUD-Zeile | mittel | sofort, überall |
 | **S2** | Text-Ereignisse (`line`, `repeat`), Overlay im Beat-Raster, Regie-Auslöser `refrain` / `stimme an/aus` | klein | ja |
 | **S3** | Lyrics Helper liefert Zeilen; Whisper-Abgleich als Uhr; Overlay pünktlich mit Vorschau | mittel, zwei Repos | groß |
 | **S4** | 3D-Szene „Text“ (Kinetic Typography) | mittel | Showcase |

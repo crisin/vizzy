@@ -131,8 +131,15 @@ import "./App.css";
 
 // [rms, peak, n_bands, n_wave, beat, flux, bpm, bpm_conf,
 //  beat_phase, beat_count, bar_phase, phrase_phase, section, grid_conf]
+/** "A3" for 220 Hz — the debug HUD's pitch readout. */
+function noteName(hz: number): string {
+  if (hz <= 0) return "";
+  const n = Math.round(12 * Math.log2(hz / 440)) + 57;
+  return ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][((n % 12) + 12) % 12] + Math.floor(n / 12);
+}
+
 // Must match `HEADER` in src-tauri/src/audio.rs.
-const HEADER = 14;
+const HEADER = 19;
 
 /** grid_conf above which bar/phrase positions are worth acting on. Measured
  *  in phrasing.rs: metrical input lands at 0.90–1.00, unmetrical at 0.13–0.27,
@@ -3184,6 +3191,11 @@ function startVisualizer(
       phrasePhase = f[11];
       section = f[12];
       gridConf = f[13];
+      live.voice = f[14];
+      live.voiceGate = f[15] >= 0.5;
+      live.pitch = f[16];
+      live.pitchConf = f[17];
+      live.centreShare = f[18];
       bands = f.subarray(HEADER, HEADER + nBands);
       wave = f.subarray(HEADER + nBands, HEADER + nBands + nWave);
       if (disp.length !== nBands) {
@@ -3284,6 +3296,14 @@ function startVisualizer(
     gridConf = 0.9;
     // a "section change" every 32 s, decaying like the real pulse
     section = Math.max(0, 1 - (t % 32) / 0.4);
+    // a singer: four bars on, two off; syllables on the eighths, a melody
+    const sung = (bar % 6) < 4;
+    const syll = 0.55 + 0.45 * Math.abs(Math.sin(beats * Math.PI));
+    live.voice += ((sung ? syll * build : 0) - live.voice) * 0.25;
+    live.voiceGate = live.voice > 0.45 || (live.voiceGate && live.voice > 0.3);
+    if (sung) live.pitch = 196 * Math.pow(2, [0, 4, 7, 5, 4, 2, 0, -1][Math.floor(beats) % 8] / 12);
+    live.pitchConf = sung ? 0.85 : live.pitchConf * 0.9;
+    live.centreShare = sung ? 0.75 : 0.3;
   }
 
   let gradient: CanvasGradient | null = null;
@@ -3589,6 +3609,9 @@ function startVisualizer(
           `${(Math.round(phrasePhase * 32) % 32) + 1}/32 · ` +
           `grid ${gridConf.toFixed(2)}${section > 0.05 ? " · SEKTION" : ""}`
         : `grid nicht eingerastet (${gridConf.toFixed(2)})`,
+      `stimme ${live.voice.toFixed(2)} · ${live.voiceGate ? "SINGT" : "still"} · ` +
+        (live.pitchConf > 0.3 ? `${live.pitch.toFixed(0)} Hz ${noteName(live.pitch)}` : "kein Ton") +
+        ` · mitte ${live.centreShare.toFixed(2)}`,
       `energie ${ENERGY_LEVELS[live.level]} (${live.norm.toFixed(2)}) · ` +
         `tags ${["aus", "sanft", "streng"][params.get("milkdrop", "tagMode") | 0]}`,
       live.lastPick || "auto: noch keine Wahl",
