@@ -179,6 +179,12 @@ See [PLAN.md](PLAN.md) for the roadmap.
   glass); waves from the text on new lines, on the beat or on syllables;
   blend modes with the picture, text that warps with the level, and a
   "nudge Milkdrop" option that briefly boosts its audio input on every line.
+  The tentative tail has its own look and can stand apart from the lines.
+  **Reactions** (Settings → Automatik): the worker flags lines the song had
+  before, so vizzy knows when the chorus comes back; that, singing starting
+  after an instrumental and an instrumental starting can change the picture
+  (through the auto-switch, so the Regie keeps priority), add layer B for
+  the chorus or nudge Milkdrop. Words can also appear one per eighth note.
   **Transcript log** (Settings → Lyrics → Protokoll): JSON Lines in
   `<app_data>/lyrics-log/YYYY-MM-DD.jsonl` (UTC), each entry with `t`,
   `song` and `kind` — `session`, `song`, `line` (text, `behindS`,

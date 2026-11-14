@@ -385,9 +385,6 @@ PARAM_SCHEMAS.lyrics = [
   { key: "lines", label: "Zeilen", min: 1, max: 6, step: 1, default: 2,
     hint: "Wie viele fertige Zeilen stehen bleiben (die neueste unten)" },
   { key: "olderFade", label: "Ältere Zeilen abdunkeln", min: 0, max: 1, step: 0.05, default: 0.45 },
-  toggle("tentative", "Vorläufigen Text zeigen", 1,
-    "Was Whisper gerade hört, bevor zwei Durchläufe übereinstimmen — schneller, aber wackelig"),
-  { key: "tentativeAlpha", label: "Deckkraft vorläufig", min: 0.1, max: 1, step: 0.05, default: 0.45 },
   { key: "hideAfter", label: "Ausblenden nach", min: 0, max: 60, step: 1, default: 10, unit: "s",
     hint: "So lange ohne neuen Text, dann verschwindet alles · 0 = nie" },
   { key: "anim", label: "Neue Zeile", min: 0, max: 3, step: 1, default: 1, kind: "select",
@@ -396,6 +393,7 @@ PARAM_SCHEMAS.lyrics = [
       { value: 1, label: "Einblenden" },
       { value: 2, label: "Von unten schieben" },
       { value: 3, label: "Wort für Wort" },
+      { value: 4, label: "Wort für Wort im Takt (Achtel)" },
     ] },
   { key: "animMs", label: "Animationsdauer", min: 50, max: 3000, step: 50, default: 350, unit: "ms" },
   { key: "style", label: "Stil", min: 0, max: 3, step: 1, default: 0, kind: "select",
@@ -469,6 +467,80 @@ PARAM_SCHEMAS.lyrics = [
     "Verzögerung, Whisper-Zeit und Fenster — zum Einstellen der Engine"),
 ];
 GROUP_LABELS.lyrics = "Lyrics-Anzeige";
+
+/** The tentative tail — what Whisper hears before two runs agree. Styled on
+ *  its own, and optionally placed apart from the committed lines. */
+PARAM_SCHEMAS.lyricsTent = [
+  toggle("show", "Vorläufigen Text zeigen", 1,
+    "Was Whisper gerade hört, bevor zwei Durchläufe übereinstimmen — schneller, aber wackelig"),
+  toggle("detach", "Eigene Platzierung", 0,
+    "Aus: hängt unter den fertigen Zeilen und wandert mit. An: steht für sich, wo du willst"),
+  { key: "position", label: "Position (wenn eigene)", min: 0, max: 5, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Unten mittig" },
+      { value: 1, label: "Oben mittig" },
+      { value: 2, label: "Bildmitte" },
+      { value: 3, label: "Unten links" },
+      { value: 4, label: "Unten rechts" },
+      { value: 5, label: "Oben links" },
+    ] },
+  { key: "margin", label: "Abstand zum Rand (wenn eigene)", min: 0, max: 40, step: 0.5, default: 4, unit: "vh" },
+  { key: "size", label: "Größe", min: 0.3, max: 2, step: 0.05, default: 0.82, unit: "×",
+    hint: "Relativ zur Schriftgröße der fertigen Zeilen" },
+  { key: "alpha", label: "Deckkraft", min: 0.1, max: 1, step: 0.05, default: 0.45 },
+  { key: "color", label: "Farbe", min: 0, max: 5, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Wie die Zeilen" },
+      { value: 1, label: "Weiß" },
+      { value: 2, label: "Warmgelb" },
+      { value: 3, label: "Cyan" },
+      { value: 4, label: "Pink" },
+      { value: 5, label: "Grau" },
+    ] },
+  toggle("italic", "Kursiv", 1),
+  { key: "style", label: "Stil", min: 0, max: 4, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Wie die Zeilen" },
+      { value: 1, label: "Schatten" },
+      { value: 2, label: "Dunkle Box" },
+      { value: 3, label: "Kontur" },
+      { value: 4, label: "Leuchten" },
+    ] },
+  { key: "width", label: "Maximale Breite (wenn eigene)", min: 20, max: 100, step: 1, default: 70, unit: "%" },
+];
+GROUP_LABELS.lyricsTent = "Vorläufiger Text";
+
+/** Reactions to the singing (src/lyrics/reactions.ts). The chorus needs live
+ *  lyrics (U); the voice ones only the analyzer. */
+PARAM_SCHEMAS.react = [
+  { key: "refrain", label: "Wenn der Refrain wiederkommt", min: 0, max: 4, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Nichts" },
+      { value: 1, label: "Bildwechsel (wie Auto, Regie hat Vorrang)" },
+      { value: 2, label: "Zufälliges Preset" },
+      { value: 3, label: "Layer B dazu, solange der Refrain läuft" },
+      { value: 4, label: "Milkdrop-Stoß" },
+    ],
+    hint: "Braucht Live-Lyrics (U): eine Zeile, die im Song schon vorkam" },
+  { key: "voiceOn", label: "Wenn der Gesang einsetzt", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Nichts" },
+      { value: 1, label: "Bildwechsel (wie Auto, Regie hat Vorrang)" },
+      { value: 2, label: "Layer B aus" },
+      { value: 3, label: "Milkdrop-Stoß" },
+    ] },
+  { key: "voiceOff", label: "Wenn ein Instrumental beginnt", min: 0, max: 2, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Nichts" },
+      { value: 1, label: "Bildwechsel (wie Auto, Regie hat Vorrang)" },
+      { value: 2, label: "Layer B an" },
+    ] },
+  { key: "instrumental", label: "Instrumental ab", min: 2, max: 20, step: 0.5, default: 6, unit: "s",
+    hint: "So lange ohne Gesang zählt als Instrumental (auch für „Gesang setzt ein“)" },
+  { key: "cooldown", label: "Mindestabstand Bildwechsel", min: 0, max: 60, step: 1, default: 12, unit: "s" },
+  toggle("osd", "Reaktion kurz einblenden", 0, "Zeigt „Refrain“, „Instrumental“ … — zum Einstellen"),
+];
+GROUP_LABELS.react = "Reaktionen auf Gesang";
 
 /** Overlay mode (src/ui/overlayMode.ts): vizzy over the desktop. */
 PARAM_SCHEMAS.overlay = [

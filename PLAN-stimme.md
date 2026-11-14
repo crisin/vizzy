@@ -61,7 +61,20 @@ die 3D-Szenen.
 Modi und braucht keinen Server. Es ist der Unterschied zwischen „das Bild
 tanzt zur Musik“ und „das Bild atmet mit der Sängerin“.
 
-### 2 · Text-Ereignisse und Kinetic Typography (B, später C)
+### 2 · Text-Ereignisse und Kinetic Typography (B, später C) — ✅ umgesetzt
+
+> **Stand 2026-11-14:** Der Worker markiert jede Zeile, die im Song schon
+> vorkam (Wort-LCS ≥ 0,7, mindestens drei Wörter; „oh yeah“ zählt nie),
+> und vergisst das beim Songwechsel. `src/lyrics/events.ts` macht daraus
+> `refrain` / `refrainEnd`, aus dem Stimm-Gate `voiceOn` / `voiceOff`
+> (Instrumental ab x s). Reaktionen in Einstellungen → Automatik
+> (`src/lyrics/reactions.ts`): Bildwechsel über den Auto-Wechsel (Regie hat
+> Vorrang), Zufallspreset, Layer B für die Dauer des Refrains,
+> Milkdrop-Stoß. Wort für Wort im Achtel-Raster. Auf „Take on me“ (ganzer
+> Song, offline) sind beide Refrains markiert, die zweite Strophe nicht.
+> Choreo-Auslöser `refrain` entfällt vorerst: Choreos sind Zeitachsen pro
+> Song, die Reaktionen gelten für alle Songs. Die 3D-Szene „Text“ ist S4.
+
 
 Aus dem Lyrics-Worker werden Ereignisse statt nur Text:
 
@@ -177,7 +190,7 @@ für Sprache, bleibt es ein Feature für Twitch und Mikro.
 | Phase | Was | Aufwand | Sichtbar |
 |---|---|---|---|
 | **S1** ✅ | Stimm-Signal in Rust (Stereo zum Analyzer, Mitte-Maske + YIN), Routing-Quellen, Debug-HUD-Zeile | mittel | sofort, überall |
-| **S2** | Text-Ereignisse (`line`, `repeat`), Overlay im Beat-Raster, Regie-Auslöser `refrain` / `stimme an/aus` | klein | ja |
+| **S2** ✅ | Text-Ereignisse (`line`, `repeat`), Overlay im Beat-Raster, Regie-Auslöser `refrain` / `stimme an/aus` | klein | ja |
 | **S3** | Lyrics Helper liefert Zeilen; Whisper-Abgleich als Uhr; Overlay pünktlich mit Vorschau | mittel, zwei Repos | groß |
 | **S4** | 3D-Szene „Text“ (Kinetic Typography) | mittel | Showcase |
 | **S5** | LLM-Stimmung → Tags; ComfyUI-Bild pro Refrain | mittel | Wow, langsam |

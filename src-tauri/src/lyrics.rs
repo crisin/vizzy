@@ -39,6 +39,17 @@ const RATE: usize = 16000;
 const TAP_MAX_SECS: usize = 30;
 /// history sent to the frontend; it decides how many to show
 const LINES_KEPT: usize = 12;
+/// lines of one song remembered for chorus detection
+const HISTORY_MAX: usize = 400;
+/// how alike two lines must be to count as the same line of a chorus —
+/// looser than run-to-run agreement: Whisper hears a repeat a bit differently
+const REPEAT_SIMILARITY: f32 = 0.7;
+
+/// The song had this line before. Short lines ("oh", "yeah") repeat
+/// everywhere and say nothing about a chorus, so they never count.
+fn is_repeat(history: &[String], text: &str) -> bool {
+    words(text).len() >= 3 && history.iter().any(|h| similar(h, text, REPEAT_SIMILARITY))
+}
 /// Segments Whisper itself doubts (whisper.cpp reports ~0 on music, so this
 /// only ever fires on the OpenAI route).
 const MAX_NO_SPEECH: f64 = 0.6;
@@ -425,6 +436,10 @@ struct Agreement {
     prev: Vec<Seg>,
     /// recently committed lines, newest last
     lines: VecDeque<String>,
+    /// per entry of `lines`: the song had this line before (a chorus)
+    repeats: VecDeque<bool>,
+    /// every line of the current song, for `repeats`
+    history: Vec<String>,
     /// lines committed since start — tells the frontend which ones are new
     committed: u64,
     t: Tuning,
@@ -491,12 +506,23 @@ impl Agreement {
         if n >= 2 && similar(&self.lines[n - 1], text, sim) && similar(&self.lines[n - 2], text, sim) {
             return false;
         }
+        let repeat = is_repeat(&self.history, text);
+        if self.history.len() < HISTORY_MAX {
+            self.history.push(text.to_string());
+        }
         self.lines.push_back(text.to_string());
+        self.repeats.push_back(repeat);
         self.committed += 1;
         while self.lines.len() > LINES_KEPT {
             self.lines.pop_front();
+            self.repeats.pop_front();
         }
         true
+    }
+
+    /// A new song: what came before is no chorus of this one.
+    fn new_song(&mut self) {
+        self.history.clear();
     }
 }
 
@@ -554,6 +580,8 @@ pub fn new() -> Shared {
 #[serde(rename_all = "camelCase")]
 struct Update {
     lines: Vec<String>,
+    /// per line: the song had it before (a chorus line)
+    repeats: Vec<bool>,
     /// lines committed since start; `lines` ends with number `committed`
     committed: u64,
     tentative: String,
@@ -754,6 +782,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     let mut next = Instant::now() + me.cfg.lock().unwrap().tuning.step();
     let mut tlog = crate::lyrics_log::Log::new(app.path().app_data_dir().ok().map(|d| d.join(crate::lyrics_log::DIR)));
     let mut logged_tuning: Option<Tuning> = None;
+    let mut last_song: Option<String> = None;
     // a pause is logged once, not on every quiet step
     let mut paused = true;
     // running stats, logged every 30 runs
@@ -761,8 +790,9 @@ async fn run(app: tauri::AppHandle, me: Shared) {
 
     let emit = |eng: &Engine, tentative: String, behind: Option<f32>, infer_ms: u32, window_s: f32, error: Option<String>| {
         let lines = eng.agr.lines.iter().cloned().collect();
+        let repeats = eng.agr.repeats.iter().copied().collect();
         let committed = eng.agr.committed;
-        let _ = app.emit("lyrics", Update { lines, committed, tentative, behind_s: behind, infer_ms, window_s, error });
+        let _ = app.emit("lyrics", Update { lines, repeats, committed, tentative, behind_s: behind, infer_ms, window_s, error });
     };
 
     loop {
@@ -797,6 +827,10 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             logged_tuning = Some(cfg.tuning.clone());
         }
         let song = me.song.lock().unwrap().clone();
+        if song != last_song {
+            eng.agr.new_song();
+            last_song = song.clone();
+        }
         tlog.set_song(lv, song);
         raw.clear();
         let rate = TAP.take(&mut raw);
@@ -839,6 +873,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
                         1,
                         serde_json::json!({
                             "kind": "line", "text": s.text, "behindS": round1(*b),
+                            "repeat": eng.agr.history.iter().filter(|h| similar(h, &s.text, REPEAT_SIMILARITY)).count() > 1,
                             "inferMs": infer.as_millis() as u64, "windowS": round1(window),
                         }),
                     ));
@@ -1007,6 +1042,18 @@ mod tests {
     }
 
     #[test]
+    fn marks_chorus_lines_but_not_short_fillers() {
+        let mut a = Agreement::default();
+        for l in ["We will rock you now", "Buddy you're a boy", "oh yeah", "we will rock you, now!", "oh yeah"] {
+            assert!(a.accept(l));
+        }
+        assert_eq!(a.repeats.iter().copied().collect::<Vec<_>>(), [false, false, false, true, false]);
+        a.new_song();
+        a.accept("Buddy you're a boy");
+        assert_eq!(a.repeats.back(), Some(&false));
+    }
+
+    #[test]
     fn cuts_a_looping_word() {
         assert_eq!(clean("Oh, oh, oh, oh, oh, oh, oh, yeah ♪", 4), "Oh, oh, oh, oh, yeah");
         assert_eq!(clean("I'm in, I'm in, I'm in, I'm in, I'm in, I'm in, I'm", 4), "I'm in, I'm in, I'm in, I'm in, I'm");
@@ -1101,8 +1148,11 @@ mod tests {
                 match eng.tick(&http, &cfg).await.unwrap() {
                     Tick::Heard { commit, window, infer: d, .. } => {
                         infer.push(d.as_millis());
-                        for (s, b) in commit {
-                            println!("{:>5.1}s  {:<60}  +{b:.1}s  (window {window:.1}s, {} ms)", (i + 1) as f32 * cfg.tuning.step().as_secs_f32(), s.text, d.as_millis());
+                        let n = eng.agr.repeats.len();
+                        let fresh = commit.len().min(n);
+                        for (k, (s, b)) in commit.into_iter().enumerate() {
+                            let rep = if eng.agr.repeats[n - fresh + k.min(fresh - 1)] { "↻" } else { " " };
+                            println!("{:>5.1}s {rep} {:<60}  +{b:.1}s  (window {window:.1}s, {} ms)", (i + 1) as f32 * cfg.tuning.step().as_secs_f32(), s.text, d.as_millis());
                             behind.push(b);
                         }
                     }

@@ -127,9 +127,43 @@
 
 .lyr-tentative {
   opacity: var(--lyr-tent);
-  font-style: italic;
+  color: var(--lyr-tent-color, var(--lyr-color));
+  font-style: var(--lyr-tent-style, italic);
   font-weight: calc(var(--lyr-weight) - 200);
-  font-size: 0.82em;
+  font-size: var(--lyr-tent-size, 0.82em);
+}
+
+/* detached: placed on its own, not moving with the block */
+.lyr-tent-box {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--lyr-tent-margin) 4vw;
+  padding-right: calc(4vw + min(var(--drawer-open-w, 0px), 100vw - 28px));
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.lyr-tent-box .lyr-line {
+  max-width: var(--lyr-tent-width);
+}
+.lyr-tpos-top,
+.lyr-tpos-top-left {
+  justify-content: flex-start;
+}
+.lyr-tpos-middle {
+  justify-content: center;
+}
+.lyr-tpos-bottom-left,
+.lyr-tpos-top-left {
+  align-items: flex-start;
+  text-align: left;
+}
+.lyr-tpos-bottom-right {
+  align-items: flex-end;
+  text-align: right;
 }
 
 .lyr-upper .lyr-text {
@@ -139,13 +173,13 @@
 
 /* ---- styles */
 
-.lyr-style-shadow .lyr-text {
+.lyr-line.lyr-style-shadow .lyr-text {
   text-shadow:
     0 0.05em 0.22em rgba(0, 0, 0, 0.95),
     0 0 0.08em rgba(0, 0, 0, 0.9);
 }
 
-.lyr-style-box .lyr-text {
+.lyr-line.lyr-style-box .lyr-text {
   background: rgba(6, 7, 12, var(--lyr-box));
   padding: 0.04em 0.32em;
   border-radius: 0.18em;
@@ -153,12 +187,12 @@
   box-decoration-break: clone;
 }
 
-.lyr-style-outline .lyr-text {
+.lyr-line.lyr-style-outline .lyr-text {
   -webkit-text-stroke: 0.07em rgba(0, 0, 0, 0.95);
   paint-order: stroke fill;
 }
 
-.lyr-style-glow .lyr-text {
+.lyr-line.lyr-style-glow .lyr-text {
   text-shadow:
     0 0 0.18em currentColor,
     0 0 0.6em currentColor,
@@ -182,7 +216,8 @@
 .lyr-anim-rise .lyr-newest {
   animation: lyr-rise var(--lyr-anim) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.lyr-anim-words .lyr-newest .lyr-word {
+.lyr-anim-words .lyr-newest .lyr-word,
+.lyr-anim-beat .lyr-newest .lyr-word {
   animation: lyr-fade calc(var(--lyr-anim) * 0.6 + 80ms) ease-out backwards;
 }
 @keyframes lyr-fade {

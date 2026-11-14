@@ -59,6 +59,8 @@ class LiveState {
   centreShare = 0;
   /** beats counted by the analyzer's grid — a change is a new beat */
   beatCount = 0;
+  /** 0..1 within the current beat */
+  beatPhase = 0;
   /** extra gain on Milkdrop's audio input, decaying (lyrics nudge the
    *  picture on a new line); the render loop applies and decays it */
   kick = 0;

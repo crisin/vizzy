@@ -7,7 +7,7 @@ import "./lyrics.css";
 
 const POSITIONS = ["bottom", "top", "middle", "bottom-left"] as const;
 const PLACES = ["static", "random", "drift", "bar", "pitch"] as const;
-const ANIMS = ["none", "fade", "rise", "words"] as const;
+const ANIMS = ["none", "fade", "rise", "words", "beat"] as const;
 const STYLES = ["shadow", "box", "outline", "glow"] as const;
 const BGS = ["none", "band", "darken", "frost"] as const;
 const BLENDS = ["normal", "screen", "overlay", "difference", "color-dodge"] as const;
@@ -21,6 +21,9 @@ const FONTS = [
 const MAX_WAVES = 8;
 
 const p = (key: string) => params.get("lyrics", key);
+const pt = (key: string) => params.get("lyricsTent", key);
+const TENT_POS = ["bottom", "top", "middle", "bottom-left", "bottom-right", "top-left"] as const;
+const TENT_COLORS = ["", "#ffffff", "#ffe08a", "#7fe7ff", "#ff8fd0", "#a8b3c4"];
 
 type Wave = { id: number; x: number; y: number };
 
@@ -161,7 +164,20 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
   const animMs = p("animMs");
 
   const shownLines = stale ? [] : s.lines.slice(-Math.max(1, Math.round(p("lines"))));
-  const tentative = !stale && p("tentative") >= 0.5 ? s.tentative : "";
+  const tentative = !stale && pt("show") >= 0.5 ? s.tentative : "";
+  const detach = pt("detach") >= 0.5;
+  const tentStyle = pt("style") === 0 ? style : STYLES[pt("style") - 1];
+  const tentCss = {
+    "--lyr-tent": String(pt("alpha")),
+    "--lyr-tent-size": `${pt("size")}em`,
+    "--lyr-tent-color": TENT_COLORS[pt("color")] || "var(--lyr-color)",
+    "--lyr-tent-style": pt("italic") >= 0.5 ? "italic" : "normal",
+  } as CSSProperties;
+  const tentLine = tentative ? (
+    <div className={`lyr-line lyr-tentative lyr-style-${tentStyle}`} style={detach ? undefined : tentCss}>
+      <span className="lyr-text">{tentative}</span>
+    </div>
+  ) : null;
   const olderFade = p("olderFade");
 
   const css = {
@@ -173,7 +189,6 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
     "--lyr-margin": `${p("margin")}vh`,
     "--lyr-box": String(p("boxAlpha")),
     "--lyr-bga": String(p("bgAlpha")),
-    "--lyr-tent": String(p("tentativeAlpha")),
     "--lyr-anim": `${animMs}ms`,
     "--lyr-wave": `${p("waveSize")}vmin`,
     "--lyr-wave-ms": `${waveMs}ms`,
@@ -183,7 +198,6 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
   const cls = [
     "lyrics-overlay",
     `lyr-pos-${position}`,
-    `lyr-style-${style}`,
     `lyr-anim-${anim}`,
     `lyr-bg-${bg}`,
     colorIdx === 4 ? "lyr-rainbow" : "",
@@ -212,16 +226,16 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
           return (
             <div
               key={l.n}
-              className={`lyr-line ${age === 0 ? "lyr-newest" : ""}`}
+              className={`lyr-line lyr-style-${style} ${age === 0 ? "lyr-newest" : ""}`}
               style={{ opacity: Math.max(0.08, 1 - age * olderFade) }}
             >
               <span className="lyr-text">
-                {anim === "words"
+                {anim === "words" || anim === "beat"
                   ? l.text.split(" ").map((w, k, all) => (
                       <span
                         key={k}
                         className="lyr-word"
-                        style={{ animationDelay: `${(animMs * k) / Math.max(1, all.length)}ms` }}
+                        style={{ animationDelay: `${wordDelay(anim, k, all.length, animMs, l.at)}ms` }}
                       >
                         {w}{" "}
                       </span>
@@ -231,12 +245,16 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
             </div>
           );
         })}
-        {tentative && (
-          <div className="lyr-line lyr-tentative">
-            <span className="lyr-text">{tentative}</span>
-          </div>
-        )}
+        {!detach && tentLine}
       </div>
+      {detach && tentLine && (
+        <div
+          className={`lyr-tent-box lyr-tpos-${TENT_POS[pt("position")] ?? "bottom"}`}
+          style={{ ...tentCss, "--lyr-tent-margin": `${pt("margin")}vh`, "--lyr-tent-width": `${pt("width")}%` } as CSSProperties}
+        >
+          {tentLine}
+        </div>
+      )}
       {s.error && (
         <button type="button" className="lyr-hint" onClick={onOpenSettings}>
           Lyrics: {s.error} · Einstellungen öffnen
@@ -252,6 +270,24 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
       )}
     </div>
   );
+}
+
+/** When word `k` of a line appears. "beat": one word per eighth note,
+ *  starting on the next eighth after the line arrived (`at`) — fixed at that
+ *  moment, so re-renders do not restart the reveal. */
+const beatStart = new Map<number, number>();
+function wordDelay(anim: string, k: number, n: number, animMs: number, at: number): number {
+  if (anim !== "beat" || live.bpm < 40) return (animMs * k) / Math.max(1, n);
+  const eighth = 30_000 / live.bpm;
+  let start = beatStart.get(at);
+  if (start === undefined) {
+    const into = (live.beatPhase * 2) % 1; // position within the current eighth
+    start = (1 - into) * eighth;
+    beatStart.set(at, start);
+    if (beatStart.size > 50) beatStart.delete(beatStart.keys().next().value!);
+  }
+  // relative to when the element appeared (≈ `at`), like the CSS animation
+  return start + k * eighth;
 }
 
 /** somewhere within ±spread % of the centre, not too close to the last */

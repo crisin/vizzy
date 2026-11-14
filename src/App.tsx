@@ -17,6 +17,8 @@ import { overlayMode, useOverlayMode } from "./ui/overlayMode";
 import { LyricsOverlay } from "./lyrics/LyricsOverlay";
 import { LyricsSettings } from "./lyrics/LyricsSettings";
 import { lyrics } from "./lyrics/store";
+import { lyricEvents } from "./lyrics/events";
+import { attachReactions } from "./lyrics/reactions";
 import { rememberFullscreen, restoreFullscreen } from "./ui/fullscreenMemory";
 import { SCENE_DESCS, SCENE_LABELS, SCENE_NAMES, type SceneName } from "./sceneCatalog";
 import { ModeSwitch } from "./ui/ModeSwitch";
@@ -1768,6 +1770,28 @@ function App() {
   }, [pokeHud]);
 
   /** H, the ⋯ menu and the settings switch all come through here */
+  // reactions to the singing (Settings → Automatik): picture changes go
+  // through the auto-switch, so the Regie keeps the last word
+  useEffect(
+    () =>
+      attachReactions({
+        autoPick: () => {
+          if (modeRef.current === "milkdrop") autoPickRef.current("auto");
+        },
+        randomPreset: () => {
+          if (modeRef.current === "milkdrop") randomPreset();
+        },
+        layerB: (on) => {
+          if (modeRef.current !== "milkdrop" || !layerBRef.current.key) return false;
+          setLayerB((cfg) => ({ ...cfg, enabled: on }));
+          return true;
+        },
+        isLayerBOn: () => layerBRef.current.enabled && !!layerBRef.current.key,
+        osd: showToast,
+      }),
+    [randomPreset, showToast],
+  );
+
   // overlay mode: the page goes see-through over the desktop (ui/overlayMode)
   const overlayOn = useOverlayMode();
   useEffect(() => {
@@ -3208,6 +3232,7 @@ function startVisualizer(
       beatPhase = f[8];
       beatCount = f[9];
       live.beatCount = beatCount;
+      live.beatPhase = beatPhase;
       barPhase = f[10];
       phrasePhase = f[11];
       section = f[12];
@@ -3312,6 +3337,7 @@ function startVisualizer(
     // in the plain-browser preview too
     beatCount = Math.floor(beats);
     live.beatCount = beatCount;
+    live.beatPhase = inBeat;
     beatPhase = inBeat;
     barPhase = (beats % 4) / 4;
     phrasePhase = (beats % 32) / 32;
@@ -3445,6 +3471,8 @@ function startVisualizer(
 
     // shared with the library tile and the tag-driven auto-switch
     live.update(rms, section, phrasePhase, gridConf, dt);
+    // singing starts / stops (lyrics/events → reactions)
+    lyricEvents.tick(dt);
     // song choreos fire their cues, the song analysis records (Regie)
     director.tick();
     {

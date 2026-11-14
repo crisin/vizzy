@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { nowPlaying } from "../regie/nowPlaying";
 import { params } from "../params";
+import { lyricEvents } from "./events";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -120,6 +121,8 @@ export function presetOf(cfg: LyricsConfig): string | null {
 /** One `lyrics` event (`lyrics::Update`). */
 type Update = {
   lines: string[];
+  /** per line: the song had it before (chorus) */
+  repeats?: boolean[];
   committed: number;
   tentative: string;
   behindS: number | null;
@@ -132,6 +135,8 @@ export type LyricLine = {
   /** running number since the worker started — stable React key */
   n: number;
   text: string;
+  /** the song had this line before — part of a chorus */
+  repeat: boolean;
   /** performance.now() when it arrived */
   at: number;
 };
@@ -186,6 +191,7 @@ class LyricsStore {
     // a new song: start from a clean window, so the old song's tail does
     // not end up as the new song's first line
     nowPlaying.onSongChange((t) => {
+      lyricEvents.reset();
       if (params.get("lyrics", "resetOnSong") >= 0.5) this.reset();
       this.tellSong(t);
     });
@@ -211,8 +217,11 @@ class LyricsStore {
     // the update carries the last few lines, ending with number `committed`
     const first = u.committed - u.lines.length + 1;
     const known = new Map(this.snap.lines.map((l) => [l.n, l]));
-    const lines = u.lines.map((text, i) => known.get(first + i) ?? { n: first + i, text, at: now });
-    const fresh = lines.some((l) => !known.has(l.n));
+    const lines = u.lines.map(
+      (text, i) => known.get(first + i) ?? { n: first + i, text, at: now, repeat: u.repeats?.[i] ?? false },
+    );
+    const added = lines.filter((l) => !known.has(l.n));
+    const fresh = added.length > 0;
     if (u.behindS != null) {
       this.behind.push(u.behindS);
       if (this.behind.length > 12) this.behind.shift();
@@ -229,6 +238,7 @@ class LyricsStore {
       behindAvg: this.behind.length ? this.behind.reduce((a, b) => a + b, 0) / this.behind.length : null,
       lastEventAt: now,
     });
+    for (const l of added) lyricEvents.line(l.text, l.repeat);
   }
 
   /** Changes the config; the worker picks it up on its next step. Saving to
@@ -302,6 +312,7 @@ class LyricsStore {
     let line: string[] = [];
     let n = this.snap.lines[this.snap.lines.length - 1]?.n ?? 0;
     let all = this.snap.lines.map((l) => l.text);
+    let reps = this.snap.lines.map((l) => l.repeat);
     this.demoTimer = window.setInterval(() => {
       const { w, end } = words[i % words.length];
       i++;
@@ -309,11 +320,13 @@ class LyricsStore {
       if (end) {
         n++;
         all = [...all, line.join(" ")].slice(-12);
+        reps = [...reps, i > words.length].slice(-12);
         line = [];
       }
       const behindS = end ? 1.6 + Math.random() * 1.2 : null;
       this.ingest({
         lines: all,
+        repeats: reps,
         committed: n,
         tentative: line.join(" "),
         behindS,

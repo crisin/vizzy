@@ -432,6 +432,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               </label>
             </Field>
             <ParamGroup group="milkdrop" title="Wann und wohin gewechselt wird" onChanged={bump} />
+            <ParamGroup group="react" onChanged={bump} />
             <p className="set-note">
               Favoriten und eigene Presets verwaltest du in der Library (L), Regeln
               pro Song oder Playlist in der Regie (G).

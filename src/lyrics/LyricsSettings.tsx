@@ -214,6 +214,7 @@ export function LyricsSettings() {
       </Section>
 
       <ParamGroup group="lyrics" onChanged={bump} />
+      <ParamGroup group="lyricsTent" onChanged={bump} />
 
       <Section id="lyrics.log" title="Protokoll" badge={cfg.log ? (cfg.log === 2 ? "Debug" : "an") : undefined}>
         <label className="set-row set-row-select">
