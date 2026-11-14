@@ -5,6 +5,7 @@ import { KEYS, type KeyScope } from "./keys";
 const GROUPS: { title: string; scope: KeyScope }[] = [
   { title: "Überall", scope: "global" },
   { title: "Milkdrop", scope: "milkdrop" },
+  { title: "Systemweit", scope: "os" },
 ];
 
 export function HelpPanel({

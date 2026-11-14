@@ -57,6 +57,11 @@ class LiveState {
   pitchConf = 0;
   /** share of the vocal band that sits dead centre (debug) */
   centreShare = 0;
+  /** beats counted by the analyzer's grid — a change is a new beat */
+  beatCount = 0;
+  /** extra gain on Milkdrop's audio input, decaying (lyrics nudge the
+   *  picture on a new line); the render loop applies and decays it */
+  kick = 0;
 
   /** Seconds per bar at the current tempo, 2 s when the tempo is unknown. */
   barSeconds(): number {

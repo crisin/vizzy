@@ -2,6 +2,18 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-14 — Overlay mode
+
+- **A click-through window needs a way out that is not the window.** With
+  `set_ignore_cursor_events(true)` vizzy never gets focus, so its own keys
+  are dead; a global shortcut (`tauri-plugin-global-shortcut`, Rust side,
+  no webview permission) is the exit. The mode is never persisted.
+- **Transparency is a creation-time window property** (`transparent` in
+  `tauri.conf.json`); normal mode stays opaque because the page paints its
+  own background.
+- **Do not test global shortcuts by injecting keys into the user's
+  desktop** — whatever has focus gets them too (here: a running game).
+
 ## 2026-11-14 — Singing voice without a model
 
 - **Pitch trackers don't find voices in a mix.** YIN periodicity on the

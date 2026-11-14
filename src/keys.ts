@@ -3,7 +3,9 @@
 // apart. Keys that only mean something inside a panel (tag bar 1–9, Ctrl+S
 // in the studio) stay with that panel.
 
-export type KeyScope = "global" | "milkdrop" | "3d";
+/** "os": a system-wide shortcut (works while vizzy has no focus); listed
+ *  in the help, never matched by the in-app handler. */
+export type KeyScope = "global" | "milkdrop" | "3d" | "os";
 
 export type KeyId =
   | "mode"
@@ -15,6 +17,9 @@ export type KeyId =
   | "presentation"
   | "info"
   | "lyrics"
+  | "overlay"
+  | "overlayOs"
+  | "overlayAlpha"
   | "debug"
   | "prev"
   | "next"
@@ -90,6 +95,27 @@ export const KEYS: KeyBinding[] = [
     does: "Live-Lyrics (Untertitel) an/aus",
     scope: "global",
     match: letter("u"),
+  },
+  {
+    id: "overlay",
+    label: "O",
+    does: "Overlay-Modus: vizzy durchsichtig über dem Desktop, Klicks gehen durch",
+    scope: "global",
+    match: letter("o"),
+  },
+  {
+    id: "overlayOs",
+    label: "Strg+Alt+V",
+    does: "Overlay-Modus an/aus — auch wenn vizzy keinen Fokus hat",
+    scope: "os",
+    match: () => false,
+  },
+  {
+    id: "overlayAlpha",
+    label: "Strg+Alt+↑/↓",
+    does: "Deckkraft im Overlay-Modus",
+    scope: "os",
+    match: () => false,
   },
   {
     id: "settings",

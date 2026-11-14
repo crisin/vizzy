@@ -13,6 +13,7 @@ import type { BCVisualizer } from "butterchurn";
 import { getBasePresetKeys } from "butterchurn-presets/presetPackMeta.js";
 import { matchKey, withKey } from "./keys";
 import { InfoOverlay } from "./ui/InfoOverlay";
+import { overlayMode, useOverlayMode } from "./ui/overlayMode";
 import { LyricsOverlay } from "./lyrics/LyricsOverlay";
 import { LyricsSettings } from "./lyrics/LyricsSettings";
 import { lyrics } from "./lyrics/store";
@@ -1767,6 +1768,19 @@ function App() {
   }, [pokeHud]);
 
   /** H, the ⋯ menu and the settings switch all come through here */
+  // overlay mode: the page goes see-through over the desktop (ui/overlayMode)
+  const overlayOn = useOverlayMode();
+  useEffect(() => {
+    overlayMode.notify = showToast;
+  }, [showToast]);
+  useEffect(() => {
+    if (!overlayOn) return;
+    // nothing clickable while clicks pass through
+    setSettingsOpen(false);
+    setCockpitOpen(false);
+    setTagBarOpen(false);
+  }, [overlayOn]);
+
   const enterPresentation = useCallback(() => {
     setPresentation(true);
     setSettingsOpen(false);
@@ -1843,6 +1857,9 @@ function App() {
           break;
         case "info":
           setInfoNonce((n) => n + 1);
+          break;
+        case "overlay":
+          overlayMode.toggle();
           break;
         case "lyrics": {
           const on = !lyrics.getSnapshot().cfg.enabled;
@@ -1980,7 +1997,7 @@ function App() {
         supportsBgLayer(mode) && bgLayer !== "off" ? `bg-${bgLayer}` : ""
       } ${controlsVisible ? "" : "idle"} ${
         presentation || params.get("ui", "hideCursor") >= 0.5 ? "hide-cursor" : ""
-      } ${presentation ? "presenting" : ""}`}
+      } ${presentation || overlayOn ? "presenting" : ""}`}
       data-ui={uiTier}
       onPointerMove={pokeHud}
       onPointerDown={pokeHud}
@@ -2262,6 +2279,7 @@ function App() {
                 { label: "Aus Bausteinen bauen", onSelect: () => openStudio(presetKey, "parts") },
                 { separator: true },
                 { label: "Präsentationsmodus", keyHint: "H", onSelect: () => enterPresentation() },
+                { label: "Overlay über dem Desktop", keyHint: "O", onSelect: () => overlayMode.toggle() },
               ]}
             />
             {(milkdropStatus === "idle" || milkdropStatus === "loading") && (
@@ -2526,6 +2544,8 @@ function App() {
           onDebug={setDebugOpen}
           presentation={presentation}
           onPresentation={(on) => (on ? enterPresentation() : setPresentation(false))}
+          overlay={overlayOn}
+          onOverlay={(on) => void overlayMode.set(on)}
           bgLayer={bgLayer}
           bgLayers={BG_LAYERS}
           onBgLayer={(v) => setBgLayer(v as BgLayer)}
@@ -3187,6 +3207,7 @@ function startVisualizer(
       bpmConf = f[7];
       beatPhase = f[8];
       beatCount = f[9];
+      live.beatCount = beatCount;
       barPhase = f[10];
       phrasePhase = f[11];
       section = f[12];
@@ -3290,6 +3311,7 @@ function startVisualizer(
     // a perfectly steady fake grid, so phrase-driven behaviour is testable
     // in the plain-browser preview too
     beatCount = Math.floor(beats);
+    live.beatCount = beatCount;
     beatPhase = inBeat;
     barPhase = (beats % 4) / 4;
     phrasePhase = (beats % 32) / 32;
@@ -3426,7 +3448,9 @@ function startVisualizer(
     // song choreos fire their cues, the song analysis records (Regie)
     director.tick();
     {
-      const g = params.get("audio", "gain");
+      // a lyric line can nudge the picture (src/lyrics), decaying in ~0.25 s
+      const g = params.get("audio", "gain") * (1 + live.kick);
+      live.kick *= Math.exp(-dt / 0.25);
       const n = Math.min(wave.length, liveTimeByte.length);
       for (let j = 0; j < n; j++) {
         const v = Math.max(-1, Math.min(1, wave[j] * g));

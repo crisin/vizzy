@@ -97,6 +97,8 @@ export type SettingsPanelProps = {
   onDebug: (value: boolean) => void;
   presentation: boolean;
   onPresentation: (value: boolean) => void;
+  overlay: boolean;
+  onOverlay: (value: boolean) => void;
 
   bgLayer: string;
   bgLayers: readonly string[];
@@ -474,6 +476,21 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </small>
                 </span>
               </label>
+              <label className="set-row set-row-toggle">
+                <input
+                  type="checkbox"
+                  checked={props.overlay}
+                  onChange={(e) => props.onOverlay(e.target.checked)}
+                />
+                <span className="set-label">
+                  Overlay-Modus (O)
+                  <small className="set-hint">
+                    vizzy liegt durchsichtig über dem ganzen Bildschirm, Klicks gehen zu den
+                    Fenstern darunter. Raus nur mit Strg+Alt+V — vizzy hat dann keinen Fokus.
+                  </small>
+                </span>
+              </label>
+              <ParamGroup group="overlay" onChanged={bump} />
             </Field>
             <Field label="Anzeigen">
               <label className="set-row set-row-toggle">

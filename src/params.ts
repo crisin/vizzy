@@ -363,6 +363,16 @@ GROUP_LABELS.dev = "Entwicklung";
 /** How live lyrics look on the stage (`src/lyrics/`). What Whisper hears and
  *  when a line counts as final is the engine's business (lyrics.json). */
 PARAM_SCHEMAS.lyrics = [
+  { key: "place", label: "Platzierung", min: 0, max: 4, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Statisch (Position unten)" },
+      { value: 1, label: "Zufällig, jede Zeile woanders" },
+      { value: 2, label: "Wandernd" },
+      { value: 3, label: "Springt jeden Takt" },
+      { value: 4, label: "Folgt der Tonhöhe (hoch gesungen = oben)" },
+    ] },
+  { key: "spread", label: "Bewegungsraum", min: 5, max: 45, step: 1, default: 25, unit: "%",
+    hint: "Wie weit Text bei Zufällig, Wandernd, Takt und Tonhöhe von der Mitte weg darf" },
   { key: "position", label: "Position", min: 0, max: 3, step: 1, default: 0, kind: "select",
     options: [
       { value: 0, label: "Unten mittig" },
@@ -397,6 +407,36 @@ PARAM_SCHEMAS.lyrics = [
     ] },
   { key: "boxAlpha", label: "Box-Deckkraft", min: 0, max: 1, step: 0.05, default: 0.55,
     hint: "Nur beim Stil „Dunkle Box“" },
+  { key: "bg", label: "Hintergrund", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Keiner" },
+      { value: 1, label: "Verlauf-Band über die ganze Breite" },
+      { value: 2, label: "Bild hinter dem Text abdunkeln" },
+      { value: 3, label: "Milchglas" },
+    ] },
+  { key: "bgAlpha", label: "Hintergrund-Stärke", min: 0, max: 1, step: 0.05, default: 0.6 },
+  { key: "blend", label: "Mit dem Bild mischen", min: 0, max: 4, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Normal" },
+      { value: 1, label: "Aufhellen (Screen)" },
+      { value: 2, label: "Überlagern (Overlay)" },
+      { value: 3, label: "Differenz — invertiert das Bild" },
+      { value: 4, label: "Farbig abwedeln" },
+    ],
+    hint: "Der Text verrechnet sich mit dem Bild darunter, statt es zu verdecken" },
+  { key: "waves", label: "Wellen vom Text", min: 0, max: 3, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Aus" },
+      { value: 1, label: "Bei jeder neuen Zeile" },
+      { value: 2, label: "Im Takt" },
+      { value: 3, label: "Mit der Stimme (Silben)" },
+    ] },
+  { key: "waveSize", label: "Wellen-Größe", min: 10, max: 120, step: 1, default: 45, unit: "vmin" },
+  { key: "waveMs", label: "Wellen-Dauer", min: 300, max: 5000, step: 50, default: 1600, unit: "ms" },
+  { key: "wobble", label: "Verzerren mit der Musik", min: 0, max: 40, step: 1, default: 0,
+    hint: "Der Text wabert mit dem Pegel (Verschiebungs-Filter)" },
+  { key: "kick", label: "Milkdrop anstoßen bei neuer Zeile", min: 0, max: 3, step: 0.1, default: 0,
+    hint: "Verstärkt Milkdrops Audio-Eingang kurz — das Preset reagiert auf jede Zeile" },
   { key: "color", label: "Farbe", min: 0, max: 4, step: 1, default: 0, kind: "select",
     options: [
       { value: 0, label: "Weiß" },
@@ -416,14 +456,31 @@ PARAM_SCHEMAS.lyrics = [
   toggle("upper", "GROSSBUCHSTABEN", 0),
   { key: "width", label: "Maximale Breite", min: 30, max: 100, step: 1, default: 80, unit: "%" },
   { key: "margin", label: "Abstand zum Rand", min: 0, max: 40, step: 0.5, default: 9, unit: "vh" },
-  { key: "pulse", label: "Puls mit der Lautstärke", min: 0, max: 0.4, step: 0.01, default: 0,
-    hint: "Die neueste Zeile wächst mit dem Pegel" },
+  { key: "pulse", label: "Puls", min: 0, max: 0.4, step: 0.01, default: 0,
+    hint: "Die neueste Zeile wächst mit der Quelle darunter" },
+  { key: "pulseSrc", label: "Puls-Quelle", min: 0, max: 1, step: 1, default: 1, kind: "select",
+    options: [
+      { value: 0, label: "Lautstärke der Musik" },
+      { value: 1, label: "Stimme (Gesangserkennung)" },
+    ] },
   toggle("resetOnSong", "Bei Songwechsel neu anfangen", 1,
     "Vergisst Fenster und Zeilen, sobald die Media-Session einen neuen Song meldet"),
   toggle("stats", "Messwerte unter dem Text", 0,
     "Verzögerung, Whisper-Zeit und Fenster — zum Einstellen der Engine"),
 ];
 GROUP_LABELS.lyrics = "Lyrics-Anzeige";
+
+/** Overlay mode (src/ui/overlayMode.ts): vizzy over the desktop. */
+PARAM_SCHEMAS.overlay = [
+  { key: "alpha", label: "Deckkraft", min: 0.1, max: 1, step: 0.05, default: 0.55,
+    hint: "Wie stark vizzy über den anderen Fenstern liegt · Strg+Alt+↑/↓" },
+  { key: "show", label: "Zeigen", min: 0, max: 1, step: 1, default: 0, kind: "select",
+    options: [
+      { value: 0, label: "Alles (Bild und Lyrics)" },
+      { value: 1, label: "Nur die Lyrics — Karaoke über dem Desktop" },
+    ] },
+];
+GROUP_LABELS.overlay = "Overlay-Modus";
 
 export const PARAMS_STORAGE_KEY = "vizzy.params.v1";
 const STORAGE_KEY = PARAMS_STORAGE_KEY;

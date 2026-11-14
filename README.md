@@ -174,6 +174,11 @@ See [PLAN.md](PLAN.md) for the roadmap.
   *Ausgeglichen*, *Akkurat*) — the knobs live in `lyrics.json` and apply
   on the next step. Lines also go to the dev bridge's `GET /log`. In the
   browser preview a demo stream with invented lines stands in.
+  Placement static, random per line, drifting, jumping per bar or
+  following the sung pitch; backgrounds (gradient band, darkening, frosted
+  glass); waves from the text on new lines, on the beat or on syllables;
+  blend modes with the picture, text that warps with the level, and a
+  "nudge Milkdrop" option that briefly boosts its audio input on every line.
   **Transcript log** (Settings → Lyrics → Protokoll): JSON Lines in
   `<app_data>/lyrics-log/YYYY-MM-DD.jsonl` (UTC), each entry with `t`,
   `song` and `kind` — `session`, `song`, `line` (text, `behindS`,
@@ -191,6 +196,14 @@ See [PLAN.md](PLAN.md) for the roadmap.
   lyrics_offline -- --ignored --nocapture` (raw 16 kHz mono f32, the
   ffmpeg line is in the test); `VIZZY_LYRICS_TUNING='{"stepMs":300}'`
   tries other knobs.
+- **Overlay mode** (`O`, ⋯ menu, Settings → Bedienung): vizzy covers the
+  whole monitor, see-through (adjustable opacity) and click-through, always
+  on top — the PC stays usable underneath. Optionally only the lyrics
+  (karaoke over the desktop). While clicks pass through vizzy has no focus,
+  so the way out is the system-wide **Ctrl+Alt+V**; **Ctrl+Alt+↑/↓** sets
+  the opacity. Never persisted: a restart is always a normal window.
+  `src-tauri/src/overlay.rs`, the window is created transparent. macOS:
+  on top and click-through, but not see-through (needs the private API).
 - **Singing voice** as a modulation source (`src-tauri/src/voice.rs`): per
   FFT bin of the vocal band the analyzer keeps what sits dead centre in the
   stereo image (a vocal remover in reverse); its level, a sung/not-sung

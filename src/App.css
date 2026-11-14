@@ -1537,3 +1537,19 @@ kbd {
   margin: 4px 6px;
   background: rgba(148, 163, 184, 0.18);
 }
+
+/* overlay mode (src/ui/overlayMode.ts): the window is transparent, so the
+   page drops its own background and dims itself; clicks pass through */
+html.overlay-mode,
+html.overlay-mode body,
+html.overlay-mode .stage {
+  background: transparent !important;
+}
+html.overlay-mode #root {
+  opacity: var(--overlay-alpha, 0.55);
+}
+html.overlay-lyrics-only .stage > canvas,
+html.overlay-lyrics-only .debug-hud,
+html.overlay-lyrics-only .scene-empty {
+  visibility: hidden;
+}

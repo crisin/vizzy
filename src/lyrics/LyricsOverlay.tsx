@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, type CSSProperties } from "react";
+import { useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { params } from "../params";
 import { live } from "../milkdrop/live";
 import { keyLabel } from "../keys";
@@ -6,8 +6,11 @@ import { lyrics, useLyrics } from "./store";
 import "./lyrics.css";
 
 const POSITIONS = ["bottom", "top", "middle", "bottom-left"] as const;
+const PLACES = ["static", "random", "drift", "bar", "pitch"] as const;
 const ANIMS = ["none", "fade", "rise", "words"] as const;
 const STYLES = ["shadow", "box", "outline", "glow"] as const;
+const BGS = ["none", "band", "darken", "frost"] as const;
+const BLENDS = ["normal", "screen", "overlay", "difference", "color-dodge"] as const;
 const COLORS = ["#ffffff", "#ffe08a", "#7fe7ff", "#ff8fd0", "#ff7a7a"];
 const FONTS = [
   'system-ui, "Segoe UI", "SF Pro Display", Roboto, sans-serif',
@@ -15,13 +18,21 @@ const FONTS = [
   '"Bahnschrift Condensed", "Bahnschrift", "Arial Narrow", "Roboto Condensed", sans-serif',
   'ui-monospace, "Cascadia Mono", Consolas, monospace',
 ];
+const MAX_WAVES = 8;
 
 const p = (key: string) => params.get("lyrics", key);
+
+type Wave = { id: number; x: number; y: number };
+
+/** 80 Hz … 1 kHz on a log scale → 0..1 */
+const pitchNorm = (hz: number) => Math.min(1, Math.max(0, Math.log2(hz / 80) / Math.log2(1000 / 80)));
 
 /**
  * Live lyrics on the stage: the last few committed lines, the newest at the
  * bottom, and the tentative tail fainter behind it. Pure display — what it
- * shows comes from the worker; how it looks from the "lyrics" parameters.
+ * shows comes from the worker; how it looks and moves from the "lyrics"
+ * parameters; the voice signal (live.voice, live.pitch) drives pulse,
+ * waves and the pitch placement.
  */
 export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }) {
   const s = useLyrics();
@@ -40,32 +51,111 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
     return () => window.clearTimeout(id);
   }, [hideAfter, s.lastTextAt, stale, sinceText]);
 
-  // loudness pulse on the newest line, straight to a CSS variable
   const rootRef = useRef<HTMLDivElement>(null);
+  const blockRef = useRef<HTMLDivElement>(null);
+  const dispRef = useRef<SVGFEDisplacementMapElement>(null);
+  const [waves, setWaves] = useState<Wave[]>([]);
+  const waveId = useRef(0);
+
+  const enabled = s.cfg.enabled;
+  const place = PLACES[p("place")] ?? "static";
+  const spread = p("spread");
   const pulse = p("pulse");
+  const pulseSrc = p("pulseSrc");
+  const wavesMode = p("waves");
+  const waveMs = p("waveMs");
+  const wobble = p("wobble");
+  const newest = s.lines[s.lines.length - 1]?.n ?? 0;
+
+  /** a ring from the centre of the text */
+  const emitWave = useRef(() => {});
+  emitWave.current = () => {
+    const el = blockRef.current;
+    if (!el || !el.childElementCount) return;
+    const r = el.getBoundingClientRect();
+    const w: Wave = { id: ++waveId.current, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    setWaves((ws) => [...ws.slice(-(MAX_WAVES - 1)), w]);
+    window.setTimeout(() => setWaves((ws) => ws.filter((x) => x.id !== w.id)), waveMs + 50);
+  };
+
+  // a new line: jump somewhere new, ring, nudge Milkdrop
+  const target = useRef({ x: 0, y: 0 });
+  const lastLine = useRef(newest);
   useEffect(() => {
-    const el = rootRef.current;
-    if (!el || pulse <= 0) {
-      el?.style.setProperty("--lyr-pulse", "1");
-      return;
-    }
+    if (newest === lastLine.current) return;
+    lastLine.current = newest;
+    if (place === "random") target.current = randomSpot(spread);
+    if (wavesMode === 1) emitWave.current();
+    const kick = p("kick");
+    if (kick > 0) live.kick = Math.max(live.kick, kick);
+  }, [newest, place, spread, wavesMode]);
+
+  // per frame: placement, pulse, wobble, beat/voice waves — straight to the
+  // DOM, React only renders when the text changes
+  useEffect(() => {
+    if (!enabled) return;
     let raf = 0;
-    let v = 0;
+    let pv = 0;
+    let pos = { x: 0, y: 0 };
+    let lastBeat = live.beatCount;
+    let lastVoice = 0;
+    let lastWaveAt = 0;
+    let pitchY = 0;
+    const t0 = performance.now();
     const tick = () => {
-      const target = Math.min(1, live.rms * 5);
-      v += (target - v) * (target > v ? 0.5 : 0.12);
-      el.style.setProperty("--lyr-pulse", String(1 + v * pulse));
+      const now = performance.now();
+      const t = (now - t0) / 1000;
+      const block = blockRef.current;
+      const root = rootRef.current;
+
+      // placement, in % of the viewport around the centre
+      if (place === "drift") {
+        target.current = { x: spread * Math.sin(t * 0.13), y: spread * 0.7 * Math.sin(t * 0.21 + 1.3) };
+      } else if (place === "bar" && live.beatCount !== lastBeat && Math.floor(live.beatCount) % 4 === 0) {
+        target.current = randomSpot(spread);
+      } else if (place === "pitch") {
+        if (live.pitchConf > 0.4 && live.pitch > 0) pitchY = (0.5 - pitchNorm(live.pitch)) * 2 * spread;
+        target.current = { x: 0, y: pitchY };
+      } else if (place === "static") {
+        target.current = { x: 0, y: 0 };
+      }
+      const k = place === "pitch" ? 0.08 : place === "drift" ? 1 : 0.12;
+      pos = { x: pos.x + (target.current.x - pos.x) * k, y: pos.y + (target.current.y - pos.y) * k };
+      if (block) block.style.translate = place === "static" ? "" : `${pos.x}vw ${pos.y}vh`;
+
+      // pulse on the newest line
+      if (root) {
+        const src = pulseSrc === 1 ? live.voice : Math.min(1, live.rms * 5);
+        pv += (src - pv) * (src > pv ? 0.5 : 0.12);
+        root.style.setProperty("--lyr-pulse", String(1 + pv * pulse));
+      }
+
+      // wobble: displacement grows with the level
+      if (dispRef.current) dispRef.current.setAttribute("scale", String(wobble * Math.min(1, live.rms * 6)));
+
+      // waves on the beat or on the syllables
+      if (wavesMode === 2 && live.beatCount !== lastBeat) emitWave.current();
+      if (wavesMode === 3) {
+        const rising = live.voice > 0.7 && lastVoice <= 0.7;
+        if (rising && now - lastWaveAt > 220) {
+          emitWave.current();
+          lastWaveAt = now;
+        }
+      }
+      lastVoice = live.voice;
+      lastBeat = live.beatCount;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [pulse]);
+  }, [enabled, place, spread, pulse, pulseSrc, wobble, wavesMode]);
 
-  if (!s.cfg.enabled) return null;
+  if (!enabled) return null;
 
-  const position = POSITIONS[p("position")] ?? "bottom";
+  const position = place === "static" ? (POSITIONS[p("position")] ?? "bottom") : "middle";
   const anim = ANIMS[p("anim")] ?? "fade";
   const style = STYLES[p("style")] ?? "shadow";
+  const bg = BGS[p("bg")] ?? "none";
   const colorIdx = p("color");
   const showStats = p("stats") >= 0.5;
   const animMs = p("animMs");
@@ -77,13 +167,17 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
   const css = {
     "--lyr-size": `${p("size")}vh`,
     "--lyr-color": COLORS[colorIdx] ?? "#fff",
-    "--lyr-font": FONTS[p("font")] ?? "inherit",
+    "--lyr-font": FONTS[p("font")] ?? FONTS[0],
     "--lyr-weight": String(p("weight")),
     "--lyr-width": `${p("width")}%`,
     "--lyr-margin": `${p("margin")}vh`,
     "--lyr-box": String(p("boxAlpha")),
+    "--lyr-bga": String(p("bgAlpha")),
     "--lyr-tent": String(p("tentativeAlpha")),
     "--lyr-anim": `${animMs}ms`,
+    "--lyr-wave": `${p("waveSize")}vmin`,
+    "--lyr-wave-ms": `${waveMs}ms`,
+    mixBlendMode: BLENDS[p("blend")] ?? "normal",
   } as CSSProperties;
 
   const cls = [
@@ -91,20 +185,34 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
     `lyr-pos-${position}`,
     `lyr-style-${style}`,
     `lyr-anim-${anim}`,
+    `lyr-bg-${bg}`,
     colorIdx === 4 ? "lyr-rainbow" : "",
     p("upper") >= 0.5 ? "lyr-upper" : "",
+    place !== "static" ? "lyr-moving" : "",
   ].join(" ");
 
   return (
     <div ref={rootRef} className={cls} style={css} aria-live="polite" aria-label="Liedtext">
-      <div className="lyr-block">
+      {wobble > 0 && (
+        <svg className="lyr-defs" aria-hidden>
+          <filter id="lyr-wobble">
+            <feTurbulence type="fractalNoise" baseFrequency="0.012 0.045" numOctaves={2} seed={3}>
+              <animate attributeName="seed" values="1;9;1" dur="4s" repeatCount="indefinite" />
+            </feTurbulence>
+            <feDisplacementMap ref={dispRef} in="SourceGraphic" scale="0" xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+        </svg>
+      )}
+      {waves.map((w) => (
+        <div key={w.id} className="lyr-wave" style={{ left: w.x, top: w.y }} aria-hidden />
+      ))}
+      <div ref={blockRef} className="lyr-block" style={wobble > 0 ? { filter: "url(#lyr-wobble)" } : undefined}>
         {shownLines.map((l, i) => {
           const age = shownLines.length - 1 - i; // 0 = newest
-          const newest = age === 0;
           return (
             <div
               key={l.n}
-              className={`lyr-line ${newest ? "lyr-newest" : ""}`}
+              className={`lyr-line ${age === 0 ? "lyr-newest" : ""}`}
               style={{ opacity: Math.max(0.08, 1 - age * olderFade) }}
             >
               <span className="lyr-text">
@@ -144,4 +252,9 @@ export function LyricsOverlay({ onOpenSettings }: { onOpenSettings: () => void }
       )}
     </div>
   );
+}
+
+/** somewhere within ±spread % of the centre, not too close to the last */
+function randomSpot(spread: number): { x: number; y: number } {
+  return { x: (Math.random() * 2 - 1) * spread, y: (Math.random() * 2 - 1) * spread * 0.8 };
 }
