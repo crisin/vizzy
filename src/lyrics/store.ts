@@ -20,6 +20,10 @@ export type LyricsConfig = {
   url: string;
   language: string;
   model: string;
+  /** transcript log in <app_data>/lyrics-log: 0 off, 1 lines, 2 debug */
+  log: number;
+  /** also keep the 16 kHz audio Whisper heard, one file per song */
+  logAudio: boolean;
   stepMs: number;
   minWindow: number;
   maxWindow: number;
@@ -39,6 +43,8 @@ export const DEFAULT_CONFIG: LyricsConfig = {
   url: "http://127.0.0.1:8178",
   language: "auto",
   model: "",
+  log: 0,
+  logAudio: false,
   stepMs: 500,
   minWindow: 1.5,
   maxWindow: 12,
@@ -52,6 +58,64 @@ export const DEFAULT_CONFIG: LyricsConfig = {
   dropUnconfirmed: true,
   prompt: "",
 };
+
+/** The engine knobs a preset sets — everything else stays as it is. */
+export type Tuning = Pick<
+  LyricsConfig,
+  | "stepMs"
+  | "minWindow"
+  | "maxWindow"
+  | "edge"
+  | "similarity"
+  | "silenceDb"
+  | "silenceSecs"
+  | "minAvgLogprob"
+  | "maxReps"
+  | "filterInventions"
+  | "dropUnconfirmed"
+>;
+
+const BALANCED: Tuning = {
+  stepMs: DEFAULT_CONFIG.stepMs,
+  minWindow: DEFAULT_CONFIG.minWindow,
+  maxWindow: DEFAULT_CONFIG.maxWindow,
+  edge: DEFAULT_CONFIG.edge,
+  similarity: DEFAULT_CONFIG.similarity,
+  silenceDb: DEFAULT_CONFIG.silenceDb,
+  silenceSecs: DEFAULT_CONFIG.silenceSecs,
+  minAvgLogprob: DEFAULT_CONFIG.minAvgLogprob,
+  maxReps: DEFAULT_CONFIG.maxReps,
+  filterInventions: DEFAULT_CONFIG.filterInventions,
+  dropUnconfirmed: DEFAULT_CONFIG.dropUnconfirmed,
+};
+
+/** Engine profiles, measured offline on five songs (docs/learnings.md). */
+export const PRESETS: { id: string; label: string; does: string; tuning: Tuning }[] = [
+  {
+    id: "fast",
+    label: "Schnell",
+    does: "Ø 1,6 s hinter der Musik — erfindet bei schweren Wörtern und Instrumentals eher mal was",
+    tuning: { ...BALANCED, stepMs: 300, minWindow: 1.2, maxWindow: 8, edge: 0.5, silenceSecs: 1 },
+  },
+  {
+    id: "balanced",
+    label: "Ausgeglichen",
+    does: "Ø 2,4 s hinter der Musik — der Standard",
+    tuning: BALANCED,
+  },
+  {
+    id: "accurate",
+    label: "Akkurat",
+    does: "Ø 2,7 s hinter der Musik — mehr Kontext pro Lauf, die wenigsten Fehler",
+    tuning: { ...BALANCED, stepMs: 700, minWindow: 2.5, maxWindow: 15, edge: 1, silenceSecs: 2 },
+  },
+];
+
+/** The preset these knobs match exactly, if any. */
+export function presetOf(cfg: LyricsConfig): string | null {
+  const keys = Object.keys(BALANCED) as (keyof Tuning)[];
+  return PRESETS.find((p) => keys.every((k) => p.tuning[k] === cfg[k]))?.id ?? null;
+}
 
 /** One `lyrics` event (`lyrics::Update`). */
 type Update = {
@@ -121,9 +185,11 @@ class LyricsStore {
     }
     // a new song: start from a clean window, so the old song's tail does
     // not end up as the new song's first line
-    nowPlaying.onSongChange(() => {
+    nowPlaying.onSongChange((t) => {
       if (params.get("lyrics", "resetOnSong") >= 0.5) this.reset();
+      this.tellSong(t);
     });
+    this.tellSong(nowPlaying.getSnapshot().track);
   }
 
   subscribe = (fn: () => void) => {
@@ -191,8 +257,24 @@ class LyricsStore {
   }
 
   resetTuning() {
-    const { enabled, url, language, model } = this.snap.cfg;
-    this.configure({ ...DEFAULT_CONFIG, enabled, url, language, model });
+    this.configure({ ...BALANCED, prompt: "" });
+  }
+
+  applyPreset(id: string) {
+    const p = PRESETS.find((x) => x.id === id);
+    if (p) this.configure(p.tuning);
+  }
+
+  /** The song labels the transcript log (the worker has no now playing of
+   *  its own — the frontend merges media session and Spotify). */
+  private tellSong(t: { title: string; artist: string; status: string } | null) {
+    if (!inTauri) return;
+    const song = t && t.status !== "other" && t.title ? (t.artist ? `${t.artist} – ${t.title}` : t.title) : null;
+    void invoke("lyrics_song", { song }).catch(() => {});
+  }
+
+  openLog() {
+    if (inTauri) void invoke("data_open_dir", { dir: "lyrics-log" }).catch((e) => this.set({ error: String(e) }));
   }
 
   /** Forgets window and lines (worker side too). */

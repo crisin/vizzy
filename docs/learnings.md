@@ -2,6 +2,21 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-14 — Lyrics profiles and transcript log
+
+- **Shorter isn't just faster, it's wronger.** Offline over five songs:
+  step 300 ms / window 1.2–8 s is ~1.6 s behind (standard 2.4 s), but on
+  sung German it invents lines in other languages ("Eyvuz dövdürmen zun")
+  where the standard hears the right ones. More context helps less than
+  expected: 700 ms / 2.5–15 s is 2.7 s behind and only slightly cleaner.
+  Raising the agreement threshold (0.88) and the logprob floor made things
+  worse — an invented outro line got through. Profiles in `store.ts`.
+- **Record what Whisper heard, not the source.** The log's `.f32` per song
+  replays through `lyrics_offline` with the same lines as live — a song
+  that went wrong at a party can be tuned at the desk afterwards.
+- **`serde_json::to_value` widens f32 to f64** (`0.7` → `0.699999988`).
+  Go through `to_string` for logs people read.
+
 ## 2026-11-14 — Live lyrics with Whisper
 
 - **Whisper on music works better than expected.** `large-v3-turbo` on the mixed

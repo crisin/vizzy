@@ -6,7 +6,7 @@ import { useEffect, useReducer, useState } from "react";
 import { ParamRow, Section } from "../ui/ParamRow";
 import { ParamGroup } from "../ui/ParamGroup";
 import { keyLabel } from "../keys";
-import { DEFAULT_CONFIG, lyrics, useLyrics, type LyricsConfig } from "./store";
+import { DEFAULT_CONFIG, PRESETS, lyrics, presetOf, useLyrics, type LyricsConfig } from "./store";
 
 const LANGUAGES: [string, string][] = [
   ["auto", "Automatisch erkennen"],
@@ -69,6 +69,7 @@ export function LyricsSettings() {
     return () => window.clearInterval(id);
   }, [cfg.enabled]);
 
+  const preset = presetOf(cfg);
   const changedKnobs = KNOBS.filter((k) => cfg[k.key] !== DEFAULT_CONFIG[k.key]).length +
     (cfg.filterInventions !== DEFAULT_CONFIG.filterInventions ? 1 : 0) +
     (cfg.dropUnconfirmed !== DEFAULT_CONFIG.dropUnconfirmed ? 1 : 0) +
@@ -104,6 +105,36 @@ export function LyricsSettings() {
         <button type="button" className="mode-btn" onClick={() => lyrics.reset()} disabled={!cfg.enabled}>
           Neu anfangen
         </button>
+      </div>
+
+      <div className="lyr-form">
+        <span className="set-label">
+          Profil
+          <small className="set-hint">
+            {PRESETS.find((p) => p.id === preset)?.does ??
+              "Eigene Einstellung — unter „Erkennung“ von Hand angepasst"}
+          </small>
+        </span>
+        <div className="set-seg" role="radiogroup" aria-label="Profil der Erkennung">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={preset === p.id}
+              className={`mode-btn ${preset === p.id ? "active" : ""}`}
+              title={p.does}
+              onClick={() => lyrics.applyPreset(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+          {preset === null && (
+            <button type="button" className="mode-btn active" role="radio" aria-checked disabled>
+              Eigene
+            </button>
+          )}
+        </div>
       </div>
 
       <Section id="lyrics.server" title="Whisper-Server">
@@ -183,6 +214,46 @@ export function LyricsSettings() {
       </Section>
 
       <ParamGroup group="lyrics" onChanged={bump} />
+
+      <Section id="lyrics.log" title="Protokoll" badge={cfg.log ? (cfg.log === 2 ? "Debug" : "an") : undefined}>
+        <label className="set-row set-row-select">
+          <span className="set-label">
+            Mitschreiben
+            <small className="set-hint">
+              JSON Lines in <code>lyrics-log/</code> im App-Datenordner, eine Datei pro Tag (UTC): Song,
+              Zeile, Verzögerung, Pausen, geänderte Regler.
+            </small>
+          </span>
+          <select
+            className="src-select"
+            value={cfg.log}
+            onChange={(e) => lyrics.configure({ log: Number(e.target.value) })}
+          >
+            <option value={0}>Aus</option>
+            <option value={1}>Zeilen</option>
+            <option value={2}>Debug (jeder Whisper-Lauf, roh und gefiltert)</option>
+          </select>
+        </label>
+        <label className="set-row set-row-toggle">
+          <input
+            type="checkbox"
+            checked={cfg.logAudio}
+            onChange={(e) => lyrics.configure({ logAudio: e.target.checked })}
+          />
+          <span className="set-label">
+            Audio mitschneiden
+            <small className="set-hint">
+              Was Whisper gehört hat, eine Datei pro Song (16 kHz mono f32, ~3,8 MB pro Minute). Damit lässt
+              sich ein Song mit anderen Reglern offline nachspielen (<code>lyrics_offline</code>, README).
+            </small>
+          </span>
+        </label>
+        <div className="set-seg">
+          <button type="button" className="mode-btn" onClick={() => lyrics.openLog()} disabled={s.demo}>
+            Ordner öffnen
+          </button>
+        </div>
+      </Section>
 
       <Section
         id="lyrics.engine"

@@ -2,6 +2,7 @@ mod audio;
 mod bridge;
 mod llm;
 mod lyrics;
+mod lyrics_log;
 mod newhelper;
 mod nowplaying;
 /// public so `tests/comfy_mock.rs` can drive the bake against a stand-in server
@@ -155,7 +156,8 @@ pub fn run() {
             lyrics::lyrics_config,
             lyrics::lyrics_configure,
             lyrics::lyrics_reset,
-            lyrics::lyrics_test
+            lyrics::lyrics_test,
+            lyrics::lyrics_song
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

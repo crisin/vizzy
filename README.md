@@ -170,9 +170,18 @@ See [PLAN.md](PLAN.md) for the roadmap.
   switch, the server address with a connection test, language and prompt,
   how the text looks (position, size, lines, style, animation, fade-out,
   loudness pulse, a stats line) and every engine knob (step, window,
-  agreement, silence, filters) — the knobs live in `lyrics.json` and apply
+  agreement, silence, filters), with three profiles (*Schnell*,
+  *Ausgeglichen*, *Akkurat*) — the knobs live in `lyrics.json` and apply
   on the next step. Lines also go to the dev bridge's `GET /log`. In the
   browser preview a demo stream with invented lines stands in.
+  **Transcript log** (Settings → Lyrics → Protokoll): JSON Lines in
+  `<app_data>/lyrics-log/YYYY-MM-DD.jsonl` (UTC), each entry with `t`,
+  `song` and `kind` — `session`, `song`, `line` (text, `behindS`,
+  `inferMs`, `windowS`), `pause`, `config`, `error`; at the debug level
+  also `run` for every request (Whisper's raw segments with
+  `avgLogprob`, what the filters kept, what was committed). Optionally the
+  audio Whisper heard, one `.f32` per song, which replays with the offline
+  test below.
   Measured on an RTX 5070: ~200 ms per request, lines appear 1–3 s after
   they are sung (up to ~10 s after long held notes), German, English,
   Spanish and fast rap all come out nearly word for word. Whisper invents
@@ -180,7 +189,8 @@ See [PLAN.md](PLAN.md) for the roadmap.
   the filters are our own (see the module comment).
   Offline against a file: `VIZZY_LYRICS_FILE=clip.f32 cargo test --lib
   lyrics_offline -- --ignored --nocapture` (raw 16 kHz mono f32, the
-  ffmpeg line is in the test).
+  ffmpeg line is in the test); `VIZZY_LYRICS_TUNING='{"stepMs":300}'`
+  tries other knobs.
 - **Mouse camera** in 3D (orbit/zoom/pan, double-click to reset),
   **parameter editor** for every visualization, toggleable BPM badge —
   everything persists across restarts, global reset included.

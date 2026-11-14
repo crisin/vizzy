@@ -266,7 +266,7 @@ fn wav16(pcm: &[f32]) -> Vec<u8> {
 
 // ---------------------------------------------------------------- text
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 struct Seg {
     /// seconds from the window start
     start: f32,
@@ -512,6 +512,10 @@ pub struct Config {
     language: String,
     /// only for the OpenAI route
     model: String,
+    /// transcript log (`lyrics_log.rs`): 0 off, 1 lines, 2 debug (every run)
+    log: u8,
+    /// also keep the 16 kHz audio Whisper heard, one file per song
+    log_audio: bool,
     #[serde(flatten)]
     tuning: Tuning,
 }
@@ -524,6 +528,8 @@ impl Default for Config {
             url: "http://127.0.0.1:8178".into(),
             language: "auto".into(),
             model: String::new(),
+            log: 0,
+            log_audio: false,
             tuning: Tuning::default(),
         }
     }
@@ -534,12 +540,14 @@ pub struct Lyrics {
     path: Mutex<Option<PathBuf>>,
     /// set by `lyrics_reset`: the worker drops window and lines
     reset: AtomicBool,
+    /// "Artist – Title" from the frontend's now playing, for the log
+    song: Mutex<Option<String>>,
 }
 
 pub type Shared = Arc<Lyrics>;
 
 pub fn new() -> Shared {
-    Arc::new(Lyrics { cfg: Mutex::new(Config::default()), path: Mutex::new(None), reset: AtomicBool::new(false) })
+    Arc::new(Lyrics { cfg: Mutex::new(Config::default()), path: Mutex::new(None), reset: AtomicBool::new(false), song: Mutex::new(None) })
 }
 
 #[derive(Serialize, Clone)]
@@ -622,6 +630,17 @@ async fn transcribe(http: &reqwest::Client, cfg: &Config, pcm: &[f32]) -> Result
     res.json().await.map_err(|e| format!("Antwort des Whisper-Servers unlesbar: {e}"))
 }
 
+/// For the log, through text: f32 knobs stay `0.7` instead of `0.699999988`
+/// (`serde_json::to_value` widens f32 to f64).
+fn clean_json<T: Serialize>(v: &T) -> serde_json::Value {
+    serde_json::to_string(v).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// For the log: one decimal, without f32 → f64 noise (2.0999999…).
+fn round1(x: f32) -> f64 {
+    (x as f64 * 10.0).round() / 10.0
+}
+
 /// One step of the worker.
 enum Tick {
     /// not enough audio yet
@@ -644,6 +663,8 @@ enum Tick {
 struct Engine {
     win: Vec<f32>,
     agr: Agreement,
+    /// the last run in detail, when the log is at debug level
+    trace: Option<serde_json::Value>,
 }
 
 impl Engine {
@@ -676,7 +697,10 @@ impl Engine {
             }
         };
         let infer = t0.elapsed();
-        let step = self.agr.step(parse(&v, window, t), window);
+        let kept = parse(&v, window, t);
+        let debug = cfg.log >= 2;
+        let heard = if debug { kept.clone() } else { Vec::new() };
+        let step = self.agr.step(kept, window);
         // a shrunken max window (changed live) applies right away
         let over = window - t.max_window;
         // sung (window - end) before the request went out, final now
@@ -690,6 +714,33 @@ impl Engine {
             .collect();
         let cut = ((step.cut.max(over) * RATE as f32) as usize).min(self.win.len());
         self.win.drain(..cut);
+        let commit: Vec<(Seg, f32)> = commit;
+        self.trace = debug.then(|| {
+            // what Whisper said, before our filters — to tune them
+            let raw: Vec<serde_json::Value> = match v["segments"].as_array() {
+                Some(a) => a
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "start": s["start"], "end": s["end"], "text": s["text"],
+                            "avgLogprob": s["avg_logprob"], "noSpeechProb": s["no_speech_prob"],
+                        })
+                    })
+                    .collect(),
+                None => vec![serde_json::json!({ "text": v["text"] })],
+            };
+            serde_json::json!({
+                "kind": "run",
+                "windowS": round1(window),
+                "inferMs": infer.as_millis() as u64,
+                "language": v.get("language").or_else(|| v.get("detected_language")),
+                "raw": raw,
+                "kept": heard,
+                "commit": commit.iter().map(|(s, b)| serde_json::json!({ "text": s.text, "behindS": round1(*b) })).collect::<Vec<_>>(),
+                "tentative": step.tentative,
+                "cutS": round1(cut as f32 / RATE as f32),
+            })
+        });
         Ok(Tick::Heard { commit, tentative: step.tentative, window, infer })
     }
 }
@@ -701,6 +752,10 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     let mut eng = Engine::default();
     let mut last_err: Option<String> = None;
     let mut next = Instant::now() + me.cfg.lock().unwrap().tuning.step();
+    let mut tlog = crate::lyrics_log::Log::new(app.path().app_data_dir().ok().map(|d| d.join(crate::lyrics_log::DIR)));
+    let mut logged_tuning: Option<Tuning> = None;
+    // a pause is logged once, not on every quiet step
+    let mut paused = true;
     // running stats, logged every 30 runs
     let (mut runs, mut infer_sum, mut infer_max) = (0u32, 0u128, 0u128);
 
@@ -726,8 +781,23 @@ async fn run(app: tauri::AppHandle, me: Shared) {
         if !cfg.enabled {
             eng = Engine::default();
             rs = None;
+            tlog.start(0, serde_json::Value::Null);
+            logged_tuning = None;
             continue;
         }
+        // the transcript log: session start, song changes, knob changes
+        let lv = cfg.log;
+        let mut log_err = tlog.start(lv, clean_json(&cfg));
+        if lv == 0 {
+            logged_tuning = None;
+        } else if logged_tuning.as_ref() != Some(&cfg.tuning) {
+            if logged_tuning.is_some() {
+                log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "config", "config": clean_json(&cfg.tuning) })));
+            }
+            logged_tuning = Some(cfg.tuning.clone());
+        }
+        let song = me.song.lock().unwrap().clone();
+        tlog.set_song(lv, song);
         raw.clear();
         let rate = TAP.take(&mut raw);
         if rate == 0 {
@@ -737,22 +807,41 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             rs = Some(Resampler::new(rate));
             eng.win.clear();
         }
+        let before = eng.win.len();
         rs.as_mut().unwrap().process(&raw, &mut eng.win);
+        log_err = log_err.or(tlog.audio(cfg.log_audio, &eng.win[before..]));
 
         match eng.tick(&http, &cfg).await {
             Ok(Tick::Wait) => {}
             Ok(Tick::Pause(rest)) => {
                 for s in &rest {
                     log(&app, format!("{}   (at pause)", s.text));
+                    log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "line", "text": s.text, "atPause": true })));
                 }
+                if !paused {
+                    log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "pause" })));
+                }
+                paused = true;
                 emit(&eng, String::new(), None, 0, 0.0, None);
             }
             Ok(Tick::Heard { commit, tentative, window, infer }) => {
+                paused = false;
                 if last_err.take().is_some() {
                     log(&app, "server reachable again".into());
                 }
+                if let Some(trace) = eng.trace.take() {
+                    log_err = log_err.or(tlog.write(lv, 2, trace));
+                }
                 for (s, b) in &commit {
                     log(&app, format!("{}   ({b:.1} s behind, whisper {} ms, window {window:.1} s)", s.text, infer.as_millis()));
+                    log_err = log_err.or(tlog.write(
+                        lv,
+                        1,
+                        serde_json::json!({
+                            "kind": "line", "text": s.text, "behindS": round1(*b),
+                            "inferMs": infer.as_millis() as u64, "windowS": round1(window),
+                        }),
+                    ));
                 }
                 let behind = commit.last().map(|(_, b)| *b);
                 emit(&eng, tentative, behind, infer.as_millis() as u32, window, None);
@@ -767,10 +856,14 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             Err(e) => {
                 if last_err.as_deref() != Some(e.as_str()) {
                     log(&app, e.clone());
+                    log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "error", "error": e })));
                     emit(&eng, String::new(), None, 0, 0.0, Some(e.clone()));
                     last_err = Some(e);
                 }
             }
+        }
+        if let Some(e) = log_err {
+            log(&app, e);
         }
     }
 }
@@ -792,6 +885,13 @@ pub fn lyrics_configure(mut cfg: Config, me: tauri::State<'_, Shared>) -> Result
     }
     *me.cfg.lock().unwrap() = cfg.clone();
     Ok(cfg)
+}
+
+/// The song now playing ("Artist – Title"), from the frontend, which merges
+/// the media session and Spotify. Only used to label the log.
+#[tauri::command]
+pub fn lyrics_song(song: Option<String>, me: tauri::State<'_, Shared>) {
+    *me.song.lock().unwrap() = song.filter(|s| !s.trim().is_empty());
 }
 
 /// Forgets the window and the lines heard so far (new song, or after
@@ -973,7 +1073,7 @@ mod tests {
     /// mono f32le:
     ///   ffmpeg -i song.mp3 -ss 30 -t 60 -ac 1 -ar 16000 -f f32le song.f32
     ///   VIZZY_LYRICS_FILE=song.f32 cargo test --lib lyrics_offline -- --ignored --nocapture
-    /// Optional: VIZZY_LYRICS_URL, VIZZY_LYRICS_LANG.
+    /// Optional: VIZZY_LYRICS_URL, VIZZY_LYRICS_LANG, VIZZY_LYRICS_TUNING (JSON knobs).
     #[test]
     #[ignore]
     fn lyrics_offline() {
@@ -986,6 +1086,10 @@ mod tests {
         }
         if let Ok(l) = std::env::var("VIZZY_LYRICS_LANG") {
             cfg.language = l;
+        }
+        // knobs as in lyrics.json, e.g. {"stepMs":300,"maxWindow":8}
+        if let Ok(j) = std::env::var("VIZZY_LYRICS_TUNING") {
+            cfg.tuning = serde_json::from_str::<Tuning>(&j).expect("VIZZY_LYRICS_TUNING").sane();
         }
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
         rt.block_on(async {
