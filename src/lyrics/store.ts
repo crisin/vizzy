@@ -9,7 +9,7 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { nowPlaying } from "../regie/nowPlaying";
+import { nowPlaying, positionNow, type Track } from "../regie/nowPlaying";
 import { params } from "../params";
 import { lyricEvents } from "./events";
 import { synced } from "./synced";
@@ -26,6 +26,8 @@ export type LyricsConfig = {
   log: number;
   /** also keep the 16 kHz audio Whisper heard, one file per song */
   logAudio: boolean;
+  /** keep what was heard per song, with song times, in <app_data>/lyrics-takes */
+  takes: boolean;
   stepMs: number;
   minWindow: number;
   maxWindow: number;
@@ -47,6 +49,7 @@ export const DEFAULT_CONFIG: LyricsConfig = {
   model: "",
   log: 0,
   logAudio: false,
+  takes: true,
   stepMs: 500,
   minWindow: 1.5,
   maxWindow: 12,
@@ -196,9 +199,11 @@ class LyricsStore {
     nowPlaying.onSongChange((t) => {
       lyricEvents.reset();
       if (params.get("lyrics", "resetOnSong") >= 0.5) this.reset();
-      this.tellSong(t);
+      this.tellSong(t, true);
     });
-    this.tellSong(nowPlaying.getSnapshot().track);
+    // …and whatever else changes: a Spotify id arrives, a seek, a pause
+    nowPlaying.subscribe(() => this.tellSong(nowPlaying.getSnapshot().track, false));
+    this.tellSong(nowPlaying.getSnapshot().track, true);
   }
 
   subscribe = (fn: () => void) => {
@@ -281,12 +286,40 @@ class LyricsStore {
     if (p) this.configure(p.tuning);
   }
 
-  /** The song labels the transcript log (the worker has no now playing of
-   *  its own — the frontend merges media session and Spotify). */
-  private tellSong(t: { title: string; artist: string; status: string } | null) {
+  /** what the worker was last told, to tell it again only when it changed */
+  private told = { key: "", id: null as string | null, dur: null as number | null, pos: null as number | null, at: 0, playing: false };
+
+  /** The song and where it is: labels the transcript log and times the
+   *  lines of a take (the worker has no now playing of its own — the
+   *  frontend merges media session and Spotify). `restart`: a song change. */
+  private tellSong(t: Track | null, restart: boolean) {
     if (!inTauri) return;
-    const song = t && t.status !== "other" && t.title ? (t.artist ? `${t.artist} – ${t.title}` : t.title) : null;
-    void invoke("lyrics_song", { song }).catch(() => {});
+    const on = t && t.status !== "other" && t.title ? t : null;
+    const pos = on ? positionNow(on) : null;
+    const playing = on?.status === "playing";
+    const now = Date.now();
+    const o = this.told;
+    if (!restart) {
+      // the position we told keeps running; only a jump is news (the
+      // media session's own samples jitter by a second)
+      const expected = o.pos === null ? null : o.pos + (o.playing ? now - o.at : 0);
+      const jumped = (pos === null) !== (expected === null) || (pos !== null && expected !== null && Math.abs(pos - expected) > 1500);
+      const same =
+        (on?.baseKey ?? "") === o.key &&
+        (on?.spotifyId ?? null) === o.id &&
+        (on?.durationMs ?? null) === o.dur &&
+        playing === o.playing &&
+        !jumped;
+      if (same) return;
+    }
+    this.told = { key: on?.baseKey ?? "", id: on?.spotifyId ?? null, dur: on?.durationMs ?? null, pos, at: now, playing };
+    const song = on && {
+      artist: on.artist,
+      title: on.title,
+      spotifyId: on.spotifyId,
+      durationMs: on.durationMs === null ? null : Math.round(on.durationMs),
+    };
+    void invoke("lyrics_song", { song, restart, positionMs: pos, playing }).catch(() => {});
   }
 
   openLog() {

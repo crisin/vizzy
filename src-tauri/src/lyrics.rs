@@ -32,6 +32,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
+use crate::lyrics_take::{SongInfo, Take};
+
 const FILE: &str = "lyrics.json";
 /// what Whisper wants
 const RATE: usize = 16000;
@@ -542,6 +544,8 @@ pub struct Config {
     log: u8,
     /// also keep the 16 kHz audio Whisper heard, one file per song
     log_audio: bool,
+    /// keep what was heard per song, with song times (`lyrics_take.rs`)
+    takes: bool,
     #[serde(flatten)]
     tuning: Tuning,
 }
@@ -556,6 +560,7 @@ impl Default for Config {
             model: String::new(),
             log: 0,
             log_audio: false,
+            takes: true,
             tuning: Tuning::default(),
         }
     }
@@ -566,14 +571,51 @@ pub struct Lyrics {
     path: Mutex<Option<PathBuf>>,
     /// set by `lyrics_reset`: the worker drops window and lines
     reset: AtomicBool,
-    /// "Artist – Title" from the frontend's now playing, for the log
-    song: Mutex<Option<String>>,
+    /// the song and its position, from the frontend's now playing
+    song: Mutex<Playing>,
+}
+
+/// Where the media session is in the song, and when that was true.
+#[derive(Clone, Copy)]
+struct Pos {
+    ms: f64,
+    at: Instant,
+    playing: bool,
+}
+
+#[derive(Clone)]
+struct Playing {
+    info: Option<SongInfo>,
+    /// counts song changes — the same song played again is a change too
+    gen: u64,
+    /// when `gen` changed
+    since: Instant,
+    pos: Option<Pos>,
+}
+
+impl Playing {
+    /// The song time at the moment `t` (usually a little in the past: when
+    /// a line was sung), and whether the media position says so (`true`) or
+    /// only the time since the song changed.
+    fn song_ms_at(&self, t: Instant) -> (f64, bool) {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        match self.pos {
+            Some(p) => {
+                let d = if t >= p.at { ms(t - p.at) } else { -ms(p.at - t) };
+                // paused: the position stands still from `at` on
+                (p.ms + if p.playing { d } else { d.min(0.0) }, true)
+            }
+            None => (ms(t.saturating_duration_since(self.since)), false),
+        }
+    }
 }
 
 pub type Shared = Arc<Lyrics>;
 
 pub fn new() -> Shared {
-    Arc::new(Lyrics { cfg: Mutex::new(Config::default()), path: Mutex::new(None), reset: AtomicBool::new(false), song: Mutex::new(None) })
+    Arc::new(Lyrics { cfg: Mutex::new(Config::default()), path: Mutex::new(None), reset: AtomicBool::new(false),
+        song: Mutex::new(Playing { info: None, gen: 0, since: Instant::now(), pos: None }),
+    })
 }
 
 #[derive(Serialize, Clone)]
@@ -675,8 +717,9 @@ fn round1(x: f32) -> f64 {
 enum Tick {
     /// not enough audio yet
     Wait,
-    /// the music paused; what was still tentative is final now
-    Pause(Vec<Seg>),
+    /// the music paused; what was still tentative is final now (with how
+    /// long ago each line ended, in seconds)
+    Pause(Vec<(Seg, f32)>),
     Heard {
         /// with how far behind the music each line appeared, in seconds
         commit: Vec<(Seg, f32)>,
@@ -705,7 +748,8 @@ impl Engine {
         }
         let quiet_from = self.win.len().saturating_sub((t.silence_secs * RATE as f32) as usize);
         if rms_db(&self.win[quiet_from..]) < t.silence_db {
-            let rest = self.agr.flush();
+            let window = self.win.len() as f32 / RATE as f32;
+            let rest: Vec<(Seg, f32)> = self.agr.flush().into_iter().map(|s| { let ago = (window - s.end).max(0.0); (s, ago) }).collect();
             let had_audio = !self.win.is_empty();
             self.win.clear();
             return Ok(if rest.is_empty() && !had_audio { Tick::Wait } else { Tick::Pause(rest) });
@@ -784,7 +828,9 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     let mut next = Instant::now() + me.cfg.lock().unwrap().tuning.step();
     let mut tlog = crate::lyrics_log::Log::new(app.path().app_data_dir().ok().map(|d| d.join(crate::lyrics_log::DIR)));
     let mut logged_tuning: Option<Tuning> = None;
-    let mut last_song: Option<String> = None;
+    let takes_dir = app.path().app_data_dir().ok().map(|d| d.join(crate::lyrics_take::DIR));
+    let mut take: Option<Take> = None;
+    let mut last_gen = 0u64;
     // a pause is logged once, not on every quiet step
     let mut paused = true;
     // running stats, logged every 30 runs
@@ -826,6 +872,8 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             rs = None;
             tlog.start(0, serde_json::Value::Null);
             logged_tuning = None;
+            keep(&app, &mut take);
+            take = None;
             continue;
         }
         // the transcript log: session start, song changes, knob changes
@@ -839,12 +887,42 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             }
             logged_tuning = Some(cfg.tuning.clone());
         }
-        let song = me.song.lock().unwrap().clone();
-        if song != last_song {
+        let playing = me.song.lock().unwrap().clone();
+        let changed = playing.gen != last_gen;
+        if changed {
+            last_gen = playing.gen;
             eng.agr.new_song();
-            last_song = song.clone();
+            keep(&app, &mut take);
+            take = None;
         }
-        tlog.set_song(lv, song);
+        let meta = match &playing.info {
+            Some(i) => serde_json::json!({ "spotifyId": i.spotify_id, "durationMs": i.duration_ms }),
+            None => serde_json::Value::Null,
+        };
+        tlog.set_song(lv, playing.info.as_ref().map(SongInfo::label), meta, changed);
+        // the take of this song: started here, or when the switch goes on
+        if !cfg.takes {
+            keep(&app, &mut take);
+            take = None;
+        } else if let Some(info) = &playing.info {
+            if let Some(t) = &mut take {
+                t.update_song(info.clone());
+            } else if let Some(dir) = &takes_dir {
+                let engine = serde_json::json!({ "language": cfg.language, "model": cfg.model, "stepMs": cfg.tuning.step_ms, "maxWindow": round1(cfg.tuning.max_window) });
+                take = Some(Take::new(dir.clone(), info.clone(), engine, crate::lyrics_log::now_ms()));
+            }
+        }
+        // a line sung `ago` seconds back: its place in the song, unless it
+        // was sung before this song began
+        let song_time = |ago_end: f32, len: f32| -> Option<(f64, f64, bool)> {
+            playing.info.as_ref()?;
+            let end = Instant::now().checked_sub(Duration::from_secs_f32(ago_end.max(0.0)))?;
+            if end < playing.since {
+                return None;
+            }
+            let (end_ms, media) = playing.song_ms_at(end);
+            Some(((end_ms - len.max(0.0) as f64 * 1000.0).max(0.0), end_ms.max(0.0), media))
+        };
         raw.clear();
         let rate = TAP.take(&mut raw);
         if rate == 0 {
@@ -857,14 +935,28 @@ async fn run(app: tauri::AppHandle, me: Shared) {
         let before = eng.win.len();
         rs.as_mut().unwrap().process(&raw, &mut eng.win);
         log_err = log_err.or(tlog.audio(cfg.log_audio, &eng.win[before..]));
+        let fed_ms = ((eng.win.len() - before) * 1000 / RATE) as u64;
 
-        match eng.tick(&http, &cfg).await {
+        let tick = eng.tick(&http, &cfg).await;
+        if let (Some(t), Ok(Tick::Wait | Tick::Heard { .. })) = (&mut take, &tick) {
+            t.heard(fed_ms);
+        }
+        match tick {
             Ok(Tick::Wait) => {}
             Ok(Tick::Pause(rest)) => {
-                for s in &rest {
+                for (s, ago) in &rest {
                     log(&app, format!("{}   (at pause)", s.text));
-                    log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "line", "text": s.text, "atPause": true })));
+                    let mut entry = serde_json::json!({ "kind": "line", "text": s.text, "atPause": true });
+                    let repeat = eng.agr.history.iter().filter(|h| similar(h, &s.text, REPEAT_SIMILARITY)).count() > 1;
+                    if let Some((start, end, media)) = song_time(*ago, s.end - s.start) {
+                        timed(&mut entry, start, end, media);
+                        if let Some(t) = &mut take {
+                            t.add(&s.text, start, end, repeat, media);
+                        }
+                    }
+                    log_err = log_err.or(tlog.write(lv, 1, entry));
                 }
+                keep(&app, &mut take);
                 if !paused {
                     log_err = log_err.or(tlog.write(lv, 1, serde_json::json!({ "kind": "pause" })));
                 }
@@ -881,16 +973,20 @@ async fn run(app: tauri::AppHandle, me: Shared) {
                 }
                 for (s, b) in &commit {
                     log(&app, format!("{}   ({b:.1} s behind, whisper {} ms, window {window:.1} s)", s.text, infer.as_millis()));
-                    log_err = log_err.or(tlog.write(
-                        lv,
-                        1,
-                        serde_json::json!({
-                            "kind": "line", "text": s.text, "behindS": round1(*b),
-                            "repeat": eng.agr.history.iter().filter(|h| similar(h, &s.text, REPEAT_SIMILARITY)).count() > 1,
-                            "inferMs": infer.as_millis() as u64, "windowS": round1(window),
-                        }),
-                    ));
+                    let repeat = eng.agr.history.iter().filter(|h| similar(h, &s.text, REPEAT_SIMILARITY)).count() > 1;
+                    let mut entry = serde_json::json!({
+                        "kind": "line", "text": s.text, "behindS": round1(*b), "repeat": repeat,
+                        "inferMs": infer.as_millis() as u64, "windowS": round1(window),
+                    });
+                    if let Some((start, end, media)) = song_time(*b, s.end - s.start) {
+                        timed(&mut entry, start, end, media);
+                        if let Some(t) = &mut take {
+                            t.add(&s.text, start, end, repeat, media);
+                        }
+                    }
+                    log_err = log_err.or(tlog.write(lv, 1, entry));
                 }
+                keep(&app, &mut take);
                 let behind = commit.last().map(|(s, b)| (*b, *b + (s.end - s.start)));
                 emit(&eng, tentative, behind, infer.as_millis() as u32, window, None);
                 runs += 1;
@@ -916,6 +1012,29 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     }
 }
 
+/// Adds a line's place in the song to its log entry.
+fn timed(entry: &mut serde_json::Value, start_ms: f64, end_ms: f64, media: bool) {
+    if let Some(o) = entry.as_object_mut() {
+        o.insert("startMs".into(), (start_ms.round() as u64).into());
+        o.insert("endMs".into(), (end_ms.round() as u64).into());
+        o.insert("clock".into(), if media { "media" } else { "songchange" }.into());
+    }
+}
+
+/// Writes the take when there is something new worth keeping, and tells the
+/// frontend's list when a file appears.
+fn keep(app: &tauri::AppHandle, take: &mut Option<Take>) {
+    let Some(t) = take else { return };
+    match t.save() {
+        Ok(true) => {
+            log(app, format!("take started: {}", t.song.label()));
+            let _ = app.emit("lyrics-takes", ());
+        }
+        Ok(false) => {}
+        Err(e) => log(app, e),
+    }
+}
+
 #[tauri::command]
 pub fn lyrics_config(me: tauri::State<'_, Shared>) -> Config {
     me.cfg.lock().unwrap().clone()
@@ -935,11 +1054,22 @@ pub fn lyrics_configure(mut cfg: Config, me: tauri::State<'_, Shared>) -> Result
     Ok(cfg)
 }
 
-/// The song now playing ("Artist – Title"), from the frontend, which merges
-/// the media session and Spotify. Only used to label the log.
+/// The song now playing and where it is, from the frontend, which merges
+/// the media session and Spotify. Labels the log and times the lines of a
+/// take. `restart`: a song change, even if it is the same song again; the
+/// frontend also calls this when it learns more (a Spotify id) or the
+/// position jumps (seek, pause).
 #[tauri::command]
-pub fn lyrics_song(song: Option<String>, me: tauri::State<'_, Shared>) {
-    *me.song.lock().unwrap() = song.filter(|s| !s.trim().is_empty());
+pub fn lyrics_song(song: Option<SongInfo>, restart: bool, position_ms: Option<f64>, playing: bool, me: tauri::State<'_, Shared>) {
+    let info = song.filter(|s| !s.title.trim().is_empty());
+    let now = Instant::now();
+    let mut p = me.song.lock().unwrap();
+    if restart || p.info.as_ref().map(SongInfo::label) != info.as_ref().map(SongInfo::label) {
+        p.gen += 1;
+        p.since = now;
+    }
+    p.info = info;
+    p.pos = position_ms.filter(|m| m.is_finite()).map(|ms| Pos { ms, at: now, playing });
 }
 
 /// Forgets the window and the lines heard so far (new song, or after
@@ -1121,6 +1251,24 @@ mod tests {
     }
 
     #[test]
+    fn song_time_follows_the_media_position() {
+        let t0 = Instant::now();
+        let s = |x: f32| Duration::from_secs_f32(x);
+        let mut p = Playing { info: None, gen: 1, since: t0, pos: None };
+        // no position: the time since the song changed, flagged as rough
+        assert_eq!(p.song_ms_at(t0 + s(12.0)), (12_000.0, false));
+        // playing, 60 s into the song at t0 + 10 s
+        p.pos = Some(Pos { ms: 60_000.0, at: t0 + s(10.0), playing: true });
+        assert_eq!(p.song_ms_at(t0 + s(13.0)), (63_000.0, true));
+        assert_eq!(p.song_ms_at(t0 + s(8.0)), (58_000.0, true));
+        // paused there: a line sung before the pause keeps its place, the
+        // position stands still afterwards
+        p.pos = Some(Pos { ms: 60_000.0, at: t0 + s(10.0), playing: false });
+        assert_eq!(p.song_ms_at(t0 + s(8.0)), (58_000.0, true));
+        assert_eq!(p.song_ms_at(t0 + s(15.0)), (60_000.0, true));
+    }
+
+    #[test]
     fn wav_header_matches_the_data() {
         let w = wav16(&[0.0; 160]);
         assert_eq!(w.len(), 44 + 320);
@@ -1169,7 +1317,7 @@ mod tests {
                             behind.push(b);
                         }
                     }
-                    Tick::Pause(rest) => rest.iter().for_each(|s| println!("{:>5.1}s  {:<60}  (pause)", (i + 1) as f32 * cfg.tuning.step().as_secs_f32(), s.text)),
+                    Tick::Pause(rest) => rest.iter().for_each(|(s, _)| println!("{:>5.1}s  {:<60}  (pause)", (i + 1) as f32 * cfg.tuning.step().as_secs_f32(), s.text)),
                     Tick::Wait => {}
                 }
             }

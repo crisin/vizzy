@@ -1,6 +1,8 @@
 # vizzy → Lyrics Helper: Lyrics mithören, später verfeinern — Plan
 
-Stand: 2026-11-16. Noch nichts umgesetzt.
+Stand: 2026-11-16. Schritt 1 und 2 (A1, A2 und die Liste aus A3, ohne Upload)
+sind umgesetzt: `src-tauri/src/lyrics_take.rs`, `src/lyrics/takes.ts`. Live mit
+Whisper noch nicht gemessen. Lyrics Helper: noch nichts.
 
 **Ziel:** vizzy hört beim Musikhören ohnehin mit (Whisper). Für Songs, zu denen
 Lyrics Helper noch keinen oder keinen synchronen Text hat, soll daraus ein
@@ -35,6 +37,16 @@ kann bisher nur lesen.
 4. Upload läuft in Rust (`newhelper.rs`), das Token bleibt dort.
 
 ## Teil 1 · vizzy: Aufnahme pro Song
+
+> **Stand 2026-11-16, anders als unten geplant:** Die Datei wird nicht erst
+> beim Songwechsel geschrieben, sondern nach jeder neuen Zeile neu, sobald die
+> Aufnahme die Schwelle erreicht hat — so geht beim Beenden nichts verloren.
+> Die Schwelle misst **gehörtes Audio** (`heardMs`, Pausen zählen nicht) gegen
+> die Songdauer, nicht die Spanne zwischen erster und letzter Zeile; die wäre
+> nach einem Sprung ans Ende 100 %. Zeilen, die vor dem Songwechsel gesungen
+> wurden und erst danach feststehen, landen nicht in der neuen Aufnahme. Auch
+> Streams ohne Spotify-ID bekommen eine Aufnahme (nach einer Minute); sie
+> bleiben lokal.
 
 **A1 · Song-Infos an den Worker.** `lyrics_song` bekommt statt eines Textes
 `{ artist, title, spotifyId, durationMs, positionMs }`. Das Frontend meldet

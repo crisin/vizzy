@@ -193,12 +193,18 @@ See [PLAN.md](PLAN.md) for the roadmap.
   Checks: `node src/lyrics/syncCore.test.ts`.
   **Transcript log** (Settings → Lyrics → Protokoll): JSON Lines in
   `<app_data>/lyrics-log/YYYY-MM-DD.jsonl` (UTC), each entry with `t`,
-  `song` and `kind` — `session`, `song`, `line` (text, `behindS`,
-  `inferMs`, `windowS`), `pause`, `config`, `error`; at the debug level
+  `song` and `kind` — `session`, `song` (with `spotifyId`, `durationMs`),
+  `line` (text, `behindS`, `inferMs`, `windowS`, and its place in the song:
+  `startMs`, `endMs`, `clock`), `pause`, `config`, `error`; at the debug level
   also `run` for every request (Whisper's raw segments with
   `avgLogprob`, what the filters kept, what was committed). Optionally the
   audio Whisper heard, one `.f32` per song, which replays with the offline
   test below.
+  **Takes** (Settings → Lyrics → Aufnahmen): what was heard during one
+  song, as one JSON file in `<app_data>/lyrics-takes/` — Spotify id, lines
+  with `startMs`/`endMs` in the song, how much of the song was heard. Rough
+  lyrics to refine in Lyrics Helper (`PLAN-aufnahme.md`; the upload is not
+  built yet). A song heard for less than 40 % or five lines leaves no file.
   Measured on an RTX 5070: ~200 ms per request, lines appear 1–3 s after
   they are sung (up to ~10 s after long held notes), German, English,
   Spanish and fast rap all come out nearly word for word. Whisper invents

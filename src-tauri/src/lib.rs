@@ -3,6 +3,7 @@ mod bridge;
 mod llm;
 mod lyrics;
 mod lyrics_log;
+mod lyrics_take;
 mod voice;
 mod overlay;
 mod newhelper;

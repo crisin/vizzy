@@ -2628,7 +2628,7 @@ function App() {
               label: "Lyrics",
               after: "ui" as const,
               title: "Live-Lyrics: Whisper-Server, Anzeige, Erkennung",
-              content: <LyricsSettings />,
+              content: <LyricsSettings offerUndo={offerUndo} />,
             },
             {
               id: "layer",

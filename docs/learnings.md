@@ -2,6 +2,22 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-16 — Takes: song times for heard lines
+
+- **A line's song time is asked for a moment in the past.** The worker knows
+  how long ago a line ended; the media position is an anchor (position, when,
+  playing). While paused the position stands still from the anchor on, but a
+  line sung before the pause still lies before it — treating "paused" as one
+  fixed position puts the last line of every pause ~2 s late.
+- **Tell the worker the position only when it jumps.** The media session's
+  samples jitter by about a second; re-anchoring on each one moves that jitter
+  into the line times. One anchor that keeps running, replaced when the new
+  sample is more than 1.5 s off (seek, pause), is steadier.
+- **Measure "how much of the song" in audio heard, not in the span of the
+  lines.** Skipping to the end makes the span 100 %.
+- **Write the file as you go.** A worker has no reliable "app quits" moment;
+  rewriting a small JSON after each line (temp file, rename) needs none.
+
 ## 2026-11-14 — Chorus and synced lyrics
 
 - **A chorus is just a line the song had before.** Word-LCS ≥ 0.7 against

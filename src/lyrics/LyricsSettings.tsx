@@ -8,6 +8,7 @@ import { ParamGroup } from "../ui/ParamGroup";
 import { keyLabel } from "../keys";
 import { DEFAULT_CONFIG, PRESETS, lyrics, presetOf, useLyrics, type LyricsConfig } from "./store";
 import { useSynced } from "./synced";
+import { TakesSection } from "./TakesSection";
 
 const LANGUAGES: [string, string][] = [
   ["auto", "Automatisch erkennen"],
@@ -55,7 +56,7 @@ const KNOBS: Knob[] = [
     hint: "Eine Phrase öfter hintereinander wird abgeschnitten (Whisper hängt in Schleifen)" },
 ];
 
-export function LyricsSettings() {
+export function LyricsSettings({ offerUndo }: { offerUndo?: (msg: string, run: () => void) => void }) {
   const s = useLyrics();
   const cfg = s.cfg;
   const [url, setUrl] = useState(cfg.url);
@@ -218,13 +219,15 @@ export function LyricsSettings() {
       <ParamGroup group="lyrics" onChanged={bump} />
       <ParamGroup group="lyricsTent" onChanged={bump} />
 
+      <TakesSection offerUndo={offerUndo} />
+
       <Section id="lyrics.log" title="Protokoll" badge={cfg.log ? (cfg.log === 2 ? "Debug" : "an") : undefined}>
         <label className="set-row set-row-select">
           <span className="set-label">
             Mitschreiben
             <small className="set-hint">
-              JSON Lines in <code>lyrics-log/</code> im App-Datenordner, eine Datei pro Tag (UTC): Song,
-              Zeile, Verzögerung, Pausen, geänderte Regler.
+              JSON Lines in <code>lyrics-log/</code> im App-Datenordner, eine Datei pro Tag (UTC): Song
+              (mit Spotify-ID), Zeile mit ihrer Zeit im Song, Verzögerung, Pausen, geänderte Regler.
             </small>
           </span>
           <select

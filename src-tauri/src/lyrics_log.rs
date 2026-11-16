@@ -3,8 +3,9 @@
 //!
 //! `<app_data>/lyrics-log/`:
 //! - `YYYY-MM-DD.jsonl` (UTC date), one JSON object per line, `kind`:
-//!   `session` (log started, with the config), `song`, `line` (a committed
-//!   line with its lag), `pause`, `config` (knobs changed), and at the debug
+//!   `session` (log started, with the config), `song` (with `spotifyId` and
+//!   `durationMs` when known), `line` (a committed line with its lag and its
+//!   time in the song, `startMs`/`endMs`), `pause`, `config` (knobs changed), and at the debug
 //!   level `run` (every Whisper request: raw segments, what the filters kept,
 //!   what was committed, the tentative tail).
 //! - optionally the 16 kHz audio Whisper heard, one raw mono f32 file per
@@ -42,14 +43,19 @@ impl Log {
     }
 
     /// A new song: noted in the log, and the audio goes to a new file.
-    pub fn set_song(&mut self, level: Level, song: Option<String>) {
-        if song == self.song {
+    /// `meta` (Spotify id, duration) goes into the `song` entry; `again`
+    /// notes the song even when it has the same name (played once more).
+    pub fn set_song(&mut self, level: Level, song: Option<String>, meta: Value, again: bool) {
+        if song == self.song && !again {
             return;
         }
         self.song = song;
         if level >= 1 {
-            let s = self.song.clone();
-            self.write(level, 1, json!({ "kind": "song", "song": s }));
+            let mut entry = json!({ "kind": "song", "song": self.song.clone() });
+            if let (Some(e), Some(m)) = (entry.as_object_mut(), meta.as_object()) {
+                e.extend(m.clone());
+            }
+            self.write(level, 1, entry);
         }
     }
 
@@ -131,12 +137,12 @@ impl Log {
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// `2026-11-14T20:03:12.345Z` — UTC, so files and entries sort the same.
-fn iso(ms: u64) -> String {
+pub(crate) fn iso(ms: u64) -> String {
     let secs = ms / 1000;
     let (y, m, d) = civil_from_days((secs / 86_400) as i64);
     let s = secs % 86_400;
@@ -157,7 +163,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, d)
 }
 
-fn file_safe(s: &str) -> String {
+pub(crate) fn file_safe(s: &str) -> String {
     let t: String = s
         .chars()
         .map(|c| if c.is_alphanumeric() || " -_.,()&'".contains(c) { c } else { '_' })
@@ -183,11 +189,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vizzy-lyrics-log-{}", now_ms()));
         let mut log = Log::new(Some(dir.clone()));
         log.start(2, json!({ "stepMs": 500 }));
-        log.set_song(2, Some("Artist – Song".into()));
+        log.set_song(2, Some("Artist – Song".into()), json!({ "spotifyId": "abc" }), false);
         log.write(2, 1, json!({ "kind": "line", "text": "hello" }));
         log.write(1, 2, json!({ "kind": "run" })); // below the level: skipped
         log.audio(true, &[0.5, -0.5]);
-        log.set_song(2, Some("Other – Song".into()));
+        log.set_song(2, Some("Other – Song".into()), Value::Null, false);
         log.audio(true, &[0.25]);
 
         let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
@@ -197,6 +203,7 @@ mod tests {
         let kinds: Vec<String> = text.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()["kind"].as_str().unwrap().to_string()).collect();
         assert_eq!(kinds, ["session", "song", "line", "song"]);
         assert!(text.contains(r#""song":"Artist – Song""#));
+        assert!(text.contains(r#""spotifyId":"abc""#));
         let audio: Vec<_> = files.iter().filter(|f| f.ends_with(".f32")).collect();
         assert_eq!(audio.len(), 2);
         assert_eq!(std::fs::metadata(dir.join(audio[0])).unwrap().len(), 8);
