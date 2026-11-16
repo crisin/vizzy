@@ -2,7 +2,9 @@
 
 Stand: 2026-11-16. Schritt 1 und 2 (A1, A2 und die Liste aus A3, ohne Upload)
 sind umgesetzt: `src-tauri/src/lyrics_take.rs`, `src/lyrics/takes.ts`. Live mit
-Whisper noch nicht gemessen. Lyrics Helper: noch nichts.
+Whisper noch nicht gemessen. Schritt 3 (B1: Modell `LyricsTake`, Migration,
+`POST /integrations/vizzy/takes`) ist in Lyrics Helper committet, aber nicht
+gepusht und damit nicht deployt.
 
 **Ziel:** vizzy hört beim Musikhören ohnehin mit (Whisper). Für Songs, zu denen
 Lyrics Helper noch keinen oder keinen synchronen Text hat, soll daraus ein
