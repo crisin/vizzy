@@ -1,7 +1,9 @@
 //! new-helper (the lyrics knowledge base) as an optional data source: what
 //! it knows about the playing song — tags, mood, saved/favourite, lyric
 //! sections with timestamps. Used as extra rule context ("tag" rules) and
-//! as markers in the choreo timeline.
+//! as markers in the choreo timeline. The other way round, vizzy sends it
+//! takes: what the lyrics worker heard during a song (`lyrics_take.rs`,
+//! PLAN-aufnahme.md).
 //!
 //! Auth is a personal API token created in new-helper (Einstellungen →
 //! Verbundene Apps). URL and token live in `<app_data>/newhelper.json`; the
@@ -108,6 +110,97 @@ impl NewHelper {
     }
 }
 
+impl NewHelper {
+    async fn post(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let (base, token) = {
+            let s = self.saved.lock().unwrap();
+            (s.base_url.trim_end_matches('/').to_string(), s.token.clone())
+        };
+        if base.is_empty() || token.is_empty() {
+            return Err("new-helper ist nicht eingerichtet".into());
+        }
+        let url = url::Url::parse(&format!("{base}{path}")).map_err(|e| format!("URL ungültig: {e}"))?;
+        let res = self
+            .http
+            .post(url)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("new-helper nicht erreichbar: {e}"))?;
+        match res.status().as_u16() {
+            200 | 201 => res.json().await.map_err(|e| e.to_string()),
+            400 => {
+                // Nest says what it did not like: { message: string | string[] }
+                let v: serde_json::Value = res.json().await.unwrap_or_default();
+                let why = match &v["message"] {
+                    serde_json::Value::Array(a) => a.iter().filter_map(|m| m.as_str()).take(3).collect::<Vec<_>>().join("; "),
+                    m => m.as_str().unwrap_or("").to_string(),
+                };
+                Err(format!("Lyrics Helper lehnt die Aufnahme ab: {why}"))
+            }
+            401 => Err("Token ungültig oder widerrufen".into()),
+            404 => Err("Diese Lyrics-Helper-Version nimmt noch keine Aufnahmen an".into()),
+            413 => Err("Die Aufnahme ist zu groß".into()),
+            s => Err(format!("new-helper antwortet {s}")),
+        }
+    }
+}
+
+/// most lines Lyrics Helper takes in one take
+const TAKE_MAX_LINES: usize = 500;
+
+/// A take file as Lyrics Helper wants it: with a Spotify id, without our
+/// own bookkeeping.
+fn take_body(mut take: serde_json::Value) -> Result<serde_json::Value, String> {
+    if take["spotifyId"].as_str().is_none_or(|s| s.is_empty()) {
+        return Err("Ohne Spotify-ID kann Lyrics Helper die Aufnahme keinem Song zuordnen".into());
+    }
+    let lines = take["lines"].as_array().map_or(0, |a| a.len());
+    if lines == 0 {
+        return Err("Die Aufnahme hat keine Zeilen".into());
+    }
+    if lines > TAKE_MAX_LINES {
+        return Err(format!("Die Aufnahme hat {lines} Zeilen, Lyrics Helper nimmt höchstens {TAKE_MAX_LINES}"));
+    }
+    if let Some(o) = take.as_object_mut() {
+        o.remove("uploaded");
+    }
+    Ok(take)
+}
+
+/// Sends one take (`lyrics-takes/<file>.json`) to Lyrics Helper and notes
+/// in the file that, and when, it went up. Returns that note.
+#[tauri::command]
+pub async fn newhelper_upload_take(
+    name: String,
+    app: tauri::AppHandle,
+    nh: tauri::State<'_, Shared>,
+) -> Result<serde_json::Value, String> {
+    let file = name
+        .strip_prefix(&format!("{}/", crate::lyrics_take::DIR))
+        .filter(|f| !f.is_empty() && f.ends_with(".json") && !f.contains(['/', '\\', ':']) && !f.contains(".."))
+        .ok_or("keine Aufnahme-Datei")?;
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join(crate::lyrics_take::DIR).join(file);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut take: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Aufnahme nicht lesbar: {e}"))?;
+    let body = take_body(take.clone())?;
+    let nh = nh.inner().clone();
+    nh.post("/integrations/vizzy/takes", &body).await?;
+    // the song has a take now; ask again rather than trust the cache
+    nh.cache.lock().unwrap().clear();
+    let note = serde_json::json!({
+        "at": crate::lyrics_log::iso(crate::lyrics_log::now_ms()),
+        "lines": body["lines"].as_array().map_or(0, |a| a.len()),
+    });
+    take["uploaded"] = note.clone();
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&take).unwrap_or_default())
+        .and_then(|_| std::fs::rename(&tmp, &path))
+        .map_err(|e| format!("hochgeladen, aber nicht vermerkt: {e}"))?;
+    Ok(note)
+}
+
 #[tauri::command]
 pub fn newhelper_status(nh: tauri::State<'_, Shared>) -> Status {
     nh.status()
@@ -211,6 +304,45 @@ mod tests {
         let err = client(&base, "nh_bad").get("/integrations/vizzy/ping", &[]).await.unwrap_err();
         h.join().unwrap();
         assert!(err.contains("Token"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn posts_a_take_and_passes_on_why_it_was_refused() {
+        let take = serde_json::json!({
+            "v": 1, "spotifyId": "sp1", "title": "Song", "uploaded": { "at": "x", "lines": 1 },
+            "lines": [{ "text": "la", "startMs": 0, "endMs": 900, "repeat": false }],
+        });
+        let body = take_body(take.clone()).unwrap();
+        assert!(body.get("uploaded").is_none(), "our own note stays here");
+
+        let (base, h) = serve_once("201 Created", r#"{"id":"t1","created":true,"lines":1}"#);
+        let v = client(&base, "nh_test").post("/integrations/vizzy/takes", &body).await.unwrap();
+        assert_eq!(v["created"], true);
+        let req = h.join().unwrap();
+        assert!(req.starts_with("POST /integrations/vizzy/takes "), "{req}");
+        assert!(req.to_lowercase().contains("authorization: bearer nh_test"));
+
+        let (base, h) = serve_once("400 Bad Request", r#"{"message":["clock must be one of: media, songchange"]}"#);
+        let err = client(&base, "nh_test").post("/integrations/vizzy/takes", &body).await.unwrap_err();
+        h.join().unwrap();
+        assert!(err.contains("lehnt die Aufnahme ab: clock must be"), "{err}");
+
+        // an older Lyrics Helper without the endpoint
+        let (base, h) = serve_once("404 Not Found", "{}");
+        let err = client(&base, "nh_test").post("/integrations/vizzy/takes", &body).await.unwrap_err();
+        h.join().unwrap();
+        assert!(err.contains("noch keine Aufnahmen"), "{err}");
+    }
+
+    #[test]
+    fn a_take_needs_a_spotify_id_and_a_sane_size() {
+        let line = serde_json::json!({ "text": "la", "startMs": 0, "endMs": 1, "repeat": false });
+        let no_id = serde_json::json!({ "spotifyId": null, "lines": [line] });
+        assert!(take_body(no_id).unwrap_err().contains("Spotify-ID"));
+        let empty = serde_json::json!({ "spotifyId": "sp1", "lines": [] });
+        assert!(take_body(empty).unwrap_err().contains("keine Zeilen"));
+        let huge = serde_json::json!({ "spotifyId": "sp1", "lines": vec![line; 501] });
+        assert!(take_body(huge).unwrap_err().contains("501 Zeilen"));
     }
 
     #[tokio::test]

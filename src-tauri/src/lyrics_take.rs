@@ -123,6 +123,13 @@ impl Take {
             }
     }
 
+    /// `lyrics-takes/<file>.json` once the take has been written, as the
+    /// frontend's data_* commands name it.
+    pub fn name(&self) -> Option<String> {
+        let file = self.file.as_ref()?.file_name()?.to_str()?;
+        Some(format!("{DIR}/{file}"))
+    }
+
     pub fn to_json(&self) -> Value {
         let from = self.lines.iter().map(|l| l.start_ms).min().unwrap_or(0);
         let to = self.lines.iter().map(|l| l.end_ms).max().unwrap_or(0);
@@ -203,6 +210,7 @@ mod tests {
         assert_eq!(t.save(), Ok(false));
         let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         assert_eq!(files, ["20261114_200312 a-ha _ Take On Me.json"]);
+        assert_eq!(t.name().as_deref(), Some("lyrics-takes/20261114_200312 a-ha _ Take On Me.json"));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(&files[0])).unwrap()).unwrap();
         assert_eq!(v["spotifyId"], "2WfaOiMkCvy7F5fcp2zZ8L");
         assert_eq!(v["lines"].as_array().unwrap().len(), 7);

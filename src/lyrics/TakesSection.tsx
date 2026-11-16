@@ -1,10 +1,11 @@
-// "Aufnahmen" in the Lyrics tab: the switch and the list of takes
-// (PLAN-aufnahme.md). Uploading to Lyrics Helper comes with a later step.
+// "Aufnahmen" in the Lyrics tab: the switch, the list of takes and their
+// way to Lyrics Helper (PLAN-aufnahme.md).
 
 import { useEffect } from "react";
 import { Section } from "../ui/ParamRow";
 import { lyrics, useLyrics } from "./store";
-import { heardShare, takes, useTakes, type TakeEntry } from "./takes";
+import { useNewHelper } from "../regie/newHelper";
+import { heardShare, takeState, takes, useTakes, useTakesUi, type TakeEntry } from "./takes";
 
 const DAY = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
@@ -22,7 +23,9 @@ function describe(e: TakeEntry): string {
     `${t.lines.length} Zeilen`,
     heard,
     t.clock === "media" ? null : "Zeiten nur grob (keine Wiedergabeposition)",
-    t.spotifyId ? null : "ohne Spotify-ID",
+    { noId: "ohne Spotify-ID, bleibt lokal", local: null, uploaded: `hochgeladen ${t.uploaded ? when(t.uploaded.at) : ""}`, changed: "seit dem Hochladen geändert" }[
+      takeState(t)
+    ],
   ]
     .filter(Boolean)
     .join(" · ");
@@ -31,6 +34,9 @@ function describe(e: TakeEntry): string {
 export function TakesSection({ offerUndo }: { offerUndo?: (msg: string, run: () => void) => void }) {
   const s = useLyrics();
   const list = useTakes();
+  const ui = useTakesUi();
+  const nh = useNewHelper();
+  const connected = !!nh.status.baseUrl && nh.status.hasToken;
   useEffect(() => {
     void takes.refresh();
   }, []);
@@ -56,6 +62,26 @@ export function TakesSection({ offerUndo }: { offerUndo?: (msg: string, run: () 
           </small>
         </span>
       </label>
+      <label className="set-row set-row-select">
+        <span className="set-label">
+          An Lyrics Helper senden
+          <small className="set-hint">
+            {connected
+              ? "Wenn ein Song vorbei ist. Dort liegt die Aufnahme neben dem Song; vorhandener Text wird nie überschrieben."
+              : "Lyrics Helper ist nicht verbunden — im Cockpit unter „new-helper“ URL und Token eintragen."}
+          </small>
+        </span>
+        <select
+          className="src-select"
+          value={s.cfg.takesUpload}
+          disabled={!connected}
+          onChange={(e) => lyrics.configure({ takesUpload: Number(e.target.value) })}
+        >
+          <option value={0}>Nur von Hand</option>
+          <option value={1}>Automatisch, wenn dort synchroner Text fehlt</option>
+          <option value={2}>Automatisch, immer</option>
+        </select>
+      </label>
       {list.length === 0 ? (
         <p className="set-note">
           Noch keine Aufnahme. Sie entsteht von selbst, sobald Lyrics an sind und ein Song zu einem guten Teil
@@ -70,7 +96,29 @@ export function TakesSection({ offerUndo }: { offerUndo?: (msg: string, run: () 
                   {e.take.artist ? `${e.take.artist} – ${e.take.title}` : e.take.title}
                 </span>
                 <small className="set-hint">{describe(e)}</small>
+                {ui.errors[e.name] && (
+                  <small className="set-hint lyr-take-error" role="alert">
+                    {ui.errors[e.name]}
+                  </small>
+                )}
               </span>
+              {takeState(e.take) !== "noId" && (
+                <button
+                  type="button"
+                  className="mode-btn"
+                  disabled={!connected || ui.busy[e.name] || takeState(e.take) === "uploaded"}
+                  title={
+                    !connected
+                      ? "Lyrics Helper ist nicht verbunden"
+                      : takeState(e.take) === "uploaded"
+                        ? "Liegt schon in Lyrics Helper"
+                        : "An Lyrics Helper senden — dort als Entwurf neben dem Song"
+                  }
+                  onClick={() => void takes.upload(e.name)}
+                >
+                  {ui.busy[e.name] ? "Lädt hoch …" : takeState(e.take) === "uploaded" ? "Hochgeladen" : "Hochladen"}
+                </button>
+              )}
               <button
                 type="button"
                 className="mode-btn"

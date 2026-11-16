@@ -17,6 +17,13 @@ Short, dated notes on what surprised us. Newest first.
   lines.** Skipping to the end makes the span 100 %.
 - **Write the file as you go.** A worker has no reliable "app quits" moment;
   rewriting a small JSON after each line (temp file, rename) needs none.
+- **A strict receiver wants exactly its fields.** Lyrics Helper validates
+  with `forbidNonWhitelisted`, so one extra key in the take (our own
+  `uploaded` note) is a 400. Strip bookkeeping before sending, and pass the
+  receiver's `message` on to the user instead of a bare status code.
+- **"Done" is an event of its own.** The file appearing and the take being
+  complete are different moments; uploading on the first would send a third
+  of a song. The worker says `lyrics-take-done` when the song changes.
 
 ## 2026-11-14 — Chorus and synced lyrics
 

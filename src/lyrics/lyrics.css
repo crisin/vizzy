@@ -358,3 +358,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.lyr-take-error {
+  color: #ff9a8a;
+}

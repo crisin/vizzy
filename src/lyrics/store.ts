@@ -28,6 +28,9 @@ export type LyricsConfig = {
   logAudio: boolean;
   /** keep what was heard per song, with song times, in <app_data>/lyrics-takes */
   takes: boolean;
+  /** send finished takes to Lyrics Helper: 0 never, 1 when it has no synced
+   *  lyrics for the song, 2 always */
+  takesUpload: number;
   stepMs: number;
   minWindow: number;
   maxWindow: number;
@@ -50,6 +53,7 @@ export const DEFAULT_CONFIG: LyricsConfig = {
   log: 0,
   logAudio: false,
   takes: true,
+  takesUpload: 0,
   stepMs: 500,
   minWindow: 1.5,
   maxWindow: 12,

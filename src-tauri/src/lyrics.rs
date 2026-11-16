@@ -546,6 +546,9 @@ pub struct Config {
     log_audio: bool,
     /// keep what was heard per song, with song times (`lyrics_take.rs`)
     takes: bool,
+    /// send finished takes to Lyrics Helper: 0 never, 1 when it has no
+    /// synced lyrics for the song, 2 always (the frontend acts on it)
+    takes_upload: u8,
     #[serde(flatten)]
     tuning: Tuning,
 }
@@ -561,6 +564,7 @@ impl Default for Config {
             log: 0,
             log_audio: false,
             takes: true,
+            takes_upload: 0,
             tuning: Tuning::default(),
         }
     }
@@ -872,8 +876,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             rs = None;
             tlog.start(0, serde_json::Value::Null);
             logged_tuning = None;
-            keep(&app, &mut take);
-            take = None;
+            finish(&app, &mut take);
             continue;
         }
         // the transcript log: session start, song changes, knob changes
@@ -892,8 +895,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
         if changed {
             last_gen = playing.gen;
             eng.agr.new_song();
-            keep(&app, &mut take);
-            take = None;
+            finish(&app, &mut take);
         }
         let meta = match &playing.info {
             Some(i) => serde_json::json!({ "spotifyId": i.spotify_id, "durationMs": i.duration_ms }),
@@ -902,8 +904,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
         tlog.set_song(lv, playing.info.as_ref().map(SongInfo::label), meta, changed);
         // the take of this song: started here, or when the switch goes on
         if !cfg.takes {
-            keep(&app, &mut take);
-            take = None;
+            finish(&app, &mut take);
         } else if let Some(info) = &playing.info {
             if let Some(t) = &mut take {
                 t.update_song(info.clone());
@@ -1032,6 +1033,15 @@ fn keep(app: &tauri::AppHandle, take: &mut Option<Take>) {
         }
         Ok(false) => {}
         Err(e) => log(app, e),
+    }
+}
+
+/// The song is over (or the switch went off): a last save, and the
+/// frontend hears that this take is complete — it may upload it.
+fn finish(app: &tauri::AppHandle, take: &mut Option<Take>) {
+    keep(app, take);
+    if let Some(name) = take.take().and_then(|t| t.name()) {
+        let _ = app.emit("lyrics-take-done", name);
     }
 }
 

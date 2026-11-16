@@ -3,8 +3,10 @@
 Stand: 2026-11-16. Schritt 1 und 2 (A1, A2 und die Liste aus A3, ohne Upload)
 sind umgesetzt: `src-tauri/src/lyrics_take.rs`, `src/lyrics/takes.ts`. Live mit
 Whisper noch nicht gemessen. Schritt 3 (B1: Modell `LyricsTake`, Migration,
-`POST /integrations/vizzy/takes`) ist in Lyrics Helper committet, aber nicht
-gepusht und damit nicht deployt.
+`POST /integrations/vizzy/takes`) ist in Lyrics Helper committet. Schritt 4
+(A3: Hochladen von Hand und automatisch) ist in vizzy umgesetzt, gegen den
+echten Endpoint aber noch nicht gelaufen. Offen: Schritt 5 und 6 (Lyrics
+Helper zeigt die Aufnahme und übernimmt sie).
 
 **Ziel:** vizzy hört beim Musikhören ohnehin mit (Whisper). Für Songs, zu denen
 Lyrics Helper noch keinen oder keinen synchronen Text hat, soll daraus ein
@@ -90,6 +92,13 @@ ohne Spotify-ID), je Zeile „Hochladen“, „Ordner öffnen“, Löschen mit U
   vizzy weiß das schon aus der Song-Abfrage (`lines` leer oder ohne Zeiten).
 - Rust-Befehl `newhelper_upload_take(file)` → `POST /integrations/vizzy/takes`.
   Nach Erfolg wird die Datei als hochgeladen markiert, nicht gelöscht.
+
+> **Stand 2026-11-16 zu A3:** „Hochgeladen“ steht in der Aufnahme-Datei selbst
+> (`uploaded: { at, lines }`), nicht in einer eigenen Liste; das Feld geht
+> nicht mit zu Lyrics Helper. Automatisch hochgeladen wird, wenn der Song
+> vorbei ist (Ereignis `lyrics-take-done` vom Worker). Wird vizzy mitten im
+> Song beendet, bleibt die Aufnahme lokal und wartet in der Liste auf den
+> Knopf.
 
 ## Teil 2 · Lyrics Helper: annehmen und verfeinern
 

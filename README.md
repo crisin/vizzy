@@ -203,8 +203,12 @@ See [PLAN.md](PLAN.md) for the roadmap.
   **Takes** (Settings → Lyrics → Aufnahmen): what was heard during one
   song, as one JSON file in `<app_data>/lyrics-takes/` — Spotify id, lines
   with `startMs`/`endMs` in the song, how much of the song was heard. Rough
-  lyrics to refine in Lyrics Helper (`PLAN-aufnahme.md`; the upload is not
-  built yet). A song heard for less than 40 % or five lines leaves no file.
+  lyrics to refine in Lyrics Helper (`PLAN-aufnahme.md`). A song heard for
+  less than 40 % or five lines leaves no file. Each take can be sent to
+  Lyrics Helper from the list, or by itself when its song is over (never,
+  only where Lyrics Helper has no synced lyrics, or always); it lands there
+  next to the song and never replaces lyrics. Takes without a Spotify id
+  stay local.
   Measured on an RTX 5070: ~200 ms per request, lines appear 1–3 s after
   they are sung (up to ~10 s after long held notes), German, English,
   Spanish and fast rap all come out nearly word for word. Whisper invents

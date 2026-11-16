@@ -159,6 +159,7 @@ pub fn run() {
             newhelper::newhelper_configure,
             newhelper::newhelper_test,
             newhelper::newhelper_song,
+            newhelper::newhelper_upload_take,
             lyrics::lyrics_config,
             lyrics::lyrics_configure,
             lyrics::lyrics_reset,
