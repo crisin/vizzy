@@ -25,6 +25,15 @@ es gibt fünf verschiedene Arten von Fenstern.
 6. **Leere Zustände sagen, was zu tun ist.** Nie ein schwarzer Bildschirm
    ohne Hinweis.
 
+> **Zu Prinzip 2, Stand 2026-11-17 — der Tab „Aktuell“.** Er zeigt Regler
+> ein zweites Mal, und zwar absichtlich: neben der Nachricht, die sie
+> gebracht hat. Das ist kein zweiter Ort, sondern ein **Schaufenster**:
+> derselbe Baustein wie am festen Platz (eine Implementierung, ein Wert),
+> der feste Platz steht als Link darunter, und der Eintrag altert von selbst
+> nach unten. Neue Regler bekommen weiterhin genau einen festen Platz und
+> zusätzlich einen Eintrag in `src/news/news.ts`. Einträge, deren Regler es
+> nicht mehr gibt, verschwinden.
+
 ## Drei Nutzungsebenen
 
 | Ebene | Situation | Wo | Wie oft |
@@ -270,6 +279,13 @@ U3 d4888ca + 5df9844 · U4 im Commit danach. Abweichungen vom Konzept:
   Library-Variante).
 - **ComfyUI** sitzt im Tab „Bild“ (dort, wo gebacken wird), nicht in
   „System“; Spotify und new-helper bleiben im Cockpit.
+- **Aktuell** (2026-11-17) ist der erste Tab; **Lyrics** kam am 2026-11-14
+  dazu. Der Drawer hat damit acht Tabs, die Leiste bricht um.
+- **Große Ansicht** (2026-11-17): keine vierte Fensterart und keine zweite
+  Einstellungs-UI, sondern derselbe Drawer, breit gezogen. Ab 760 px wird
+  die Tab-Leiste zur Navigation links und der Inhalt fließt in Spalten
+  (Container-Query); das Bild bleibt daneben sichtbar und die Tasten wirken
+  weiter. Dazu ein Suchfeld und der Filter „≠ Geändert“.
 - **Hilfe** steht weiter als `?` oben in der Leiste (das `⋯`-Menü gibt es nur
   bei Milkdrop) und öffnet ein eigenes kleines Fenster.
 - **Quellenwechsel** braucht eine Rust-Änderung: Der Capture-Thread zählt

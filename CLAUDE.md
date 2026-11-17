@@ -56,6 +56,10 @@ a web frontend (React 19, TypeScript, three.js, Butterchurn) renders.
    the render loop thinly.
 10. **Language:** UI text and user-facing error messages are German; code, comments and
     commits are English.
+11. **New things are announced.** A feature the user can see or set gets an entry at the
+    top of `src/news/news.ts` (the "Aktuell" tab), naming its controls. A control shown
+    there is the same component as at its fixed place (`ui/ParamControl.tsx`,
+    `lyrics/controls.tsx`, the `app` map in `SettingsPanel.tsx`) — never a second copy.
 
 ## Commands
 

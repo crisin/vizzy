@@ -3,7 +3,8 @@
 
 import { useEffect } from "react";
 import { Section } from "../ui/ParamRow";
-import { lyrics, useLyrics } from "./store";
+import { useLyrics } from "./store";
+import { LyricsControl } from "./controls";
 import { useNewHelper } from "../regie/newHelper";
 import { heardShare, takeState, takes, useTakes, useTakesUi, type TakeEntry } from "./takes";
 
@@ -47,41 +48,8 @@ export function TakesSection({ offerUndo }: { offerUndo?: (msg: string, run: () 
 
   return (
     <Section id="lyrics.takes" title="Aufnahmen" badge={list.length ? String(list.length) : undefined}>
-      <label className="set-row set-row-toggle">
-        <input
-          type="checkbox"
-          checked={s.cfg.takes}
-          onChange={(e) => lyrics.configure({ takes: e.target.checked })}
-        />
-        <span className="set-label">
-          Pro Song mitschreiben
-          <small className="set-hint">
-            Was gehört wurde, mit der Zeit im Song — eine Datei pro Song in <code>lyrics-takes/</code>. Als
-            grober Entwurf für Lyrics Helper. Songs, von denen weniger als 40 % oder weniger als 5 Zeilen
-            gehört wurden, werden nicht aufgehoben.
-          </small>
-        </span>
-      </label>
-      <label className="set-row set-row-select">
-        <span className="set-label">
-          An Lyrics Helper senden
-          <small className="set-hint">
-            {connected
-              ? "Wenn ein Song vorbei ist. Dort liegt die Aufnahme neben dem Song; vorhandener Text wird nie überschrieben."
-              : "Lyrics Helper ist nicht verbunden — im Cockpit unter „new-helper“ URL und Token eintragen."}
-          </small>
-        </span>
-        <select
-          className="src-select"
-          value={s.cfg.takesUpload}
-          disabled={!connected}
-          onChange={(e) => lyrics.configure({ takesUpload: Number(e.target.value) })}
-        >
-          <option value={0}>Nur von Hand</option>
-          <option value={1}>Automatisch, wenn dort synchroner Text fehlt</option>
-          <option value={2}>Automatisch, immer</option>
-        </select>
-      </label>
+      <LyricsControl id="takes" />
+      <LyricsControl id="takesUpload" />
       {list.length === 0 ? (
         <p className="set-note">
           Noch keine Aufnahme. Sie entsteht von selbst, sobald Lyrics an sind und ein Song zu einem guten Teil

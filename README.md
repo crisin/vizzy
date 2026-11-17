@@ -197,9 +197,15 @@ See [PLAN.md](PLAN.md) for the roadmap.
   `line` (text, `behindS`, `inferMs`, `windowS`, and its place in the song:
   `startMs`, `endMs`, `clock`), `pause`, `config`, `error`; at the debug level
   also `run` for every request (Whisper's raw segments with
-  `avgLogprob`, what the filters kept, what was committed). Optionally the
-  audio Whisper heard, one `.f32` per song, which replays with the offline
-  test below.
+  `avgLogprob`, what the filters kept, what was committed), `position`
+  (the media position the worker was told: song change, seek, pause),
+  `helper` (the timed text Lyrics Helper has for the song), `match` (a heard
+  line located in that text or not, and the clock offset before and after),
+  `show` (a synced line went on screen) and `event` (refrain, voice on/off).
+  Optionally the audio Whisper heard, one `.wav` per song (16 kHz mono,
+  16 bit, ~1.9 MB per minute), which plays anywhere and replays with the
+  offline test below. *Alles mitschneiden (Debug)* switches both on
+  at once.
   **Takes** (Settings → Lyrics → Aufnahmen): what was heard during one
   song, as one JSON file in `<app_data>/lyrics-takes/` — Spotify id, lines
   with `startMs`/`endMs` in the song, how much of the song was heard. Rough
@@ -215,8 +221,8 @@ See [PLAN.md](PLAN.md) for the roadmap.
   text over instrumentals and its `no_speech_prob` stays at ~0 there, so
   the filters are our own (see the module comment).
   Offline against a file: `VIZZY_LYRICS_FILE=clip.f32 cargo test --lib
-  lyrics_offline -- --ignored --nocapture` (raw 16 kHz mono f32, the
-  ffmpeg line is in the test); `VIZZY_LYRICS_TUNING='{"stepMs":300}'`
+  lyrics_offline -- --ignored --nocapture` (a `.wav` from the log, or raw
+  16 kHz mono f32 — the ffmpeg line is in the test); `VIZZY_LYRICS_TUNING='{"stepMs":300}'`
   tries other knobs.
 - **Overlay mode** (`O`, ⋯ menu, Settings → Bedienung): vizzy covers the
   whole monitor, see-through (adjustable opacity) and click-through, always
@@ -252,9 +258,25 @@ Three levels, three kinds of window (see [PLAN-ux.md](PLAN-ux.md)):
   Klassisch ▾`, and for Milkdrop `‹ preset ›` (click: library) · ☆ · Auto ·
   Library · ⋯; for 3D `‹ scene ›` plus the scene's own actions. It hides
   itself after a few seconds; `H` keeps it away for good (presentation mode).
-- **Side panels** — settings on the right (Audio, Bild, Automatik, Layer B,
-  Bedienung, System), cockpit on the left (`C`). The picture keeps running
-  and the toolbar moves out of their way.
+- **Side panels** — settings on the right (Aktuell, Audio, Bild, Automatik,
+  Layer B, Bedienung, Lyrics, System), cockpit on the left (`C`). The picture
+  keeps running and the toolbar moves out of their way.
+- **Large view** — "⇤ Groß" in the drawer's head (or dragging its edge
+  past 760 px) turns the side panel into a wide one: the tabs become a
+  navigation on the left, the content flows in columns and *Bild* lists the
+  parameters of every scene, not only the running one. The picture keeps
+  running beside it. "≠ Geändert" shows, in any tab and either size, only
+  what differs from its default.
+- **Search** — the field at the top of the settings drawer finds every
+  control by its name or explanation and shows it right there, adjustable,
+  under a link to its fixed place (also parameters of scenes that are not
+  running). Esc clears the field.
+- **Aktuell** — the first settings tab: what is new, newest first and by
+  day, each entry with the controls it brought (live, the same controls as
+  at their fixed place) and a link that opens that place. A dot on ⚙ and on
+  the tab says there is something not looked at yet. The entries are data in
+  `src/news/news.ts`; one whose controls no longer exist disappears by
+  itself.
 - **Workshops** — library (`L`), studio (`P`), Regie (`G`): full screen,
   closed with Esc or Schließen, never by a stray click beside them; the
   studio asks before dropping unsaved work.

@@ -165,6 +165,7 @@ pub fn run() {
             lyrics::lyrics_reset,
             lyrics::lyrics_test,
             lyrics::lyrics_song,
+            lyrics::lyrics_note,
             overlay::overlay_set
         ])
         .run(tauri::generate_context!())

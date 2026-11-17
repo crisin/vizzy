@@ -13,6 +13,7 @@ import { newHelper } from "../regie/newHelper";
 import { params } from "../params";
 import { SyncClock, lineAt, locate, similarity, words, type TimedLine } from "./syncCore";
 import { lyricEvents } from "./events";
+import { debugLog } from "./debugLog";
 
 /** a running clock without media position dies after this long without a match */
 const ANCHOR_TTL_MS = 45_000;
@@ -100,6 +101,7 @@ class SyncedLyrics {
       this.songKey = key;
     }
     const sections = (info?.sections ?? []).filter((s) => s.startMs !== null) as { label: string; startMs: number }[];
+    this.logHelper(t, info?.found ?? null, raw.length, lines, sections);
     this.set({
       available: lines.length >= 3,
       lines,
@@ -107,6 +109,34 @@ class SyncedLyrics {
       index: -1,
       song: t ? `${t.artist} – ${t.title}` : null,
     });
+  }
+
+  /** Debug log: what Lyrics Helper has for the song (the whole timed text). */
+  private logHelper(
+    t: Track | null,
+    found: boolean | null,
+    untimed: number,
+    lines: TimedLine[],
+    sections: { label: string; startMs: number }[],
+  ) {
+    if (!t || !debugLog.on) return;
+    this.helperLogged = `${this.songKey}|${found}|${untimed}|${lines.length}`;
+    debugLog.note("helper", {
+      // null: not asked or no answer yet
+      found,
+      linesTotal: untimed,
+      lines: lines.map((l) => ({ startMs: l.startMs, text: l.text })),
+      sections,
+    });
+  }
+  private helperLogged = "";
+
+  /** The debug log went on mid-song: note the text in play once more. */
+  logNow() {
+    const s = this.snap;
+    const t = nowPlaying.getSnapshot().track;
+    if (!t || !s.song || this.helperLogged.startsWith(`${this.songKey}|`)) return;
+    this.logHelper(t, s.lines.length > 0 ? true : null, s.lines.length, s.lines, []);
   }
 
   /** From the lyrics store: Whisper committed `text`, which started `agoS` ago. */
@@ -119,8 +149,30 @@ class SyncedLyrics {
       locate(this.snap.lines, text, expected === null ? null : expected - agoS * 1000, SEARCH_MS) ??
       // no clock yet, or lost: the whole song, but only a strong match
       (expected === null || this.clock.matched === 0 ? locate(this.snap.lines, text, null, 0, 0.75) : null);
-    if (!hit) return;
+    const about = {
+      heard: text,
+      agoMs: Math.round(agoS * 1000),
+      positionMs: pos === null ? null : Math.round(pos),
+      expectedMs: expected === null ? null : Math.round(expected - agoS * 1000),
+    };
+    if (!hit) {
+      debugLog.note("match", { ...about, hit: null });
+      return;
+    }
+    const before = this.clock.offsetMs;
     this.clock.match(this.snap.lines[hit.index].startMs, agoS * 1000, pos, now);
+    debugLog.note("match", {
+      ...about,
+      hit: {
+        index: hit.index,
+        sim: Math.round(hit.sim * 100) / 100,
+        startMs: this.snap.lines[hit.index].startMs,
+        text: this.snap.lines[hit.index].text,
+      },
+      offsetBeforeMs: Math.round(before),
+      offsetMs: Math.round(this.clock.offsetMs),
+      matched: this.clock.matched,
+    });
     this.set({ offsetMs: this.clock.offsetMs, matched: this.clock.matched });
   }
 
@@ -140,6 +192,16 @@ class SyncedLyrics {
     const index = songMs === null ? -1 : lineAt(s.lines, songMs);
     if (index !== s.index || usable !== s.usable || clock !== s.clock) {
       this.set({ index, indexAt: now, usable, clock });
+      debugLog.note("show", {
+        index,
+        text: index >= 0 ? s.lines[index].text : null,
+        startMs: index >= 0 ? s.lines[index].startMs : null,
+        songMs: songMs === null ? null : Math.round(songMs),
+        positionMs: pos === null ? null : Math.round(pos),
+        clock,
+        // false: Whisper's lines are on screen (source "whisper")
+        onScreen: this.active(),
+      });
       if (index > s.index && index >= 0 && this.active()) {
         lyricEvents.line(s.lines[index].text, s.repeats[index] ?? false);
       }

@@ -194,3 +194,125 @@
 .drawer-embed .routing-row {
   flex-wrap: wrap;
 }
+
+/* ------------------------------------------------- head: search, filter, size */
+
+/* DOM order is title, close, then these (the close button must stay the
+   first focusable); shown as title, search, filter, size, close */
+.settings-head > .icon-btn {
+  order: 2;
+}
+
+.set-head-btn {
+  order: 1;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* tabs and body; only a box of its own in the large view */
+.settings-main,
+.settings-scroll {
+  display: contents;
+}
+
+/* ------------------------------------------------- "nur Geändertes" */
+
+.only-changed .prow:not(.changed),
+.only-changed .set-row:not(.changed),
+.only-changed .lyr-form:not(.changed),
+.only-changed .set-note,
+.only-changed .set-seg,
+.only-changed .psec:not(:has(.changed)),
+.only-changed .set-field:not(:has(.changed)),
+.only-changed .drawer-sec:not(:has(.changed)),
+.only-changed .news,
+.only-changed-empty {
+  display: none;
+}
+
+.only-changed:not(:has(.changed)) .only-changed-empty {
+  display: block;
+}
+
+/* ------------------------------------------------- the large view */
+
+.settings-panel.drawer {
+  container: drawer / inline-size;
+}
+
+/* same number as WIDE_W in SettingsPanel.tsx */
+@container drawer (min-width: 760px) {
+  .settings-main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .settings-tabs {
+    flex: 0 0 11.5em;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 1px;
+    padding: 10px 0 10px 8px;
+    overflow-y: auto;
+    border-bottom: 0;
+    border-right: 1px solid rgba(148, 163, 184, 0.16);
+  }
+
+  .settings-tab {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 0;
+    border-right: 2px solid transparent;
+    margin-right: -1px;
+  }
+
+  .settings-tab.active {
+    border-right-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.07);
+  }
+
+  .settings-tab.inactive.active {
+    border-right-color: #475569;
+  }
+
+  .settings-scroll {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
+  }
+
+  /* the content flows into as many columns as fit; the box is as tall as
+     its content (a fixed height would add columns sideways) */
+  .settings-panel.drawer .settings-body {
+    display: block;
+    overflow: visible;
+    columns: 21em auto;
+    column-gap: 18px;
+  }
+
+  .settings-body .drawer-embed,
+  .settings-body .lyr-settings,
+  .settings-body .news,
+  .settings-body .set-search-results {
+    display: block;
+  }
+
+  .settings-body > *,
+  .settings-body .drawer-embed > *,
+  .settings-body .lyr-settings > *,
+  .settings-body .news > *,
+  .settings-body .set-search-results > * {
+    margin-bottom: 14px;
+  }
+
+  .settings-body .psec,
+  .settings-body .set-field,
+  .settings-body .news-item,
+  .settings-body .set-search-group,
+  .settings-body .prow,
+  .settings-body .set-row {
+    break-inside: avoid;
+  }
+}

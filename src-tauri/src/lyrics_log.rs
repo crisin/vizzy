@@ -7,18 +7,23 @@
 //!   `durationMs` when known), `line` (a committed line with its lag and its
 //!   time in the song, `startMs`/`endMs`), `pause`, `config` (knobs changed), and at the debug
 //!   level `run` (every Whisper request: raw segments, what the filters kept,
-//!   what was committed, the tentative tail).
-//! - optionally the 16 kHz audio Whisper heard, one raw mono f32 file per
-//!   song (`YYYY-MM-DD_HHMMSS <song>.f32`), ready for the offline test
-//!   (`VIZZY_LYRICS_FILE`, see `lyrics.rs`) — so a song that went wrong live
-//!   can be replayed with other knobs.
+//!   what was committed, the tentative tail), `position` (the media position
+//!   the worker was told: song changes, seeks, pauses) and what the frontend
+//!   adds through `lyrics_note`: `helper` (the timed text from Lyrics
+//!   Helper), `match` (a heard line located in it, or not, and the clock
+//!   offset that follows), `show` (a synced line went on screen), `event`
+//!   (refrain, voice on/off).
+//! - optionally the 16 kHz audio Whisper heard, one 16-bit mono WAV per
+//!   song (`YYYYMMDD_HHMMSS <song>.wav`) — the same samples Whisper got, so
+//!   it plays in any player and replays through the offline test
+//!   (`VIZZY_LYRICS_FILE`, see `lyrics.rs`) with other knobs.
 //!
 //! Writing never stops the worker: errors are reported once and the entry is
 //! dropped.
 
 use serde_json::{json, Value};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,7 +35,8 @@ pub type Level = u8;
 pub struct Log {
     dir: Option<PathBuf>,
     song: Option<String>,
-    audio: Option<File>,
+    /// the open WAV and how many bytes of samples it holds
+    audio: Option<(File, u32)>,
     /// the audio file belongs to this song (None = before the first song)
     audio_song: Option<Option<String>>,
     last_error: Option<String>,
@@ -68,7 +74,10 @@ impl Log {
         let Some(dir) = &self.dir else { return None };
         let now = now_ms();
         if let Some(o) = entry.as_object_mut() {
-            o.insert("t".into(), json!(iso(now)));
+            // a note from the frontend carries the time it was made
+            if !o.contains_key("t") {
+                o.insert("t".into(), json!(iso(now)));
+            }
             if !o.contains_key("song") {
                 o.insert("song".into(), json!(self.song));
             }
@@ -93,7 +102,9 @@ impl Log {
         self.write(level, 1, json!({ "kind": "session", "config": cfg }))
     }
 
-    /// Appends audio Whisper heard (16 kHz mono f32), one file per song.
+    /// Appends audio Whisper heard (16 kHz mono), one WAV per song. The
+    /// header's sizes are rewritten on every call, so the file is valid
+    /// whenever the app stops.
     pub fn audio(&mut self, on: bool, pcm: &[f32]) -> Option<String> {
         if !on {
             self.audio = None;
@@ -105,20 +116,30 @@ impl Log {
             self.audio = None;
             let stamp = iso(now_ms()).replace(['-', ':'], "").replace('T', "_");
             let name = match &self.song {
-                Some(s) => format!("{} {}.f32", &stamp[..15], file_safe(s)),
-                None => format!("{}.f32", &stamp[..15]),
+                Some(s) => format!("{} {}.wav", &stamp[..15], file_safe(s)),
+                None => format!("{}.wav", &stamp[..15]),
             };
             let opened = std::fs::create_dir_all(&dir)
-                .and_then(|_| OpenOptions::new().create(true).append(true).open(dir.join(name)));
+                .and_then(|_| OpenOptions::new().create(true).write(true).truncate(true).open(dir.join(name)))
+                .and_then(|mut f| f.write_all(&wav_header(0)).map(|_| f));
             match opened {
-                Ok(f) => self.audio = Some(f),
+                Ok(f) => self.audio = Some((f, 0)),
                 Err(e) => return self.report(Some(format!("Lyrics-Audio: {e}"))),
             }
             self.audio_song = Some(self.song.clone());
         }
-        let f = self.audio.as_mut()?;
-        let bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
-        let res = f.write_all(&bytes);
+        if pcm.is_empty() {
+            return None;
+        }
+        let (f, len) = self.audio.as_mut()?;
+        let bytes: Vec<u8> = pcm.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
+        *len = len.saturating_add(bytes.len() as u32);
+        let header = wav_header(*len);
+        let res = f
+            .write_all(&bytes)
+            .and_then(|_| f.seek(SeekFrom::Start(0)))
+            .and_then(|_| f.write_all(&header))
+            .and_then(|_| f.seek(SeekFrom::End(0)).map(|_| ()));
         self.report(res.err().map(|e| format!("Lyrics-Audio: {e}")))
     }
 
@@ -135,6 +156,27 @@ impl Log {
             }
         }
     }
+}
+
+/// What the log's audio is: 16 kHz, mono, 16 bit.
+pub(crate) const WAV_RATE: u32 = 16000;
+pub(crate) const WAV_HEADER: usize = 44;
+
+fn wav_header(data_len: u32) -> [u8; WAV_HEADER] {
+    let mut h = [0u8; WAV_HEADER];
+    h[0..4].copy_from_slice(b"RIFF");
+    h[4..8].copy_from_slice(&(36 + data_len).to_le_bytes());
+    h[8..16].copy_from_slice(b"WAVEfmt ");
+    h[16..20].copy_from_slice(&16u32.to_le_bytes());
+    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
+    h[22..24].copy_from_slice(&1u16.to_le_bytes()); // mono
+    h[24..28].copy_from_slice(&WAV_RATE.to_le_bytes());
+    h[28..32].copy_from_slice(&(WAV_RATE * 2).to_le_bytes());
+    h[32..34].copy_from_slice(&2u16.to_le_bytes());
+    h[34..36].copy_from_slice(&16u16.to_le_bytes());
+    h[36..40].copy_from_slice(b"data");
+    h[40..44].copy_from_slice(&data_len.to_le_bytes());
+    h
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -204,9 +246,13 @@ mod tests {
         assert_eq!(kinds, ["session", "song", "line", "song"]);
         assert!(text.contains(r#""song":"Artist – Song""#));
         assert!(text.contains(r#""spotifyId":"abc""#));
-        let audio: Vec<_> = files.iter().filter(|f| f.ends_with(".f32")).collect();
+        let audio: Vec<_> = files.iter().filter(|f| f.ends_with(".wav")).collect();
         assert_eq!(audio.len(), 2);
-        assert_eq!(std::fs::metadata(dir.join(audio[0])).unwrap().len(), 8);
+        drop(log);
+        let wav = std::fs::read(dir.join(audio[0])).unwrap();
+        assert_eq!(wav.len(), 44 + 4);
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 4);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 16383);
         std::fs::remove_dir_all(dir).ok();
     }
 }

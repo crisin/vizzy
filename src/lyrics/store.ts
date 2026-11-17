@@ -13,6 +13,7 @@ import { nowPlaying, positionNow, type Track } from "../regie/nowPlaying";
 import { params } from "../params";
 import { lyricEvents } from "./events";
 import { synced } from "./synced";
+import { debugLog } from "./debugLog";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -24,7 +25,7 @@ export type LyricsConfig = {
   model: string;
   /** transcript log in <app_data>/lyrics-log: 0 off, 1 lines, 2 debug */
   log: number;
-  /** also keep the 16 kHz audio Whisper heard, one file per song */
+  /** also keep the 16 kHz audio Whisper heard, one WAV per song */
   logAudio: boolean;
   /** keep what was heard per song, with song times, in <app_data>/lyrics-takes */
   takes: boolean;
@@ -221,6 +222,12 @@ class LyricsStore {
 
   private set(patch: Partial<LyricsSnapshot>) {
     this.snap = { ...this.snap, ...patch };
+    const debug = this.snap.cfg.enabled && this.snap.cfg.log >= 2;
+    if (debug !== debugLog.on) {
+      debugLog.on = debug;
+      // the worker must know first, or it drops the note (saving is debounced)
+      if (debug) window.setTimeout(() => synced.logNow(), 1000);
+    }
     for (const fn of this.listeners) fn();
   }
 
@@ -324,6 +331,12 @@ class LyricsStore {
       durationMs: on.durationMs === null ? null : Math.round(on.durationMs),
     };
     void invoke("lyrics_song", { song, restart, positionMs: pos, playing }).catch(() => {});
+  }
+
+  /** Everything for debugging in one switch: every Whisper run, the synced
+   *  lyrics' decisions and the audio. Off goes back to no log at all. */
+  recordAll(on: boolean) {
+    this.configure(on ? { log: 2, logAudio: true } : { log: 0, logAudio: false });
   }
 
   openLog() {

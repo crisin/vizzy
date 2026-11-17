@@ -2,6 +2,49 @@
 
 Short, dated notes on what surprised us. Newest first.
 
+## 2026-11-17 — "Aktuell": news with live controls
+
+- **"One place per function" survives a second view if the control is one
+  component.** The news tab does not copy switches; it renders the same
+  component (`ParamControl`, `LyricsControl`, the drawer's `app` elements)
+  and links to the fixed place. What had to change first: the switches were
+  inline JSX inside their tabs and had to become addressable by name.
+- **A changelog in the UI rots unless it checks itself.** Entries name
+  controls by id; an id that resolves to nothing is dropped, an entry left
+  with nothing disappears, and the dev console names the stale reference.
+- **Mark "seen" on mount, show "new" from a snapshot.** React's strict mode
+  runs effects twice in dev, so "mark seen when the tab closes" fires at
+  once. Taking the unseen ids into state first keeps the badges for the
+  visit while the dot on ⚙ goes immediately.
+- **A bigger settings view does not need a second UI.** The drawer was
+  already resizable; a container query on its own width turns the tabs into
+  a left navigation and lets the body flow in CSS columns. Every panel that
+  is wired into the drawer (source, routing, ComfyUI, layer B) comes along
+  for free, and a third of the picture stays visible as the live preview.
+- **A search field must not be a dialog's first focusable.** The drawer
+  focuses its first control on opening; with the field there, the opening
+  key (`E`) landed in it and every shortcut after it too. DOM order keeps
+  the close button first, CSS `order` puts the field where it belongs.
+- **"Only what changed" is a CSS filter once rows carry a `changed`
+  class** (`:has()` hides sections without one); collapsed sections have to
+  be forced open for it, through a context.
+- **A link into a tab that is not mounted yet needs a hand-over.** The jump
+  sets a pending section id; the section takes it when it mounts (or on the
+  event, if it is already there), opens, scrolls and glows.
+
+## 2026-11-16 — One debug switch for lyrics
+
+- **A debug recording has to be openable without tools.** The log's audio
+  was raw `.f32` (fine for the offline test, useless in a player). It is
+  16-bit WAV now — the very samples Whisper gets, half the size. The header
+  sizes are rewritten after every block, so the file is valid whenever the
+  app stops; that needs a file opened for writing, not appending (append
+  mode ignores seeks).
+- **Two halves of a story belong in one file.** The worker knows what was
+  heard, the webview what the synced lyrics did with it. The webview's notes
+  (`lyrics_note`) go through the worker into the same JSONL, stamped when
+  they were made, instead of a second log to line up by hand.
+
 ## 2026-11-16 — Takes: song times for heard lines
 
 - **A line's song time is asked for a moment in the past.** The worker knows

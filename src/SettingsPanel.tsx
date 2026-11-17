@@ -7,8 +7,13 @@ import {
   type RefObject,
 } from "react";
 import { ParamGroup } from "./ui/ParamGroup";
+import { ForceOpenContext } from "./ui/ParamRow";
+import { PARAM_SCHEMAS } from "./params";
 import { useDialogFocus } from "./useDialogFocus";
 import { bridgeInfo, onBridgeChange } from "./milkdrop/bridgeClient";
+import { AktuellTab } from "./news/AktuellTab";
+import { SettingsSearch } from "./ui/SettingsSearch";
+import { useUnseenNews, type AppControlId } from "./news/news";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -29,6 +34,7 @@ const BUILD_ID = (() => {
 // mode is greyed out with a hint, never removed (the bar must not rearrange
 // itself under the pointer).
 const TABS = [
+  { id: "aktuell", label: "Aktuell" },
   { id: "audio", label: "Audio" },
   { id: "bild", label: "Bild" },
   { id: "auto", label: "Automatik" },
@@ -145,6 +151,14 @@ export type DrawerTab = {
 
 const WIDTH_KEY = "vizzy.drawer.width";
 const MIN_W = 340;
+/** From this width on the drawer is the "large view": tabs become a
+ *  navigation on the left, the content flows in columns (drawer.css uses
+ *  the same number in its container query) and "Bild" lists every scene. */
+const WIDE_W = 760;
+const NARROW_W = 440;
+
+/** parameter groups that have their place outside the "Bild" tab */
+const NOT_BILD = new Set(["audio", "milkdrop", "react", "ui", "overlay", "lyrics", "lyricsTent", "dev", "render"]);
 
 function loadWidth(): number {
   try {
@@ -168,6 +182,25 @@ export function SettingsPanel(props: SettingsPanelProps) {
       root.style.removeProperty("--drawer-open-w");
     };
   }, [width]);
+  const [viewportW, setViewportW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const on = () => setViewportW(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  const wide = Math.min(width, viewportW - 28) >= WIDE_W;
+  const toggleWide = () => {
+    // leaves a good third of the picture visible next to the settings
+    const w = wide ? NARROW_W : Math.max(WIDE_W, Math.min(1180, Math.round(window.innerWidth * 0.66)));
+    setWidth(w);
+    try {
+      localStorage.setItem(WIDTH_KEY, String(w));
+    } catch {
+      // ignore
+    }
+  };
+  // "nur Geändertes": only what differs from its default, in every tab
+  const [onlyChanged, setOnlyChanged] = useState(false);
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
     const x0 = e.clientX;
@@ -213,6 +246,107 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const panelRef = useDialogFocus<HTMLElement>(false, props.returnFocusRef);
   useEffect(() => () => window.clearTimeout(armTimer.current), []);
 
+  const unseen = useUnseenNews();
+  // text in the search field replaces the tab's content with the hits
+  const [query, setQuery] = useState("");
+  const searching = query.trim() !== "";
+
+  // App-state switches, written once: their tab places them, and the
+  // "Aktuell" tab shows the same elements next to the news they belong to.
+  const app: Record<AppControlId, ReactNode> = {
+    autoSwitch: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.autoSwitch}
+          onChange={(e) => props.onAutoSwitch(e.target.checked)}
+        />
+        <span className="set-label">
+          Preset automatisch wechseln
+          <small className="set-hint">
+            Wechselt im Takt, frühestens nach der Wartezeit unten · Taste A
+          </small>
+        </span>
+      </label>
+    ),
+    favOnly: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.favOnly}
+          onChange={(e) => props.onFavOnly(e.target.checked)}
+          disabled={props.favorites.length === 0}
+        />
+        <span className="set-label">
+          Nur Favoriten verwenden
+          <small className="set-hint">
+            {props.favorites.length === 0
+              ? "Noch keine Favoriten — in der Library oder mit S markieren"
+              : `${props.favorites.length} Favoriten · gilt für ←/→, Zufall und Auto`}
+          </small>
+        </span>
+      </label>
+    ),
+    presentation: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.presentation}
+          onChange={(e) => props.onPresentation(e.target.checked)}
+        />
+        <span className="set-label">
+          Präsentationsmodus
+          <small className="set-hint">
+            Leiste und Mauszeiger bleiben weg, Tasten wirken weiter. Taste H
+            schaltet zurück, ebenso jede Taste, die ein Panel öffnet.
+          </small>
+        </span>
+      </label>
+    ),
+    overlay: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.overlay}
+          onChange={(e) => props.onOverlay(e.target.checked)}
+        />
+        <span className="set-label">
+          Overlay-Modus (O)
+          <small className="set-hint">
+            vizzy liegt durchsichtig über dem ganzen Bildschirm, Klicks gehen zu den
+            Fenstern darunter. Raus nur mit Strg+Alt+V — vizzy hat dann keinen Fokus.
+          </small>
+        </span>
+      </label>
+    ),
+    showBpm: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.showBpm}
+          onChange={(e) => props.onShowBpm(e.target.checked)}
+        />
+        <span className="set-label">
+          Tempo-Anzeige (BPM)
+          <small className="set-hint">Dauerhaft oben in der Leiste · Taste I blendet das Tempo kurz ein</small>
+        </span>
+      </label>
+    ),
+    debug: (
+      <label className="set-row set-row-toggle">
+        <input
+          type="checkbox"
+          checked={props.debugOpen}
+          onChange={(e) => props.onDebug(e.target.checked)}
+        />
+        <span className="set-label">
+          Diagnose & Frequenz-Analyse
+          <small className="set-hint">Taste D</small>
+        </span>
+      </label>
+    ),
+  };
+
   const loopbacks = props.sources.filter((s) => s.kind === "loopback");
   const inputs = props.sources.filter((s) => s.kind === "input");
 
@@ -229,13 +363,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
       <div
         className="drawer-grip"
         onPointerDown={startDrag}
-        onDoubleClick={() => setWidth(440)}
+        onDoubleClick={() => setWidth(NARROW_W)}
         title="Breite ziehen · Doppelklick: Standard"
         aria-hidden="true"
       />
       <div className="settings-head">
         <h2 id="settings-title">
-          {shown === "help" ? "Hilfe" : (allTabs.find((t) => t.id === shown)?.label ?? "Einstellungen")}
+          {searching ? "Suche" : shown === "help" ? "Hilfe" : (allTabs.find((t) => t.id === shown)?.label ?? "Einstellungen")}
         </h2>
         <button
           type="button"
@@ -246,8 +380,50 @@ export function SettingsPanel(props: SettingsPanelProps) {
         >
           ✕
         </button>
+        {/* after the close button in the DOM: opening the drawer focuses its
+            first control, and a search field there would swallow the opening
+            key and every shortcut after it (placed by CSS order) */}
+        <input
+          type="search"
+          className="set-search"
+          value={query}
+          placeholder="Einstellung suchen …"
+          aria-label="Einstellung suchen"
+          spellCheck={false}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            // Esc empties the field first; the next one closes the drawer
+            if (e.key === "Escape" && query) {
+              e.stopPropagation();
+              setQuery("");
+            }
+          }}
+        />
+        <button
+          type="button"
+          className={`mode-btn set-head-btn ${onlyChanged ? "active" : ""}`}
+          onClick={() => setOnlyChanged((v) => !v)}
+          aria-pressed={onlyChanged}
+          title="Nur zeigen, was vom Standard abweicht"
+        >
+          ≠ Geändert
+        </button>
+        <button
+          type="button"
+          className={`mode-btn set-head-btn ${wide ? "active" : ""}`}
+          onClick={toggleWide}
+          aria-pressed={wide}
+          title={
+            wide
+              ? "Zurück zur schmalen Seitenleiste"
+              : "Große Ansicht: Navigation links, mehrere Spalten, alle Szenen — das Bild bleibt daneben sichtbar"
+          }
+        >
+          {wide ? "⇥ Schmal" : "⇤ Groß"}
+        </button>
       </div>
 
+      <div className="settings-main">
       <div className="settings-tabs" role="tablist" aria-label="Bereiche">
         {allTabs.map((t) => (
           <button
@@ -255,24 +431,43 @@ export function SettingsPanel(props: SettingsPanelProps) {
             type="button"
             role="tab"
             id={`settings-tab-${t.id}`}
-            aria-selected={shown === t.id}
+            aria-selected={!searching && shown === t.id}
             aria-controls="settings-body"
-            className={`settings-tab ${shown === t.id ? "active" : ""} ${t.inactive ? "inactive" : ""}`}
-            title={t.inactive ?? t.title}
-            onClick={() => setTab(t.id)}
+            className={`settings-tab ${!searching && shown === t.id ? "active" : ""} ${t.inactive ? "inactive" : ""} ${
+              t.id === "aktuell" && unseen > 0 ? "news-dot" : ""
+            }`}
+            title={t.inactive ?? t.title ?? (t.id === "aktuell" && unseen > 0 ? `${unseen} neu` : undefined)}
+            onClick={() => {
+              setQuery("");
+              setTab(t.id);
+            }}
           >
             {t.label}
           </button>
         ))}
       </div>
 
+      <ForceOpenContext.Provider value={onlyChanged && !searching}>
+      {/* scrolls in the large view, where the body is a multi-column box of its own height */}
+      <div className="settings-scroll">
       <div
-        className="settings-body"
+        className={`settings-body ${onlyChanged && !searching ? "only-changed" : ""}`}
         id="settings-body"
         role="tabpanel"
         aria-labelledby={`settings-tab-${shown}`}
       >
-        {extra &&
+        {searching && (
+          <SettingsSearch
+            query={query}
+            app={app}
+            onOpen={(t) => {
+              setQuery("");
+              setTab(t);
+            }}
+          />
+        )}
+
+        {!searching && extra &&
           (extra.inactive ? (
             <div className="drawer-inactive">
               <p>{extra.inactive}</p>
@@ -286,7 +481,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
             <div className="drawer-embed">{extra.content}</div>
           ))}
 
-        {shown === "audio" && (
+        {!searching && shown === "aktuell" && <AktuellTab app={app} onTab={setTab} />}
+
+        {!searching && shown === "audio" && (
           <>
             {inTauri ? (
               <Field label="Audio-Quelle">
@@ -339,9 +536,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </>
         )}
 
-        {shown === "bild" && (
+        {!searching && shown === "bild" && (
           <>
-            {props.paramGroups
+            {(wide || onlyChanged
+              ? // the large view (and the filter) show every scene, the running one first
+                [...new Set([...props.paramGroups, ...Object.keys(PARAM_SCHEMAS).filter((g) => !NOT_BILD.has(g))])]
+              : props.paramGroups
+            )
               // the Milkdrop tab already shows this group
               .filter((g) => g !== "milkdrop")
               .map((g) => (
@@ -392,7 +593,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </>
         )}
 
-        {shown === "auto" && (
+        {!searching && shown === "auto" && (
           <>
             {!props.milkdropAvailable && (
               <p className="set-note drawer-inactive-note">
@@ -401,35 +602,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
               </p>
             )}
             <Field label="Auto-Wechsel">
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.autoSwitch}
-                  onChange={(e) => props.onAutoSwitch(e.target.checked)}
-                />
-                <span className="set-label">
-                  Preset automatisch wechseln
-                  <small className="set-hint">
-                    Wechselt im Takt, frühestens nach der Wartezeit unten · Taste A
-                  </small>
-                </span>
-              </label>
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.favOnly}
-                  onChange={(e) => props.onFavOnly(e.target.checked)}
-                  disabled={props.favorites.length === 0}
-                />
-                <span className="set-label">
-                  Nur Favoriten verwenden
-                  <small className="set-hint">
-                    {props.favorites.length === 0
-                      ? "Noch keine Favoriten — in der Library oder mit S markieren"
-                      : `${props.favorites.length} Favoriten · gilt für ←/→, Zufall und Auto`}
-                  </small>
-                </span>
-              </label>
+              {app.autoSwitch}
+              {app.favOnly}
             </Field>
             <ParamGroup group="milkdrop" title="Wann und wohin gewechselt wird" onChanged={bump} />
             <ParamGroup group="react" onChanged={bump} />
@@ -440,7 +614,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
           </>
         )}
 
-        {shown === "ui" && (
+        {!searching && shown === "ui" && (
           <>
             <Field label="UI-Größe">
               <div className="set-seg">
@@ -463,64 +637,18 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </Field>
             <ParamGroup group="ui" onChanged={bump} />
             <Field label="Live">
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.presentation}
-                  onChange={(e) => props.onPresentation(e.target.checked)}
-                />
-                <span className="set-label">
-                  Präsentationsmodus
-                  <small className="set-hint">
-                    Leiste und Mauszeiger bleiben weg, Tasten wirken weiter. Taste H
-                    schaltet zurück, ebenso jede Taste, die ein Panel öffnet.
-                  </small>
-                </span>
-              </label>
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.overlay}
-                  onChange={(e) => props.onOverlay(e.target.checked)}
-                />
-                <span className="set-label">
-                  Overlay-Modus (O)
-                  <small className="set-hint">
-                    vizzy liegt durchsichtig über dem ganzen Bildschirm, Klicks gehen zu den
-                    Fenstern darunter. Raus nur mit Strg+Alt+V — vizzy hat dann keinen Fokus.
-                  </small>
-                </span>
-              </label>
+              {app.presentation}
+              {app.overlay}
               <ParamGroup group="overlay" onChanged={bump} />
             </Field>
             <Field label="Anzeigen">
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.showBpm}
-                  onChange={(e) => props.onShowBpm(e.target.checked)}
-                />
-                <span className="set-label">
-                  Tempo-Anzeige (BPM)
-                  <small className="set-hint">Dauerhaft oben in der Leiste · Taste I blendet das Tempo kurz ein</small>
-                </span>
-              </label>
-              <label className="set-row set-row-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.debugOpen}
-                  onChange={(e) => props.onDebug(e.target.checked)}
-                />
-                <span className="set-label">
-                  Diagnose & Frequenz-Analyse
-                  <small className="set-hint">Taste D</small>
-                </span>
-              </label>
+              {app.showBpm}
+              {app.debug}
             </Field>
           </>
         )}
 
-        {shown === "system" && (
+        {!searching && shown === "system" && (
           <>
             <ParamGroup group="dev" onChanged={bump} />
             <BridgeStatus />
@@ -559,6 +687,12 @@ export function SettingsPanel(props: SettingsPanelProps) {
             </Field>
           </>
         )}
+        <p className="set-note only-changed-empty">
+          Hier steht alles auf Standard. „≠ Geändert“ oben schaltet den Filter wieder aus.
+        </p>
+      </div>
+      </div>
+      </ForceOpenContext.Provider>
       </div>
     </aside>
   );

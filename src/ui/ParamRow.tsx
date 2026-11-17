@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import "./drawer.css";
 
 /**
@@ -129,6 +129,25 @@ export function ParamRow({
   );
 }
 
+/** true while a filter is on that looks into every section ("nur
+ *  Geändertes"): sections show their content whatever their own state */
+export const ForceOpenContext = createContext(false);
+
+/** the section a link wants to show; taken by the section when it mounts */
+let pendingReveal: string | null = null;
+const REVEAL_EVENT = "vizzy:reveal-section";
+
+/** Opens the section `id`, scrolls it into view and lets it glow for a
+ *  moment — also when it only mounts in a moment (a tab switch). */
+export function revealSection(id: string) {
+  pendingReveal = id;
+  window.dispatchEvent(new Event(REVEAL_EVENT));
+  // not there (another mode): don't let a later mount jump out of nowhere
+  window.setTimeout(() => {
+    if (pendingReveal === id) pendingReveal = null;
+  }, 1000);
+}
+
 /** A collapsible group with a title, an optional count and a reset button.
  *  Open/closed is remembered per `id`. */
 export function Section({
@@ -149,7 +168,8 @@ export function Section({
   children: React.ReactNode;
 }) {
   const storeKey = `vizzy.section.${id}`;
-  const [open, setOpen] = useState(() => {
+  const forced = useContext(ForceOpenContext);
+  const [ownOpen, setOpen] = useState(() => {
     try {
       const v = localStorage.getItem(storeKey);
       return v == null ? defaultOpen : v === "1";
@@ -157,6 +177,27 @@ export function Section({
       return defaultOpen;
     }
   });
+  const open = ownOpen || forced;
+  const ref = useRef<HTMLElement | null>(null);
+  const [glow, setGlow] = useState(false);
+  useEffect(() => {
+    let timer: number | undefined;
+    const show = () => {
+      if (pendingReveal !== id) return;
+      pendingReveal = null;
+      setOpen(true);
+      setGlow(true);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setGlow(false), 1800);
+      window.requestAnimationFrame(() => ref.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    };
+    show();
+    window.addEventListener(REVEAL_EVENT, show);
+    return () => {
+      window.removeEventListener(REVEAL_EVENT, show);
+      window.clearTimeout(timer);
+    };
+  }, [id]);
   const toggle = () => {
     setOpen((o) => {
       try {
@@ -168,7 +209,7 @@ export function Section({
     });
   };
   return (
-    <section className={`psec ${open ? "open" : ""}`}>
+    <section ref={ref} className={`psec ${open ? "open" : ""} ${glow ? "reveal" : ""}`}>
       <div className="psec-head">
         <button type="button" className="psec-toggle" onClick={toggle} aria-expanded={open}>
           <span className="psec-caret">{open ? "▾" : "▸"}</span>

@@ -542,7 +542,7 @@ pub struct Config {
     model: String,
     /// transcript log (`lyrics_log.rs`): 0 off, 1 lines, 2 debug (every run)
     log: u8,
-    /// also keep the 16 kHz audio Whisper heard, one file per song
+    /// also keep the 16 kHz audio Whisper heard, one WAV per song
     log_audio: bool,
     /// keep what was heard per song, with song times (`lyrics_take.rs`)
     takes: bool,
@@ -577,6 +577,9 @@ pub struct Lyrics {
     reset: AtomicBool,
     /// the song and its position, from the frontend's now playing
     song: Mutex<Playing>,
+    /// debug entries from the frontend (`lyrics_note`), until the worker
+    /// writes them to the log
+    notes: Mutex<Vec<serde_json::Value>>,
 }
 
 /// Where the media session is in the song, and when that was true.
@@ -619,6 +622,7 @@ pub type Shared = Arc<Lyrics>;
 pub fn new() -> Shared {
     Arc::new(Lyrics { cfg: Mutex::new(Config::default()), path: Mutex::new(None), reset: AtomicBool::new(false),
         song: Mutex::new(Playing { info: None, gen: 0, since: Instant::now(), pos: None }),
+        notes: Mutex::new(Vec::new()),
     })
 }
 
@@ -835,6 +839,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
     let takes_dir = app.path().app_data_dir().ok().map(|d| d.join(crate::lyrics_take::DIR));
     let mut take: Option<Take> = None;
     let mut last_gen = 0u64;
+    let mut last_pos_at: Option<Instant> = None;
     // a pause is logged once, not on every quiet step
     let mut paused = true;
     // running stats, logged every 30 runs
@@ -876,6 +881,7 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             rs = None;
             tlog.start(0, serde_json::Value::Null);
             logged_tuning = None;
+            me.notes.lock().unwrap().clear();
             finish(&app, &mut take);
             continue;
         }
@@ -902,6 +908,24 @@ async fn run(app: tauri::AppHandle, me: Shared) {
             None => serde_json::Value::Null,
         };
         tlog.set_song(lv, playing.info.as_ref().map(SongInfo::label), meta, changed);
+        // debug: every position the frontend told us (the anchor of all song
+        // times), and what it noted itself
+        let pos_at = playing.pos.map(|p| p.at);
+        if pos_at != last_pos_at {
+            last_pos_at = pos_at;
+            let entry = match playing.pos {
+                Some(p) => serde_json::json!({
+                    "kind": "position", "positionMs": p.ms.round() as i64, "playing": p.playing,
+                    "agoMs": p.at.elapsed().as_millis() as u64, "songChange": changed,
+                }),
+                None => serde_json::json!({ "kind": "position", "positionMs": null, "songChange": changed }),
+            };
+            log_err = log_err.or(tlog.write(lv, 2, entry));
+        }
+        let notes = std::mem::take(&mut *me.notes.lock().unwrap());
+        for n in notes {
+            log_err = log_err.or(tlog.write(lv, 2, n));
+        }
         // the take of this song: started here, or when the switch goes on
         if !cfg.takes {
             finish(&app, &mut take);
@@ -1080,6 +1104,24 @@ pub fn lyrics_song(song: Option<SongInfo>, restart: bool, position_ms: Option<f6
     }
     p.info = info;
     p.pos = position_ms.filter(|m| m.is_finite()).map(|ms| Pos { ms, at: now, playing });
+}
+
+/// A debug entry from the frontend for the transcript log (what the synced
+/// lyrics did with a heard line, which line went on screen, …). Only kept
+/// at the debug level; the worker writes it on its next step.
+#[tauri::command]
+pub fn lyrics_note(mut entry: serde_json::Value, me: tauri::State<'_, Shared>) {
+    let cfg = me.cfg.lock().unwrap();
+    if !cfg.enabled || cfg.log < 2 {
+        return;
+    }
+    let Some(o) = entry.as_object_mut() else { return };
+    o.insert("t".into(), crate::lyrics_log::iso(crate::lyrics_log::now_ms()).into());
+    let mut notes = me.notes.lock().unwrap();
+    // the worker drains this every step; a stuck worker must not grow it
+    if notes.len() < 1000 {
+        notes.push(entry);
+    }
 }
 
 /// Forgets the window and the lines heard so far (new song, or after
@@ -1287,8 +1329,9 @@ mod tests {
     }
 
     /// Plays a file through the engine against a live server, one second of
-    /// audio per step, as fast as the server answers. The file is raw 16 kHz
-    /// mono f32le:
+    /// audio per step, as fast as the server answers. The file is a `.wav`
+    /// from the transcript log (16 kHz mono, 16 bit), or raw 16 kHz mono
+    /// f32le:
     ///   ffmpeg -i song.mp3 -ss 30 -t 60 -ac 1 -ar 16000 -f f32le song.f32
     ///   VIZZY_LYRICS_FILE=song.f32 cargo test --lib lyrics_offline -- --ignored --nocapture
     /// Optional: VIZZY_LYRICS_URL, VIZZY_LYRICS_LANG, VIZZY_LYRICS_TUNING (JSON knobs).
@@ -1297,7 +1340,14 @@ mod tests {
     fn lyrics_offline() {
         let path = std::env::var("VIZZY_LYRICS_FILE").expect("VIZZY_LYRICS_FILE");
         let bytes = std::fs::read(&path).unwrap();
-        let pcm: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+        let pcm: Vec<f32> = if path.to_lowercase().ends_with(".wav") {
+            bytes[crate::lyrics_log::WAV_HEADER.min(bytes.len())..]
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes(b.try_into().unwrap()) as f32 / 32767.0)
+                .collect()
+        } else {
+            bytes.chunks_exact(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect()
+        };
         let mut cfg = Config::default();
         if let Ok(u) = std::env::var("VIZZY_LYRICS_URL") {
             cfg.url = u;

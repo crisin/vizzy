@@ -16,6 +16,7 @@ import { InfoOverlay } from "./ui/InfoOverlay";
 import { overlayMode, useOverlayMode } from "./ui/overlayMode";
 import { LyricsOverlay } from "./lyrics/LyricsOverlay";
 import { LyricsSettings } from "./lyrics/LyricsSettings";
+import { useUnseenNews } from "./news/news";
 import { lyrics } from "./lyrics/store";
 import { lyricEvents } from "./lyrics/events";
 import { synced } from "./lyrics/synced";
@@ -429,6 +430,7 @@ function App() {
   // per-panel flags are now "drawer open on that tab".
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<string>("audio");
+  const unseenNews = useUnseenNews();
   const tabFlag = (
     id: string,
   ): [boolean, (v: boolean | ((prev: boolean) => boolean)) => void] => {
@@ -2134,9 +2136,9 @@ function App() {
           <button
             ref={settingsButtonRef}
             type="button"
-            className={`icon-btn ${settingsOpen ? "active" : ""}`}
+            className={`icon-btn ${settingsOpen ? "active" : ""} ${unseenNews > 0 ? "news-dot" : ""}`}
             onClick={toggleDrawer}
-            title={withKey("Einstellungen", "settings")}
+            title={withKey(unseenNews > 0 ? `Einstellungen · ${unseenNews} neu unter „Aktuell“` : "Einstellungen", "settings")}
             aria-label="Einstellungen öffnen"
             aria-pressed={settingsOpen}
             aria-controls="settings-panel"

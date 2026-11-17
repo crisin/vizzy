@@ -1,19 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
-import { GROUP_LABELS, PARAM_SCHEMAS, params, type ParamDef } from "../params";
-import { ParamRow, Section } from "./ParamRow";
+import { GROUP_LABELS, PARAM_SCHEMAS, params } from "../params";
+import { Section } from "./ParamRow";
+import { ParamControl, applySideEffects } from "./ParamControl";
 
-const inTauri = "__TAURI_INTERNALS__" in window;
-
-/** Parameters with side effects beyond the render loop. */
-function applySideEffects(group: string, key: string, value: number) {
-  if (group === "audio" && key === "beatSigma" && inTauri) {
-    invoke("set_beat_sensitivity", { sigma: value }).catch(console.error);
-  }
-}
-
-export /** One parameter group rendered from its schema — sliders, checkboxes and
+/** One parameter group rendered from its schema — sliders, checkboxes and
  *  dropdowns all come out of the same declaration. */
-function ParamGroup({
+export function ParamGroup({
   group,
   title,
   onChanged,
@@ -24,12 +15,6 @@ function ParamGroup({
 }) {
   const defs = PARAM_SCHEMAS[group];
   if (!defs) return null;
-
-  const commit = (d: ParamDef, value: number) => {
-    params.set(group, d.key, value);
-    applySideEffects(group, d.key, value);
-    onChanged();
-  };
 
   const name = title ?? GROUP_LABELS[group] ?? group;
   const changedCount = defs.filter(
@@ -47,64 +32,9 @@ function ParamGroup({
         onChanged();
       }}
     >
-      {defs.map((d) => {
-        const value = params.getBase(group, d.key);
-
-        if (d.kind === "toggle") {
-          return (
-            <label key={d.key} className="set-row set-row-toggle">
-              <input
-                type="checkbox"
-                checked={value >= 0.5}
-                onChange={(e) => commit(d, e.target.checked ? 1 : 0)}
-              />
-              <span className="set-label">
-                {d.label}
-                {d.hint && <small className="set-hint">{d.hint}</small>}
-              </span>
-            </label>
-          );
-        }
-
-        if (d.kind === "select") {
-          return (
-            <label key={d.key} className="set-row set-row-select">
-              <span className="set-label">
-                {d.label}
-                {d.hint && <small className="set-hint">{d.hint}</small>}
-              </span>
-              <select
-                className="src-select"
-                value={value}
-                onChange={(e) => commit(d, Number(e.target.value))}
-              >
-                {(d.options ?? []).map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          );
-        }
-
-        return (
-          <ParamRow
-            key={d.key}
-            label={d.label}
-            hint={d.hint}
-            value={value}
-            min={d.min}
-            max={d.max}
-            step={d.step}
-            unit={d.unit}
-            defaultValue={d.default}
-            onChange={(v) => commit(d, v)}
-            onReset={() => commit(d, d.default)}
-          />
-        );
-      })}
+      {defs.map((d) => (
+        <ParamControl key={d.key} group={group} def={d} onChanged={onChanged} />
+      ))}
     </Section>
   );
 }
-
